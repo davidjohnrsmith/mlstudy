@@ -1,0 +1,123 @@
+# """Trading strategy utilities."""
+#
+# from __future__ import annotations
+#
+# from mlstudy.trading.strategy.structures.specs.fly import (
+#     select_fly_legs,
+#     select_nearest_three_sorted_by_ttm,
+#     select_nearest_to_tenor,
+#     select_steepener_legs,
+# )
+# # fly_universe imported directly to avoid circular imports
+# from mlstudy.trading.strategy.structures.specs.fly import (
+#     FlyBacktestSummary,
+#     ParamGrid,
+#     build_and_backtest_many_flies,
+#     filter_valid_flies,
+#     fly_name,
+#     generate_flies_from_tenors,
+#     get_best_fly_params,
+#     summarize_by_fly,
+#     summarize_by_params,
+# )
+# from mlstudy.trading.strategy.structures.specs.fly import (
+#     attach_daily_legs,
+#     build_daily_legs_table,
+#     get_leg_values,
+#     validate_leg_stability,
+# )
+# from mlstudy.trading.strategy.alpha.mean_reversion.signals import (
+#     ExitReason,
+#     Position,
+#     SignalConfig,
+#     SignalStats,
+#     Trade,
+#     TradeStats,
+#     backtest_signal,
+#     build_signal_dataframe,
+#     build_trade_blotter,
+#     build_trade_blotter_with_details,
+#     compute_backtest_stats,
+#     compute_signal_stats,
+#     compute_signal_strength,
+#     compute_trade_stats,
+#     ewma_zscore,
+#     generate_mean_reversion_signal,
+#     rolling_zscore,
+# )
+#
+# __all__ = [
+#     # Curve selection
+#     "select_nearest_to_tenor",
+#     "select_fly_legs",
+#     "select_nearest_three_sorted_by_ttm",
+#     "select_steepener_legs",
+#     # Fly construction
+#     "FlyWeights",
+#     "FlyResult",
+#     "compute_fly_value",
+#     "build_fly_timeseries",
+#     "build_fly_legs_panel",
+#     "build_fly",
+#     "compute_fly_carry",
+#     "compute_fly_richness",
+#     # Signals
+#     "Position",
+#     "ExitReason",
+#     "SignalConfig",
+#     "SignalStats",
+#     "Trade",
+#     "TradeStats",
+#     "rolling_zscore",
+#     "ewma_zscore",
+#     "generate_mean_reversion_signal",
+#     "compute_signal_strength",
+#     "build_signal_dataframe",
+#     "compute_signal_stats",
+#     "backtest_signal",
+#     "compute_backtest_stats",
+#     "build_trade_blotter",
+#     "build_trade_blotter_with_details",
+#     "compute_trade_stats",
+#     # Fly universe
+#     "generate_flies_from_tenors",
+#     "fly_name",
+#     "ParamGrid",
+#     "FlyBacktestSummary",
+#     "build_and_backtest_many_flies",
+#     "summarize_by_fly",
+#     "summarize_by_params",
+#     "get_best_fly_params",
+#     "filter_valid_flies",
+#     # Leg selection
+#     "build_daily_legs_table",
+#     "attach_daily_legs",
+#     "get_leg_values",
+#     "validate_leg_stability",
+#     # Regime detection
+#     "Regime",
+#     "RegimeConfig",
+#     "RegimeResult",
+#     "rolling_adf_pvalue",
+#     "rolling_kpss_pvalue",
+#     "rolling_ou_half_life",
+#     "rolling_trend_score",
+#     "classify_regime",
+#     "classify_regime_single",
+#     "compute_regime_features",
+#     "apply_regime_gate",
+#     "generate_ou_process",
+#     "generate_random_walk_with_drift",
+#     # Momentum signals
+#     "MomentumConfig",
+#     "TrendMethod",
+#     "ts_momentum_signal",
+#     "ema_crossover_signal",
+#     "breakout_signal",
+#     "trend_strength",
+#     "signal_to_position",
+#     "macd_signal",
+#     "rsi_signal",
+#     "combine_momentum_signals",
+#     "build_momentum_dataframe",
+# ]

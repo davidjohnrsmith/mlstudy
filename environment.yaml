@@ -1,0 +1,25 @@
+# Conda environment for mlstudy
+# Create:   conda env create -f environment.yaml
+# Update:   conda env update -n mlstudy -f environment.yaml --prune
+# Activate: conda activate mlstudy
+
+name: mlstudy
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - poetry
+
+  # Core scientific stack
+  - numpy
+  - pandas
+  - scipy
+  - tqdm
+
+  # Stats / econometrics
+  - statsmodels
+
+  # Plotting
+  - matplotlib
+  - seaborn

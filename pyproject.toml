@@ -1,0 +1,65 @@
+[tool.poetry]
+name = "mlstudy"
+version = "0.1.0"
+description = "ML models for trading signals, alpha generation, and strategy research"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{ include = "mlstudy", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+numpy = "*"
+pandas = "*"
+scikit-learn = "*"
+pyyaml = "*"
+xgboost = { version = "*", optional = true }
+lightgbm = { version = "*", optional = true }
+
+[tool.poetry.extras]
+boosting = ["xgboost", "lightgbm"]
+xgboost = ["xgboost"]
+lightgbm = ["lightgbm"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+pytest-cov = "*"
+ruff = "*"
+mypy = "*"
+ipykernel = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+]
+ignore = ["E501"]  # line too long (handled by formatter)
+
+[tool.ruff.lint.isort]
+known-first-party = ["mlstudy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+mypy_path = "src"

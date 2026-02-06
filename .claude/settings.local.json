@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(poetry install:*)",
+      "Bash(conda run:*)",
+      "Bash(poetry run ruff check:*)",
+      "Bash(python -m ruff check:*)",
+      "Bash(ruff check:*)",
+      "Bash(uv run ruff check:*)",
+      "Bash(.venv/Scripts/ruff check:*)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python:*)",
+      "Bash(for f in scripts/*.py)",
+      "Bash(do)",
+      "Bash(done)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(poetry run pytest:*)",
+      "Bash(PYTHONPATH=src python:*)",
+      "Bash(conda info:*)"
+    ]
+  }
+}
