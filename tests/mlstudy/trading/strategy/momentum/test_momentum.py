@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlstudy.trading.strategy.momentum.momentum import (
+from mlstudy.trading.strategy.alpha.momentum.momentum import (
     MomentumConfig,
     TrendMethod,
     breakout_signal,
@@ -17,7 +17,7 @@ from mlstudy.trading.strategy.momentum.momentum import (
     trend_strength,
     ts_momentum_signal,
 )
-from mlstudy.trading.strategy.regime.regime import (
+from mlstudy.trading.strategy.alpha.regime.regime import (
     generate_ou_process,
     generate_random_walk_with_drift,
 )
@@ -391,7 +391,7 @@ class TestTrendFilterReducesOvertrade:
 
     def test_trend_filter_reduces_trades_in_mr_regime(self, mean_reverting_series):
         """Trend filter should reduce position changes in MR regime."""
-        from mlstudy.trading.strategy.momentum.momentum import trend_strength
+        from mlstudy.trading.strategy.alpha.momentum.momentum import trend_strength
 
         # Without filter
         mom = ts_momentum_signal(mean_reverting_series, lookback_bars=10)

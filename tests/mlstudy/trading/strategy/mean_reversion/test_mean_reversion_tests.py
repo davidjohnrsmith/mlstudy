@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlstudy.trading.strategy.mean_reversion.mean_reversion_tests import (
+from mlstudy.trading.strategy.alpha.mean_reversion.mean_reversion_tests import (
     adf_test,
     compute_half_life,
     fit_ar1,

@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from mlstudy.trading.strategy.regime.regime import Regime
+from mlstudy.trading.strategy.alpha.regime.regime import Regime
 
 # Optional matplotlib import
 try:
@@ -95,7 +95,7 @@ def compute_regime_diagnostics(
     """Compute regime diagnostic statistics.
 
     Args:
-        pnl_df: P&L DataFrame from backtest.
+        pnl_df: P&L DataFrame from mlstudy.trading.backtest.
         regime: Series of Regime enum values aligned with pnl_df.
         exit_reasons: Optional series of ExitReason values.
         datetime_col: Datetime column name.

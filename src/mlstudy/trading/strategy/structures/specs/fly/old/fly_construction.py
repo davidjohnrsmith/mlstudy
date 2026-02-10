@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 # Import shared construction primitives
-from mlstudy.trading.strategy.structures.construction import (
+from mlstudy.trading.strategy.structures.construction.construction import (
     _validate_3leg,
     changes_residual_3leg,
     enforce_dv01_neutral,

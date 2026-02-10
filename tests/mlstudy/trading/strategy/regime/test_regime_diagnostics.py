@@ -12,7 +12,7 @@ from mlstudy.trading.backtest.regime_diagnostics import (
     print_regime_summary,
     save_regime_plots,
 )
-from mlstudy.trading.strategy.regime.regime import Regime
+from mlstudy.trading.strategy.alpha.regime.regime import Regime
 from mlstudy.trading.strategy.alpha.mean_reversion.signals import ExitReason
 
 

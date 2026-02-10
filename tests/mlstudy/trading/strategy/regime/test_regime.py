@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlstudy.trading.strategy.regime.regime import (
-Regime,
+from mlstudy.trading.strategy.alpha.regime.regime import (
+    Regime,
     RegimeConfig,
     apply_regime_gate,
     classify_regime,

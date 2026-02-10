@@ -319,7 +319,7 @@ Scripts are organized by domain under `scripts/`.
 
 ```python
 from mlstudy.trading.backtest import backtest_fly_from_panel, BacktestConfig, SizingMode
-from mlstudy.trading.strategy.structures.specs.fly import select_fly_legs
+from mlstudy.trading.strategy.structures.selection.curve_selection import select_fly_legs
 
 # Select 2y5y10y fly legs from panel
 legs = select_fly_legs(panel_df, tenors=(2, 5, 10))
