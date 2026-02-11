@@ -1,7 +1,13 @@
 """Mean-reversion backtester with L2 book execution and explicit state machine."""
 
+from . import analysis
 from .engine import MRBacktestConfig, run_backtest
 from .results import MRBacktestResults
+
+try:
+    from . import plots
+except ImportError:
+    plots = None  # type: ignore[assignment]
 from .types import (
     CODE_NAMES,
     ENTRY_IN_COOLDOWN,
@@ -70,4 +76,7 @@ __all__ = [
     "VALIDATE_ALL_LEGS",
     # helpers
     "CODE_NAMES",
+    # analysis & plots
+    "analysis",
+    "plots",
 ]
