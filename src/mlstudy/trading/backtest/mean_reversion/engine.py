@@ -12,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 
-from .loop import HAS_NUMBA, mr_loop, mr_loop_jit
+from .loop import HAS_NUMBA, mr_loop_jit, _mr_loop_jit_impl
 from .results import MRBacktestResults
 from .types import VALIDATE_ALL_LEGS, VALIDATE_REF_ONLY
 
@@ -48,20 +48,20 @@ class MRBacktestConfig:
 
     # -- take-profit -------------------------------------------------------
     take_profit_zscore_soft_threshold: float = 0.5
-    take_profit_yield_change_soft_threshold: float = 1.0   # yield bps
-    take_profit_yield_change_hard_threshold: float = 3.0   # yield bps
+    take_profit_yield_change_soft_threshold: float = 1.0  # yield bps
+    take_profit_yield_change_hard_threshold: float = 3.0  # yield bps
 
     # -- stop-loss ---------------------------------------------------------
-    stop_loss_yield_change_hard_threshold: float = 5.0     # yield bps
+    stop_loss_yield_change_hard_threshold: float = 5.0  # yield bps
 
     # -- max holding -------------------------------------------------------
-    max_holding_bars: int = 0                              # 0 = disabled
+    max_holding_bars: int = 0  # 0 = disabled
 
     # -- cost premia -------------------------------------------------------
     expected_yield_pnl_bps_multiplier: float = 1.0
     entry_cost_premium_yield_bps: float = 0.0
     tp_cost_premium_yield_bps: float = 0.0
-    sl_cost_premium_yield_bps: float = 0.0                 # unused for forced
+    sl_cost_premium_yield_bps: float = 0.0  # unused for forced
 
     # -- quarantine --------------------------------------------------------
     tp_quarantine_bars: int = 0
@@ -73,7 +73,7 @@ class MRBacktestConfig:
     size_haircut: float = 1.0
 
     # -- market validity ---------------------------------------------------
-    validate_scope: str = "REF_ONLY"                       # "REF_ONLY" | "ALL_LEGS"
+    validate_scope: str = "REF_ONLY"  # "REF_ONLY" | "ALL_LEGS"
 
     # -- initial state -----------------------------------------------------
     initial_capital: float = 0.0
@@ -175,16 +175,22 @@ def run_backtest(
         cfg = MRBacktestConfig()
 
     _validate(
-        bid_px, bid_sz, ask_px, ask_sz, mid_px, dv01,
-        zscore, expected_yield_pnl_bps, package_yield_bps,
-        hedge_ratios, cfg,
+        bid_px,
+        bid_sz,
+        ask_px,
+        ask_sz,
+        mid_px,
+        dv01,
+        zscore,
+        expected_yield_pnl_bps,
+        package_yield_bps,
+        hedge_ratios,
+        cfg,
     )
 
-    scope = (VALIDATE_ALL_LEGS
-             if cfg.validate_scope == "ALL_LEGS"
-             else VALIDATE_REF_ONLY)
+    scope = VALIDATE_ALL_LEGS if cfg.validate_scope == "ALL_LEGS" else VALIDATE_REF_ONLY
 
-    loop_fn = mr_loop_jit if (cfg.use_jit and HAS_NUMBA) else mr_loop
+    loop_fn = mr_loop_jit if (cfg.use_jit and HAS_NUMBA) else _mr_loop_jit_impl
 
     raw = loop_fn(
         bid_px.astype(np.float64, copy=False),

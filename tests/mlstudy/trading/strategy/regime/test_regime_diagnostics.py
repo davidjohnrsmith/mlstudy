@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlstudy.trading.backtest.regime_diagnostics import (
+from mlstudy.trading.backtest.old.regime_diagnostics import (
     RegimeDiagnostics,
     compute_regime_diagnostics,
     plot_fly_with_regime,
@@ -288,8 +288,8 @@ class TestRegimeDiagnosticsIntegration:
         """Should generate report with regime data."""
         pytest.importorskip("matplotlib")
 
-        from mlstudy.trading.backtest.engine import BacktestConfig, BacktestResult
-        from mlstudy.trading.backtest.report import RegimeData, generate_report
+        from mlstudy.trading.backtest.old.engine import BacktestConfig, BacktestResult
+        from mlstudy.trading.backtest.old.report import RegimeData, generate_report
 
         # Create BacktestResult
         pnl_df = sample_pnl_df.copy()
@@ -330,8 +330,8 @@ class TestRegimeDiagnosticsIntegration:
         """Should work without regime data (backward compatible)."""
         pytest.importorskip("matplotlib")
 
-        from mlstudy.trading.backtest.engine import BacktestConfig, BacktestResult
-        from mlstudy.trading.backtest.report import generate_report
+        from mlstudy.trading.backtest.old.engine import BacktestConfig, BacktestResult
+        from mlstudy.trading.backtest.old.report import generate_report
 
         pnl_df = sample_pnl_df.copy()
         pnl_df["cumulative_pnl"] = pnl_df["net_return"].cumsum()

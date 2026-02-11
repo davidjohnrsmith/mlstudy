@@ -1,6 +1,6 @@
 """Mean-reversion backtester with L2 book execution and explicit state machine."""
 
-from . import analysis
+from . import analysis, sweep
 from .engine import MRBacktestConfig, run_backtest
 from .results import MRBacktestResults
 
@@ -9,6 +9,12 @@ try:
 except ImportError:
     plots = None  # type: ignore[assignment]
 from .types import (
+    # IntEnum classes
+    ActionCode,
+    State,
+    TradeType,
+    ValidateScope,
+    # backwards-compatible aliases
     CODE_NAMES,
     ENTRY_IN_COOLDOWN,
     ENTRY_INVALID_BOOK,
@@ -74,9 +80,15 @@ __all__ = [
     # validate scope
     "VALIDATE_REF_ONLY",
     "VALIDATE_ALL_LEGS",
+    # IntEnum classes
+    "ActionCode",
+    "State",
+    "TradeType",
+    "ValidateScope",
     # helpers
     "CODE_NAMES",
-    # analysis & plots
+    # analysis, plots & sweep
     "analysis",
     "plots",
+    "sweep",
 ]

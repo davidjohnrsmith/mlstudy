@@ -39,13 +39,13 @@ from __future__ import annotations
 
 import numpy as np
 
-# Attempt-code constants are plain ints so the same source compiles under
-# Numba ``@njit`` and runs in pure Python.
+# Plain-int duplicates of the IntEnum values in types.py.
 #
-# We inline the values rather than importing from types.py because Numba
-# cannot import from a non-JIT module inside an ``@njit`` function.  The
-# values are verified in tests against the canonical types.py definitions.
+# Numba ``@njit`` cannot resolve IntEnum members at compile time, so
+# the JIT-compiled loop needs bare ints.  The canonical definitions
+# live in :mod:`.types`; a test asserts that these stay in sync.
 
+# -- ActionCode --
 _NO_ACTION = 0
 
 _ENTRY_OK = 100
@@ -66,8 +66,15 @@ _EXIT_SL_NO_LIQUIDITY = 303
 _EXIT_TIME_FORCED = 407
 _EXIT_TIME_NO_LIQUIDITY = 403
 
+# -- ValidateScope --
 _VALIDATE_REF_ONLY = 0
 
+# -- State --
+_STATE_FLAT = 0
+_STATE_LONG = 1
+_STATE_SHORT = -1
+
+# -- TradeType --
 _TRADE_ENTRY = 0
 _TRADE_EXIT_TP = 1
 _TRADE_EXIT_SL = 2
@@ -78,14 +85,17 @@ _TRADE_EXIT_TIME = 3
 # ---------------------------------------------------------------------------
 try:
     from numba import njit as _njit  # type: ignore[import-untyped]
+
     HAS_NUMBA = True
 except ImportError:  # pragma: no cover
     HAS_NUMBA = False
 
     def _njit(*args, **kwargs):  # type: ignore[misc]
         """Identity decorator when Numba is not installed."""
+
         def _wrap(fn):
             return fn
+
         if len(args) == 1 and callable(args[0]):
             return args[0]
         return _wrap
@@ -94,6 +104,7 @@ except ImportError:  # pragma: no cover
 # ======================================================================
 # Helpers (Numba-safe: only scalars, arrays, and basic control flow)
 # ======================================================================
+
 
 def _walk_book(px, sz, qty, max_levels, haircut):
     """Walk one side of an L2 book.
@@ -155,405 +166,6 @@ def _check_market_valid(bid0, ask0, mid, scope, ref_idx, N):
 # Core loop – pure Python reference
 # ======================================================================
 
-def mr_loop(
-    # -- Market data -------------------------------------------------------
-    bid_px,                     # (T, N, L)
-    bid_sz,                     # (T, N, L)
-    ask_px,                     # (T, N, L)
-    ask_sz,                     # (T, N, L)
-    mid_px,                     # (T, N) independent mid prices
-    dv01,                       # (T, N)
-    # -- Signals (already lagged) ------------------------------------------
-    zscore,                     # (T,)
-    expected_yield_pnl_bps,     # (T,)
-    package_yield_bps,          # (T,)
-    # -- Static inputs -----------------------------------------------------
-    hedge_ratios,               # (N,) yield-space ratios, r_ref=1, sum=0
-    ref_idx,                    # int – reference leg index
-    # -- Config scalars ----------------------------------------------------
-    target_notional_ref,        # float
-    entry_z_threshold,          # float
-    tp_zscore_soft,             # float
-    tp_yield_soft,              # float
-    tp_yield_hard,              # float
-    sl_yield_hard,              # float
-    max_holding_bars,           # int
-    yield_pnl_multiplier,       # float
-    entry_cost_premium,         # float (yield bps)
-    tp_cost_premium,            # float (yield bps)
-    sl_cost_premium,            # float (yield bps – unused for forced exits)
-    tp_quarantine,              # int (bars)
-    sl_quarantine,              # int (bars)
-    time_quarantine,            # int (bars)
-    max_levels,                 # int
-    haircut,                    # float [0, 1]
-    validate_scope,             # int (0=REF_ONLY, 1=ALL_LEGS)
-    initial_capital,            # float
-):
-    """Run the mean-reversion backtest loop.
-
-    Returns a tuple of numpy arrays – see the *Returns* section in
-    :func:`mr_loop_jit` for the exact layout.
-    """
-    T = bid_px.shape[0]
-    N = bid_px.shape[1]
-
-    # ---- per-bar output arrays -------------------------------------------
-    out_pos = np.zeros((T, N), dtype=np.float64)
-    out_cash = np.zeros(T, dtype=np.float64)
-    out_equity = np.zeros(T, dtype=np.float64)
-    out_pnl = np.zeros(T, dtype=np.float64)
-    out_codes = np.zeros(T, dtype=np.int32)
-    out_state = np.zeros(T, dtype=np.int32)
-    out_holding = np.zeros(T, dtype=np.int32)
-
-    # ---- per-trade output arrays (pre-allocated, max T trades) -----------
-    tr_bar = np.full(T, -1, dtype=np.int64)
-    tr_type = np.zeros(T, dtype=np.int32)
-    tr_side = np.zeros(T, dtype=np.int32)
-    tr_sizes = np.zeros((T, N), dtype=np.float64)
-    tr_vwaps = np.zeros((T, N), dtype=np.float64)
-    tr_mids = np.zeros((T, N), dtype=np.float64)
-    tr_cost = np.zeros(T, dtype=np.float64)
-    tr_code = np.zeros(T, dtype=np.int32)
-    tr_pkg_yield = np.zeros(T, dtype=np.float64)
-    n_trades = 0
-
-    # ---- mutable state ---------------------------------------------------
-    pos = np.zeros(N, dtype=np.float64)
-    cash = initial_capital
-    state = 0          # 0 flat, +1 long, -1 short
-    cooldown = 0
-    entry_bar = -1
-    entry_pkg_yield = 0.0
-    holding = 0
-    prev_equity = initial_capital
-
-    for t in range(T):
-        code = _NO_ACTION
-
-        # ==================================================================
-        # EXIT LOGIC (in position)
-        # ==================================================================
-        if state != 0:
-            pos_side = state
-            holding += 1
-
-            raw_yield_delta = package_yield_bps[t] - entry_pkg_yield
-            adj_yield_delta = -pos_side * raw_yield_delta
-            adj_z = -pos_side * zscore[t]
-
-            # ---- stop-loss check -----------------------------------------
-            sl_triggered = adj_yield_delta < -sl_yield_hard
-
-            # ---- max-holding check ---------------------------------------
-            time_triggered = (max_holding_bars > 0) and (holding >= max_holding_bars)
-
-            # ---- take-profit check ---------------------------------------
-            tp_z_cond = adj_z > tp_zscore_soft
-            tp_ys_cond = adj_yield_delta > tp_yield_soft
-            tp_yh_cond = adj_yield_delta > tp_yield_hard
-            tp_triggered = (tp_z_cond and tp_ys_cond) or tp_yh_cond
-
-            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            # FORCED EXIT (SL / TIME) – no cost acceptance check
-            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            if sl_triggered or time_triggered:
-                is_sl = sl_triggered  # SL has priority over TIME
-                all_filled = True
-                exit_vwaps = np.empty(N, dtype=np.float64)
-                for i in range(N):
-                    if abs(pos[i]) < 1e-15:
-                        exit_vwaps[i] = mid_px[t, i]
-                        continue
-                    qty_abs = abs(pos[i])
-                    if pos[i] > 0:  # sell
-                        filled, vwap = _walk_book(
-                            bid_px[t, i], bid_sz[t, i],
-                            qty_abs, max_levels, haircut,
-                        )
-                    else:  # buy to cover
-                        filled, vwap = _walk_book(
-                            ask_px[t, i], ask_sz[t, i],
-                            qty_abs, max_levels, haircut,
-                        )
-                    if filled < qty_abs - 1e-10:
-                        all_filled = False
-                        break
-                    exit_vwaps[i] = vwap
-
-                if all_filled:
-                    # execute: update cash, record trade
-                    bcost = 0.0
-                    for i in range(N):
-                        if abs(pos[i]) < 1e-15:
-                            continue
-                        cash += pos[i] * exit_vwaps[i]  # sell gets +, buy to cover gets -
-                        # negate: cash -= trade_size * vwap where trade = -pos
-                        # equiv: cash += pos * vwap  (selling what we have)
-                        # Actually: cash change = -(-pos[i]) * vwap = pos[i]*vwap? No.
-                        # Let trade_i = -pos[i] (the exit trade).
-                        # cash -= trade_i * vwap_i => cash -= (-pos[i]) * vwap_i
-                        #                         => cash += pos[i] * vwap_i
-                        bcost += abs(exit_vwaps[i] - mid_px[t, i]) * abs(pos[i])
-                    # NOTE: correct cash formula above: cash += pos[i]*vwap is wrong
-                    # because we SELL when pos>0 (receive cash) and BUY when pos<0 (pay cash).
-                    # sell: receive qty*vwap => cash += |pos|*vwap (pos>0)
-                    # buy:  pay    qty*vwap => cash -= |pos|*vwap (pos<0)
-                    # Combined: cash -= (-pos[i])*vwap = cash += pos[i]*vwap.  Correct.
-
-                    # record trade
-                    tr_bar[n_trades] = t
-                    tr_type[n_trades] = _TRADE_EXIT_SL if is_sl else _TRADE_EXIT_TIME
-                    tr_side[n_trades] = pos_side
-                    for i in range(N):
-                        tr_sizes[n_trades, i] = -pos[i]
-                        tr_vwaps[n_trades, i] = exit_vwaps[i]
-                        tr_mids[n_trades, i] = mid_px[t, i]
-                    tr_cost[n_trades] = bcost
-                    tr_code[n_trades] = _EXIT_SL_FORCED if is_sl else _EXIT_TIME_FORCED
-                    tr_pkg_yield[n_trades] = package_yield_bps[t]
-                    n_trades += 1
-
-                    # flatten
-                    for i in range(N):
-                        pos[i] = 0.0
-                    code = _EXIT_SL_FORCED if is_sl else _EXIT_TIME_FORCED
-                    cooldown = sl_quarantine if is_sl else time_quarantine
-                    state = 0
-                    holding = 0
-                    entry_bar = -1
-                else:
-                    code = _EXIT_SL_NO_LIQUIDITY if is_sl else _EXIT_TIME_NO_LIQUIDITY
-
-            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            # GATED EXIT (TP) – with cost acceptance
-            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            elif tp_triggered:
-                # market validity
-                valid = _check_market_valid(
-                    bid_px[t, :, 0], ask_px[t, :, 0], mid_px[t],
-                    validate_scope, ref_idx, N,
-                )
-                if not valid:
-                    code = _EXIT_TP_INVALID_BOOK
-                else:
-                    all_filled = True
-                    exit_vwaps = np.empty(N, dtype=np.float64)
-                    for i in range(N):
-                        if abs(pos[i]) < 1e-15:
-                            exit_vwaps[i] = mid_px[t, i]
-                            continue
-                        qty_abs = abs(pos[i])
-                        if pos[i] > 0:
-                            filled, vwap = _walk_book(
-                                bid_px[t, i], bid_sz[t, i],
-                                qty_abs, max_levels, haircut,
-                            )
-                        else:
-                            filled, vwap = _walk_book(
-                                ask_px[t, i], ask_sz[t, i],
-                                qty_abs, max_levels, haircut,
-                            )
-                        if filled < qty_abs - 1e-10:
-                            all_filled = False
-                            break
-                        exit_vwaps[i] = vwap
-
-                    if not all_filled:
-                        code = _EXIT_TP_NO_LIQUIDITY
-                    else:
-                        # cost check (use actual position ref-leg size)
-                        bcost = 0.0
-                        for i in range(N):
-                            bcost += abs(exit_vwaps[i] - mid_px[t, i]) * abs(pos[i])
-
-                        ref_dv01_not = abs(pos[ref_idx]) * dv01[t, ref_idx]
-                        acc_yield = (yield_pnl_multiplier
-                                     * expected_yield_pnl_bps[t]
-                                     - tp_cost_premium)
-                        acc_cost = acc_yield * ref_dv01_not
-
-                        if acc_cost <= 0.0 or bcost > acc_cost:
-                            code = _EXIT_TP_TOO_WIDE
-                        else:
-                            # execute TP exit
-                            for i in range(N):
-                                if abs(pos[i]) < 1e-15:
-                                    continue
-                                cash += pos[i] * exit_vwaps[i]
-
-                            tr_bar[n_trades] = t
-                            tr_type[n_trades] = _TRADE_EXIT_TP
-                            tr_side[n_trades] = pos_side
-                            for i in range(N):
-                                tr_sizes[n_trades, i] = -pos[i]
-                                tr_vwaps[n_trades, i] = exit_vwaps[i]
-                                tr_mids[n_trades, i] = mid_px[t, i]
-                            tr_cost[n_trades] = bcost
-                            tr_code[n_trades] = _EXIT_TP_OK
-                            tr_pkg_yield[n_trades] = package_yield_bps[t]
-                            n_trades += 1
-
-                            for i in range(N):
-                                pos[i] = 0.0
-                            code = _EXIT_TP_OK
-                            cooldown = tp_quarantine
-                            state = 0
-                            holding = 0
-                            entry_bar = -1
-            else:
-                code = _NO_ACTION
-
-        # ==================================================================
-        # ENTRY LOGIC (flat)
-        # ==================================================================
-        elif state == 0:
-            if cooldown > 0:
-                cooldown -= 1
-                if abs(zscore[t]) > entry_z_threshold:
-                    code = _ENTRY_IN_COOLDOWN
-                else:
-                    code = _NO_ACTION
-            elif abs(zscore[t]) > entry_z_threshold:
-                intended_side = 1 if zscore[t] > 0 else -1
-
-                # -- compute leg sizes ------------------------------------
-                ref_dv01_t = dv01[t, ref_idx]
-                if ref_dv01_t < 1e-15:
-                    code = _ENTRY_INVALID_BOOK
-                else:
-                    sizes_ok = True
-                    trade_sizes = np.empty(N, dtype=np.float64)
-                    for i in range(N):
-                        if dv01[t, i] < 1e-15:
-                            sizes_ok = False
-                            break
-                        trade_sizes[i] = (intended_side
-                                          * target_notional_ref
-                                          * ref_dv01_t
-                                          * hedge_ratios[i]
-                                          / dv01[t, i])
-                    if not sizes_ok:
-                        code = _ENTRY_INVALID_BOOK
-                    else:
-                        # -- acceptable cost ------------------------------
-                        basket_dv01_ref = target_notional_ref * ref_dv01_t
-                        acc_yield = (yield_pnl_multiplier
-                                     * expected_yield_pnl_bps[t]
-                                     - entry_cost_premium)
-                        acc_cost = acc_yield * basket_dv01_ref
-
-                        if acc_cost <= 0.0:
-                            code = _ENTRY_TOO_WIDE
-                        else:
-                            # -- market validity --------------------------
-                            valid = _check_market_valid(
-                                bid_px[t, :, 0], ask_px[t, :, 0],
-                                mid_px[t], validate_scope, ref_idx, N,
-                            )
-                            if not valid:
-                                code = _ENTRY_INVALID_BOOK
-                            else:
-                                # -- L2 walk per leg ----------------------
-                                fill_vwaps = np.empty(N, dtype=np.float64)
-                                all_filled = True
-                                for i in range(N):
-                                    if abs(trade_sizes[i]) < 1e-15:
-                                        fill_vwaps[i] = mid_px[t, i]
-                                        continue
-                                    qty_abs = abs(trade_sizes[i])
-                                    if trade_sizes[i] > 0:
-                                        filled, vwap = _walk_book(
-                                            ask_px[t, i], ask_sz[t, i],
-                                            qty_abs, max_levels, haircut,
-                                        )
-                                    else:
-                                        filled, vwap = _walk_book(
-                                            bid_px[t, i], bid_sz[t, i],
-                                            qty_abs, max_levels, haircut,
-                                        )
-                                    if filled < qty_abs - 1e-10:
-                                        all_filled = False
-                                        break
-                                    fill_vwaps[i] = vwap
-
-                                if not all_filled:
-                                    code = _ENTRY_NO_LIQUIDITY
-                                else:
-                                    # -- basket cost check ----------------
-                                    bcost = 0.0
-                                    for i in range(N):
-                                        bcost += (abs(fill_vwaps[i] - mid_px[t, i])
-                                                  * abs(trade_sizes[i]))
-                                    if bcost > acc_cost:
-                                        code = _ENTRY_TOO_WIDE
-                                    else:
-                                        # -- EXECUTE ENTRY ----------------
-                                        for i in range(N):
-                                            cash -= trade_sizes[i] * fill_vwaps[i]
-                                            pos[i] += trade_sizes[i]
-
-                                        tr_bar[n_trades] = t
-                                        tr_type[n_trades] = _TRADE_ENTRY
-                                        tr_side[n_trades] = intended_side
-                                        for i in range(N):
-                                            tr_sizes[n_trades, i] = trade_sizes[i]
-                                            tr_vwaps[n_trades, i] = fill_vwaps[i]
-                                            tr_mids[n_trades, i] = mid_px[t, i]
-                                        tr_cost[n_trades] = bcost
-                                        tr_code[n_trades] = _ENTRY_OK
-                                        tr_pkg_yield[n_trades] = package_yield_bps[t]
-                                        n_trades += 1
-
-                                        code = _ENTRY_OK
-                                        state = intended_side
-                                        entry_bar = t
-                                        entry_pkg_yield = package_yield_bps[t]
-                                        holding = 0
-            else:
-                code = _ENTRY_NO_SIGNAL
-
-        # ==================================================================
-        # MTM & PnL (always, even on invalid bars)
-        # ==================================================================
-        equity_t = cash
-        for i in range(N):
-            equity_t += pos[i] * mid_px[t, i]
-
-        pnl_t = equity_t - prev_equity
-        prev_equity = equity_t
-
-        # ---- store per-bar outputs ---------------------------------------
-        for i in range(N):
-            out_pos[t, i] = pos[i]
-        out_cash[t] = cash
-        out_equity[t] = equity_t
-        out_pnl[t] = pnl_t
-        out_codes[t] = code
-        out_state[t] = state
-        out_holding[t] = holding
-
-    # ---- return as tuple (Numba-compatible) ------------------------------
-    return (
-        out_pos,        # 0  (T, N)
-        out_cash,       # 1  (T,)
-        out_equity,     # 2  (T,)
-        out_pnl,        # 3  (T,)
-        out_codes,      # 4  (T,) int32
-        out_state,      # 5  (T,) int32
-        out_holding,    # 6  (T,) int32
-        tr_bar,         # 7  (T,) int64  (-1 = unused slot)
-        tr_type,        # 8  (T,) int32
-        tr_side,        # 9  (T,) int32
-        tr_sizes,       # 10 (T, N)
-        tr_vwaps,       # 11 (T, N)
-        tr_mids,        # 12 (T, N)
-        tr_cost,        # 13 (T,)
-        tr_code,        # 14 (T,) int32
-        tr_pkg_yield,   # 15 (T,)
-        n_trades,       # 16 int
-    )
 
 
 # ======================================================================
@@ -566,25 +178,210 @@ _check_market_valid_jit = _njit(cache=True)(_check_market_valid)
 
 
 def _mr_loop_jit_impl(
-    bid_px, bid_sz, ask_px, ask_sz, mid_px, dv01,
-    zscore, expected_yield_pnl_bps, package_yield_bps,
-    hedge_ratios, ref_idx,
-    target_notional_ref, entry_z_threshold,
-    tp_zscore_soft, tp_yield_soft, tp_yield_hard,
-    sl_yield_hard, max_holding_bars,
-    yield_pnl_multiplier, entry_cost_premium, tp_cost_premium,
+    bid_px,
+    bid_sz,
+    ask_px,
+    ask_sz,
+    mid_px,
+    dv01,
+    zscore,
+    expected_yield_pnl_bps,
+    package_yield_bps,
+    hedge_ratios,
+    ref_idx,
+    target_notional_ref,
+    entry_z_threshold,
+    tp_zscore_soft,
+    tp_yield_soft,
+    tp_yield_hard,
+    sl_yield_hard,
+    max_holding_bars,
+    yield_pnl_multiplier,
+    entry_cost_premium,
+    tp_cost_premium,
     sl_cost_premium,
-    tp_quarantine, sl_quarantine, time_quarantine,
-    max_levels, haircut, validate_scope, initial_capital,
+    tp_quarantine,
+    sl_quarantine,
+    time_quarantine,
+    max_levels,
+    haircut,
+    validate_scope,
+    initial_capital,
 ):
-    """Numba-friendly duplicate of :func:`mr_loop`.
+    """Core mean-reversion backtest loop.
 
-    The body is identical except helper calls go through the ``_jit`` versions
-    so that Numba can inline them.
+    Iterates bar-by-bar through *T* timesteps, maintaining a three-state
+    machine (FLAT / LONG / SHORT) with L2-book execution, cost gating, and
+    quarantine (cooldown) periods after exits.
+
+    This single implementation is used in two ways:
+
+    * **Pure Python** — called directly as ``_mr_loop_jit_impl(...)`` when
+      ``use_jit=False`` (or Numba is unavailable).
+    * **Numba JIT** — wrapped by ``mr_loop_jit = _njit(cache=True)(_mr_loop_jit_impl)``
+      at module level.  Helper calls use the ``_jit``-suffixed variants so
+      Numba can inline them.
+
+    State machine
+    -------------
+    ::
+
+        FLAT ──(entry signal + liquidity + cost OK)──► LONG / SHORT
+          ▲                                                │
+          │   ◄──(TP / SL / time-exit + liquidity OK)──────┘
+          │                                                │
+          └─────────── cooldown countdown ◄────────────────┘
+
+    Each bar the loop evaluates **exactly one** action:
+
+    1. **In position** (``state != 0``): check stop-loss → time-exit →
+       take-profit → no-action, in that priority order.
+    2. **Flat** (``state == 0``): if in cooldown, decrement counter; else
+       check for entry signal.
+
+    Entry logic (flat, no cooldown)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    1. ``|zscore[t]| > entry_z_threshold`` — signal present.
+    2. Determine ``intended_side``: +1 if zscore > 0 (cheap → go long),
+       −1 if zscore < 0 (expensive → go short).
+    3. Compute DV01-weighted leg sizes via hedge ratios.
+    4. Validate market data (bid ≤ mid ≤ ask).
+    5. Walk the L2 book (``_walk_book_jit``) to fill each leg.
+    6. Compute basket execution cost; compare against the acceptable cost
+       budget derived from ``expected_yield_pnl_bps``.
+    7. If all checks pass → execute entry, record trade, enter LONG/SHORT.
+
+    Take-profit logic
+    ~~~~~~~~~~~~~~~~~
+    Direction-adjusted values::
+
+        adj_yield_delta = -pos_side * (package_yield_bps[t] - entry_pkg_yield)
+        adj_z           = -pos_side * zscore[t]
+
+    TP fires when *either*:
+
+    * ``adj_z > tp_zscore_soft AND adj_yield_delta > tp_yield_soft`` (soft), or
+    * ``adj_yield_delta > tp_yield_hard`` (hard override).
+
+    After signal, the exit still requires valid book, sufficient liquidity,
+    and cost within budget (otherwise → ``EXIT_TP_INVALID_BOOK``,
+    ``EXIT_TP_NO_LIQUIDITY``, or ``EXIT_TP_TOO_WIDE``).
+
+    Stop-loss / time-exit logic
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    * SL fires when ``adj_yield_delta < -sl_yield_hard`` (adverse move).
+    * Time-exit fires when ``holding >= max_holding_bars`` (if enabled).
+    * Both are **forced**: they attempt to fill but skip the cost gate.
+      If liquidity is insufficient → ``EXIT_SL_NO_LIQUIDITY`` /
+      ``EXIT_TIME_NO_LIQUIDITY`` (position kept, retried next bar).
+
+    Parameters
+    ----------
+    bid_px : ndarray, shape (T, N, L)
+        Bid prices per bar × instrument × book level (level 0 = best).
+    bid_sz : ndarray, shape (T, N, L)
+        Bid sizes.
+    ask_px : ndarray, shape (T, N, L)
+        Ask prices.
+    ask_sz : ndarray, shape (T, N, L)
+        Ask sizes.
+    mid_px : ndarray, shape (T, N)
+        Mid prices (independent of book; used for MTM and cost calc).
+    dv01 : ndarray, shape (T, N)
+        Price change per 1 bp yield move per unit par notional, per
+        instrument.  Used to derive leg sizes from hedge ratios.
+    zscore : ndarray, shape (T,)
+        Pre-computed, *already lagged* z-score signal.  Positive = package
+        is cheap (enter long); negative = expensive (enter short).
+    expected_yield_pnl_bps : ndarray, shape (T,)
+        Expected yield P&L magnitude in bps (non-negative).  Scaled by
+        ``yield_pnl_multiplier`` to set the cost budget.
+    package_yield_bps : ndarray, shape (T,)
+        Package yield level in bps.  Tracked from entry to compute
+        direction-adjusted yield deltas for TP / SL checks.
+    hedge_ratios : ndarray, shape (N,)
+        Yield-space hedge ratios.  ``hedge_ratios[ref_idx] == 1.0`` and
+        ``sum(hedge_ratios) == 0`` (DV01-neutral).
+    ref_idx : int
+        Index of the reference leg in the instrument dimension.
+    target_notional_ref : float
+        Par notional for the reference leg.  Other legs are sized so that
+        ``size_i = target_notional_ref * dv01[t, ref] * hedge_ratios[i] / dv01[t, i]``.
+    entry_z_threshold : float
+        Minimum ``|zscore[t]|`` to consider entering.
+    tp_zscore_soft : float
+        Take-profit soft z-score threshold (direction-adjusted).
+    tp_yield_soft : float
+        Take-profit soft yield-change threshold (bps, direction-adjusted).
+    tp_yield_hard : float
+        Take-profit hard yield-change threshold (bps); triggers TP
+        unconditionally on yield alone.
+    sl_yield_hard : float
+        Stop-loss yield-change threshold (bps, direction-adjusted).
+        SL fires when ``adj_yield_delta < -sl_yield_hard``.
+    max_holding_bars : int
+        Force exit after this many bars in position.  0 = disabled.
+    yield_pnl_multiplier : float
+        Scales ``expected_yield_pnl_bps`` when computing the acceptable
+        cost budget.
+    entry_cost_premium : float
+        Yield bps subtracted from the entry cost budget
+        (tighter budget → fewer entries).
+    tp_cost_premium : float
+        Yield bps subtracted from the take-profit cost budget.
+    sl_cost_premium : float
+        Yield bps subtracted from the stop-loss cost budget (unused for
+        forced SL which skips the cost gate).
+    tp_quarantine : int
+        Bars of cooldown after a take-profit exit before re-entry is
+        allowed.
+    sl_quarantine : int
+        Bars of cooldown after a stop-loss exit.
+    time_quarantine : int
+        Bars of cooldown after a time-exit.
+    max_levels : int
+        Maximum L2 book levels to walk when filling an order.
+    haircut : float
+        Fraction of displayed book size actually usable (0–1).
+    validate_scope : int
+        ``0`` (``VALIDATE_REF_ONLY``) checks only the reference leg;
+        non-zero checks all N legs for ``bid ≤ mid ≤ ask``.
+    initial_capital : float
+        Starting cash balance.
+
+    Returns
+    -------
+    tuple of 17 elements
+        Per-bar arrays (length *T*):
+
+        0. ``out_pos``     — (T, N) float64, leg positions at end of bar.
+        1. ``out_cash``    — (T,) float64, cash balance.
+        2. ``out_equity``  — (T,) float64, total equity (cash + MTM).
+        3. ``out_pnl``     — (T,) float64, bar-over-bar P&L.
+        4. ``out_codes``   — (T,) int32, attempt/outcome code (see ``types.py``).
+        5. ``out_state``   — (T,) int32, state at end of bar (0/+1/−1).
+        6. ``out_holding`` — (T,) int32, bars held in current position.
+
+        Per-trade arrays (pre-allocated to length *T*, valid for ``[:n_trades]``):
+
+        7.  ``tr_bar``       — bar index of the trade.
+        8.  ``tr_type``      — trade type (0 entry, 1 TP, 2 SL, 3 time).
+        9.  ``tr_side``      — +1 long / −1 short.
+        10. ``tr_sizes``     — (T, N) signed leg sizes.
+        11. ``tr_vwaps``     — (T, N) fill VWAPs.
+        12. ``tr_mids``      — (T, N) mid prices at fill time.
+        13. ``tr_cost``      — basket execution cost (≥ 0).
+        14. ``tr_code``      — int32 outcome code for the trade.
+        15. ``tr_pkg_yield`` — package_yield_bps at time of trade.
+
+        Scalar:
+
+        16. ``n_trades`` — number of valid rows in the trade arrays.
     """
-    T = bid_px.shape[0]
-    N = bid_px.shape[1]
+    T = bid_px.shape[0]  # number of bars
+    N = bid_px.shape[1]  # number of instruments (legs)
 
+    # -- Per-bar output arrays (written once per bar at the bottom of the loop) --
     out_pos = np.zeros((T, N), dtype=np.float64)
     out_cash = np.zeros(T, dtype=np.float64)
     out_equity = np.zeros(T, dtype=np.float64)
@@ -593,6 +390,8 @@ def _mr_loop_jit_impl(
     out_state = np.zeros(T, dtype=np.int32)
     out_holding = np.zeros(T, dtype=np.int32)
 
+    # -- Per-trade output arrays (pre-allocated to max possible = T trades) --
+    # Only the first n_trades rows are valid after the loop completes.
     tr_bar = np.full(T, -1, dtype=np.int64)
     tr_type = np.zeros(T, dtype=np.int32)
     tr_side = np.zeros(T, dtype=np.int32)
@@ -604,57 +403,93 @@ def _mr_loop_jit_impl(
     tr_pkg_yield = np.zeros(T, dtype=np.float64)
     n_trades = 0
 
-    pos = np.zeros(N, dtype=np.float64)
-    cash = initial_capital
-    state = 0
-    cooldown = 0
-    entry_bar = -1
-    entry_pkg_yield = 0.0
-    holding = 0
-    prev_equity = initial_capital
+    # -- Mutable state carried across bars --
+    pos = np.zeros(N, dtype=np.float64)  # current signed position per leg
+    cash = initial_capital               # running cash balance
+    state = _STATE_FLAT
+    cooldown = 0       # bars remaining before re-entry is allowed
+    entry_bar = -1     # bar index of the most recent entry (-1 = none)
+    entry_pkg_yield = 0.0  # package_yield_bps at entry (for TP/SL delta)
+    holding = 0        # bars held in current position (reset on entry/exit)
+    prev_equity = initial_capital  # previous bar's equity (for PnL diff)
 
     for t in range(T):
         code = _NO_ACTION
 
-        if state != 0:
-            pos_side = state
+        # ==================================================================
+        # BRANCH A: IN POSITION (state != 0)
+        # Priority: stop-loss / time-exit  ▸  take-profit  ▸  no action
+        # ==================================================================
+        if state != _STATE_FLAT:
+            pos_side = state   # +1 (LONG) or -1 (SHORT)
             holding += 1
 
+            # -- Direction-adjusted deltas for TP / SL evaluation --
+            # raw_yield_delta: how much the package yield moved since entry.
+            #   Positive = yield rose; negative = yield fell.
             raw_yield_delta = package_yield_bps[t] - entry_pkg_yield
+
+            # adj_yield_delta: flips sign so that *positive* = profitable.
+            #   LONG profits when yield *falls*  → -(+1)*(neg) = pos  ✓
+            #   SHORT profits when yield *rises* → -(-1)*(pos) = pos  ✓
             adj_yield_delta = -pos_side * raw_yield_delta
+
+            # adj_z: flips sign so that *positive* = z-score reverted toward 0.
+            #   LONG entered on z>0; reversion means z falling → -(+1)*(neg) = pos  ✓
+            #   SHORT entered on z<0; reversion means z rising → -(-1)*(pos) = pos  ✓
             adj_z = -pos_side * zscore[t]
 
+            # -- Check forced-exit triggers (SL and time) --
+            # SL: the position has lost more yield bps than the hard threshold.
             sl_triggered = adj_yield_delta < -sl_yield_hard
+            # Time: held too long (0 = disabled).
             time_triggered = (max_holding_bars > 0) and (holding >= max_holding_bars)
 
+            # -- Check take-profit triggers --
+            # Soft TP: both z-score reverted AND yield moved favourably.
             tp_z_cond = adj_z > tp_zscore_soft
             tp_ys_cond = adj_yield_delta > tp_yield_soft
+            # Hard TP: yield profit alone exceeds the hard threshold.
             tp_yh_cond = adj_yield_delta > tp_yield_hard
             tp_triggered = (tp_z_cond and tp_ys_cond) or tp_yh_cond
 
+            # ---- SL / time-exit (forced – no cost gate) ----
             if sl_triggered or time_triggered:
-                is_sl = sl_triggered
+                is_sl = sl_triggered  # SL takes priority when both fire
+                # Try to fill the exit by walking the book for each leg.
+                # Longs sell into the bid; shorts buy from the ask.
                 all_filled = True
                 exit_vwaps = np.empty(N, dtype=np.float64)
                 for i in range(N):
                     if abs(pos[i]) < 1e-15:
+                        # Zero-size leg: no fill needed, use mid for record.
                         exit_vwaps[i] = mid_px[t, i]
                         continue
                     qty_abs = abs(pos[i])
                     if pos[i] > 0:
+                        # Long leg → sell into the bid side.
                         filled, vwap = _walk_book_jit(
-                            bid_px[t, i], bid_sz[t, i],
-                            qty_abs, max_levels, haircut)
+                            bid_px[t, i], bid_sz[t, i], qty_abs, max_levels, haircut
+                        )
                     else:
+                        # Short leg → buy from the ask side.
                         filled, vwap = _walk_book_jit(
-                            ask_px[t, i], ask_sz[t, i],
-                            qty_abs, max_levels, haircut)
+                            ask_px[t, i], ask_sz[t, i], qty_abs, max_levels, haircut
+                        )
                     if filled < qty_abs - 1e-10:
+                        # Not enough liquidity to close this leg; abort
+                        # the entire exit and retry next bar.
                         all_filled = False
                         break
                     exit_vwaps[i] = vwap
 
                 if all_filled:
+                    # -- Execute the forced exit --
+                    # Settle cash: for each leg, cash += pos[i] * vwap[i].
+                    #   Long leg (pos>0) sold at vwap → cash increases.
+                    #   Short leg (pos<0) bought at vwap → cash decreases.
+                    # Basket cost: sum of |vwap - mid| * |size| across legs
+                    #   (always ≥ 0, measures total market-impact / spread cost).
                     bcost = 0.0
                     for i in range(N):
                         if abs(pos[i]) < 1e-15:
@@ -662,6 +497,7 @@ def _mr_loop_jit_impl(
                         cash += pos[i] * exit_vwaps[i]
                         bcost += abs(exit_vwaps[i] - mid_px[t, i]) * abs(pos[i])
 
+                    # Record the trade (sizes are negated: closing the position).
                     tr_bar[n_trades] = t
                     tr_type[n_trades] = _TRADE_EXIT_SL if is_sl else _TRADE_EXIT_TIME
                     tr_side[n_trades] = pos_side
@@ -674,23 +510,33 @@ def _mr_loop_jit_impl(
                     tr_pkg_yield[n_trades] = package_yield_bps[t]
                     n_trades += 1
 
+                    # Reset to FLAT with post-exit quarantine.
                     for i in range(N):
                         pos[i] = 0.0
                     code = _EXIT_SL_FORCED if is_sl else _EXIT_TIME_FORCED
                     cooldown = sl_quarantine if is_sl else time_quarantine
-                    state = 0
+                    state = _STATE_FLAT
                     holding = 0
                     entry_bar = -1
                 else:
+                    # Liquidity insufficient — position kept, will retry.
                     code = _EXIT_SL_NO_LIQUIDITY if is_sl else _EXIT_TIME_NO_LIQUIDITY
 
+            # ---- Take-profit (requires valid book, liquidity, and cost gate) ----
             elif tp_triggered:
+                # Gate 1: market validity — bid ≤ mid ≤ ask on required legs.
                 valid = _check_market_valid_jit(
-                    bid_px[t, :, 0], ask_px[t, :, 0], mid_px[t],
-                    validate_scope, ref_idx, N)
+                    bid_px[t, :, 0],
+                    ask_px[t, :, 0],
+                    mid_px[t],
+                    validate_scope,
+                    ref_idx,
+                    N,
+                )
                 if not valid:
                     code = _EXIT_TP_INVALID_BOOK
                 else:
+                    # Gate 2: liquidity — walk book to fill each leg.
                     all_filled = True
                     exit_vwaps = np.empty(N, dtype=np.float64)
                     for i in range(N):
@@ -700,12 +546,12 @@ def _mr_loop_jit_impl(
                         qty_abs = abs(pos[i])
                         if pos[i] > 0:
                             filled, vwap = _walk_book_jit(
-                                bid_px[t, i], bid_sz[t, i],
-                                qty_abs, max_levels, haircut)
+                                bid_px[t, i], bid_sz[t, i], qty_abs, max_levels, haircut
+                            )
                         else:
                             filled, vwap = _walk_book_jit(
-                                ask_px[t, i], ask_sz[t, i],
-                                qty_abs, max_levels, haircut)
+                                ask_px[t, i], ask_sz[t, i], qty_abs, max_levels, haircut
+                            )
                         if filled < qty_abs - 1e-10:
                             all_filled = False
                             break
@@ -714,24 +560,38 @@ def _mr_loop_jit_impl(
                     if not all_filled:
                         code = _EXIT_TP_NO_LIQUIDITY
                     else:
+                        # Gate 3: cost check — basket cost must be within the
+                        # acceptable budget derived from expected yield PnL.
+                        # bcost = Σ |vwap_i - mid_i| * |pos_i|
                         bcost = 0.0
                         for i in range(N):
                             bcost += abs(exit_vwaps[i] - mid_px[t, i]) * abs(pos[i])
 
+                        # acc_cost = acceptable cost in price units.
+                        # ref_dv01_not = DV01 exposure of the ref leg in
+                        #   price units per bp: |pos_ref| * dv01_ref.
+                        # acc_yield = yield budget in bps after subtracting
+                        #   the TP cost premium.
+                        # acc_cost = acc_yield * ref_dv01_not  converts
+                        #   from yield-bps space to price-unit space.
                         ref_dv01_not = abs(pos[ref_idx]) * dv01[t, ref_idx]
-                        acc_yield = (yield_pnl_multiplier
-                                     * expected_yield_pnl_bps[t]
-                                     - tp_cost_premium)
+                        acc_yield = (
+                            yield_pnl_multiplier * expected_yield_pnl_bps[t]
+                            - tp_cost_premium
+                        )
                         acc_cost = acc_yield * ref_dv01_not
 
                         if acc_cost <= 0.0 or bcost > acc_cost:
                             code = _EXIT_TP_TOO_WIDE
                         else:
+                            # -- Execute the TP exit --
+                            # Settle cash for each leg.
                             for i in range(N):
                                 if abs(pos[i]) < 1e-15:
                                     continue
                                 cash += pos[i] * exit_vwaps[i]
 
+                            # Record the trade.
                             tr_bar[n_trades] = t
                             tr_type[n_trades] = _TRADE_EXIT_TP
                             tr_side[n_trades] = pos_side
@@ -744,58 +604,96 @@ def _mr_loop_jit_impl(
                             tr_pkg_yield[n_trades] = package_yield_bps[t]
                             n_trades += 1
 
+                            # Reset to FLAT with TP quarantine.
                             for i in range(N):
                                 pos[i] = 0.0
                             code = _EXIT_TP_OK
                             cooldown = tp_quarantine
-                            state = 0
+                            state = _STATE_FLAT
                             holding = 0
                             entry_bar = -1
             else:
+                # In position but no exit trigger — hold.
                 code = _NO_ACTION
 
-        elif state == 0:
+        # ==================================================================
+        # BRANCH B: FLAT (state == 0) — cooldown or entry attempt
+        # ==================================================================
+        elif state == _STATE_FLAT:
             if cooldown > 0:
+                # Still in post-exit quarantine; decrement and skip.
                 cooldown -= 1
                 if abs(zscore[t]) > entry_z_threshold:
+                    # Signal present but blocked by cooldown.
                     code = _ENTRY_IN_COOLDOWN
                 else:
                     code = _NO_ACTION
+
             elif abs(zscore[t]) > entry_z_threshold:
-                intended_side = 1 if zscore[t] > 0 else -1
+                # --- Entry attempt ---
+                # Step 1: determine direction.
+                #   zscore > 0 → package is cheap → go LONG (+1).
+                #   zscore < 0 → package is expensive → go SHORT (-1).
+                intended_side = _STATE_LONG if zscore[t] > 0 else _STATE_SHORT
+
+                # Step 2: compute DV01-based leg sizes.
+                # ref_dv01_t = price change of the ref leg per 1 bp yield
+                #   move per 1 unit of par notional.
                 ref_dv01_t = dv01[t, ref_idx]
                 if ref_dv01_t < 1e-15:
+                    # Ref leg DV01 is zero/missing — cannot size the basket.
                     code = _ENTRY_INVALID_BOOK
                 else:
                     sizes_ok = True
                     trade_sizes = np.empty(N, dtype=np.float64)
                     for i in range(N):
                         if dv01[t, i] < 1e-15:
+                            # Any leg with zero DV01 → cannot compute size.
                             sizes_ok = False
                             break
-                        trade_sizes[i] = (intended_side
-                                          * target_notional_ref
-                                          * ref_dv01_t
-                                          * hedge_ratios[i]
-                                          / dv01[t, i])
+                        # size_i = side * notional_ref * dv01_ref * hr_i / dv01_i
+                        # This ensures each leg's DV01 contribution matches
+                        # the intended hedge ratio in yield space.
+                        trade_sizes[i] = (
+                            intended_side
+                            * target_notional_ref
+                            * ref_dv01_t
+                            * hedge_ratios[i]
+                            / dv01[t, i]
+                        )
                     if not sizes_ok:
                         code = _ENTRY_INVALID_BOOK
                     else:
+                        # Step 3: compute the acceptable cost budget.
+                        # basket_dv01_ref = total ref-leg DV01 exposure in
+                        #   price units: notional * dv01_ref.
+                        # acc_yield = yield budget (bps) after premium.
+                        # acc_cost  = budget converted to price units.
                         basket_dv01_ref = target_notional_ref * ref_dv01_t
-                        acc_yield = (yield_pnl_multiplier
-                                     * expected_yield_pnl_bps[t]
-                                     - entry_cost_premium)
+                        acc_yield = (
+                            yield_pnl_multiplier * expected_yield_pnl_bps[t]
+                            - entry_cost_premium
+                        )
                         acc_cost = acc_yield * basket_dv01_ref
 
                         if acc_cost <= 0.0:
+                            # Budget is non-positive → too expensive to enter.
                             code = _ENTRY_TOO_WIDE
                         else:
+                            # Step 4: validate market data (bid ≤ mid ≤ ask).
                             valid = _check_market_valid_jit(
-                                bid_px[t, :, 0], ask_px[t, :, 0],
-                                mid_px[t], validate_scope, ref_idx, N)
+                                bid_px[t, :, 0],
+                                ask_px[t, :, 0],
+                                mid_px[t],
+                                validate_scope,
+                                ref_idx,
+                                N,
+                            )
                             if not valid:
                                 code = _ENTRY_INVALID_BOOK
                             else:
+                                # Step 5: walk the L2 book to fill each leg.
+                                # Buys lift the ask; sells hit the bid.
                                 fill_vwaps = np.empty(N, dtype=np.float64)
                                 all_filled = True
                                 for i in range(N):
@@ -804,13 +702,23 @@ def _mr_loop_jit_impl(
                                         continue
                                     qty_abs = abs(trade_sizes[i])
                                     if trade_sizes[i] > 0:
+                                        # Buying → lift the ask.
                                         filled, vwap = _walk_book_jit(
-                                            ask_px[t, i], ask_sz[t, i],
-                                            qty_abs, max_levels, haircut)
+                                            ask_px[t, i],
+                                            ask_sz[t, i],
+                                            qty_abs,
+                                            max_levels,
+                                            haircut,
+                                        )
                                     else:
+                                        # Selling → hit the bid.
                                         filled, vwap = _walk_book_jit(
-                                            bid_px[t, i], bid_sz[t, i],
-                                            qty_abs, max_levels, haircut)
+                                            bid_px[t, i],
+                                            bid_sz[t, i],
+                                            qty_abs,
+                                            max_levels,
+                                            haircut,
+                                        )
                                     if filled < qty_abs - 1e-10:
                                         all_filled = False
                                         break
@@ -819,17 +727,26 @@ def _mr_loop_jit_impl(
                                 if not all_filled:
                                     code = _ENTRY_NO_LIQUIDITY
                                 else:
+                                    # Step 6: cost gate.
+                                    # bcost = Σ |vwap_i - mid_i| * |size_i|
+                                    # Must not exceed acc_cost.
                                     bcost = 0.0
                                     for i in range(N):
-                                        bcost += (abs(fill_vwaps[i] - mid_px[t, i])
-                                                  * abs(trade_sizes[i]))
+                                        bcost += abs(
+                                            fill_vwaps[i] - mid_px[t, i]
+                                        ) * abs(trade_sizes[i])
                                     if bcost > acc_cost:
                                         code = _ENTRY_TOO_WIDE
                                     else:
+                                        # Step 7: execute entry.
+                                        # Pay cash for buys, receive cash for
+                                        # sells: cash -= size_i * vwap_i.
+                                        # Accumulate position.
                                         for i in range(N):
                                             cash -= trade_sizes[i] * fill_vwaps[i]
                                             pos[i] += trade_sizes[i]
 
+                                        # Record the entry trade.
                                         tr_bar[n_trades] = t
                                         tr_type[n_trades] = _TRADE_ENTRY
                                         tr_side[n_trades] = intended_side
@@ -842,21 +759,29 @@ def _mr_loop_jit_impl(
                                         tr_pkg_yield[n_trades] = package_yield_bps[t]
                                         n_trades += 1
 
+                                        # Transition FLAT → LONG/SHORT.
                                         code = _ENTRY_OK
                                         state = intended_side
                                         entry_bar = t
                                         entry_pkg_yield = package_yield_bps[t]
                                         holding = 0
             else:
+                # No signal — nothing to do.
                 code = _ENTRY_NO_SIGNAL
 
+        # ==================================================================
+        # End-of-bar bookkeeping: MTM equity, PnL, snapshot to output arrays
+        # ==================================================================
+        # equity = cash + Σ pos_i * mid_i  (mark-to-market)
         equity_t = cash
         for i in range(N):
             equity_t += pos[i] * mid_px[t, i]
 
+        # Bar PnL = change in equity from the previous bar.
         pnl_t = equity_t - prev_equity
         prev_equity = equity_t
 
+        # Write this bar's snapshot to the output arrays.
         for i in range(N):
             out_pos[t, i] = pos[i]
         out_cash[t] = cash
@@ -867,9 +792,23 @@ def _mr_loop_jit_impl(
         out_holding[t] = holding
 
     return (
-        out_pos, out_cash, out_equity, out_pnl, out_codes, out_state,
-        out_holding, tr_bar, tr_type, tr_side, tr_sizes, tr_vwaps,
-        tr_mids, tr_cost, tr_code, tr_pkg_yield, n_trades,
+        out_pos,
+        out_cash,
+        out_equity,
+        out_pnl,
+        out_codes,
+        out_state,
+        out_holding,
+        tr_bar,
+        tr_type,
+        tr_side,
+        tr_sizes,
+        tr_vwaps,
+        tr_mids,
+        tr_cost,
+        tr_code,
+        tr_pkg_yield,
+        n_trades,
     )
 
 

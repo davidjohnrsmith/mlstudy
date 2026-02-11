@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from typing_extensions import Literal  # noqa: UP035
 
-from mlstudy.trading.backtest.engine import BacktestConfig, SizingMode
+from mlstudy.trading.backtest.old.engine import BacktestConfig, SizingMode
 from mlstudy.trading.backtest.metrics import BacktestMetrics, compute_metrics
 from mlstudy.core.data.session import add_session_flags, is_rebalance_bar
 from mlstudy.trading.strategy.structures.selection.leg_selection import (

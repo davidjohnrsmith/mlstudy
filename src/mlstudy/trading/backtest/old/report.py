@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from mlstudy.trading.backtest.engine import BacktestResult
+from mlstudy.trading.backtest.old.engine import BacktestResult
 from mlstudy.trading.backtest.metrics import BacktestMetrics, compute_metrics
 
 # Optional matplotlib import
@@ -142,7 +142,7 @@ def generate_report(
 
     # Regime diagnostics (if provided)
     if regime_data is not None:
-        from mlstudy.trading.backtest.regime_diagnostics import (
+        from mlstudy.trading.backtest.old.regime_diagnostics import (
             compute_regime_diagnostics,
             save_regime_plots,
         )
