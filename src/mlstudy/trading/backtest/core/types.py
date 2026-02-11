@@ -349,3 +349,107 @@ class BacktestConfig:
     data: DataPolicyConfig = DataPolicyConfig()
     accounting: AccountingConfig = AccountingConfig()
     portfolio: PortfolioInitConfig = PortfolioInitConfig()
+
+
+
+
+class ExitReason(IntEnum):
+    NONE = 0
+    TAKE_PROFIT = 10
+    STOP_LOSS = 11
+    MAX_HOLDING = 12
+    SIGNAL_EXIT = 13
+    DATA_FLATTEN = 20
+    RISK_FLATTEN = 21
+
+
+class EntryBlockReason(IntEnum):
+    NONE = 0
+    NOT_FLAT = 10
+    COOLDOWN = 11
+    LIQUIDITY = 12
+    DATA_MISSING = 13
+    RISK_BLOCK = 14
+
+
+class StopMode(IntEnum):
+    NONE = 0
+    PER_TRADE_PNL = 1         # compare current equity vs equity at entry
+    EQUITY_DRAWDOWN = 2       # compare current equity vs peak equity
+
+
+class EntryTrigger(IntEnum):
+    LEVEL = 0                 # z(t) beyond entry -> enter (if flat)
+    CROSSING = 1              # must cross threshold vs t-1
+
+
+class BasketFillMode(IntEnum):
+    INDEPENDENT = 0           # allow leg-by-leg feasibility (we still gate entry on both legs by default)
+    ATOMIC = 1                # require full basket feasible at once (recommended for gating)
+
+
+@dataclass(frozen=True)
+class GovernanceConfig:
+    """
+    Governance / implementability overlay.
+
+    mode:
+      - "SIGNAL_OWNED": do not override targets; no stop/cooldown gating (engine follows inputs.controls)
+      - "IMPLEMENTABILITY_OWNED": overlay can block entry, force exits, apply cooldowns
+    """
+    enabled: bool = False
+    mode: Literal["SIGNAL_OWNED", "IMPLEMENTABILITY_OWNED"] = "SIGNAL_OWNED"
+
+    # Entry semantics
+    entry_trigger: EntryTrigger = EntryTrigger.LEVEL
+    skip_on_failed_entry: bool = True  # your preference (no pending retries)
+
+    # Tradability / liquidity gate
+    entry_liquidity_gate: bool = True
+    exit_liquidity_gate: bool = False  # often False: you can always try to get out (partial ok)
+    basket_fill_mode: BasketFillMode = BasketFillMode.ATOMIC
+
+    # Use these assumptions for feasibility checks (if None -> use execution config values)
+    gate_size_haircut: Optional[float] = None
+    gate_max_levels_to_cross: Optional[int] = None
+
+    # Stop / time exits
+    stop_mode: StopMode = StopMode.NONE
+    stop_value: float = 0.0            # PER_TRADE_PNL: currency loss threshold (positive number)
+                                       # EQUITY_DRAWDOWN: fraction (e.g. 0.05 for 5%)
+    max_holding_bars: int = 0          # 0 disables time stop
+
+    # Cooldowns by exit reason
+    cooldown_after_tp: int = 0
+    cooldown_after_stop: int = 0
+    cooldown_after_time: int = 0
+
+
+@dataclass
+class GovernanceState:
+    """
+    Stateful overlay memory (single basket / single portfolio).
+    If you have multiple portfolios, store arrays per-portfolio.
+
+    pos_side: -1 short, 0 flat, +1 long (basket-level direction)
+    entry_bar: index of entry bar (when we accepted entry)
+    entry_equity: equity when we accepted entry (for per-trade stop)
+    cooldown_remaining: bars remaining where entry is blocked and target forced flat
+    peak_equity: for drawdown stop
+    """
+    pos_side: int = 0
+    entry_bar: int = -1
+    entry_equity: float = 0.0
+    cooldown_remaining: int = 0
+    peak_equity: float = 0.0
+
+
+@dataclass(frozen=True)
+class GovernanceDecision:
+    """
+    Output per bar from overlay.
+    """
+    target_leg: np.ndarray               # (N,) executable target in leg space
+    exit_reason: int = int(ExitReason.NONE)
+    entry_block_reason: int = int(EntryBlockReason.NONE)
+    cooldown_remaining: int = 0
