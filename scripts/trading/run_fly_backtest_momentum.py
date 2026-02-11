@@ -334,7 +334,7 @@ def generate_momentum_signal(
     Returns:
         Signal series (-1, 0, 1).
     """
-    from mlstudy.trading.strategy.momentum.momentum import (
+    from mlstudy.trading.strategy.alpha.momentum.momentum import (
         breakout_signal,
         combine_momentum_signals,
         ema_crossover_signal,
@@ -445,8 +445,8 @@ def run_backtest_with_signal(
     Returns:
         Dict with pnl_df, metrics, etc.
     """
-    from mlstudy.trading.strategy.structures.specs.fly import select_fly_legs
-    from mlstudy.trading.strategy.structures.specs.fly import build_fly
+    from mlstudy.trading.strategy.structures.selection.curve_selection import select_fly_legs
+    from mlstudy.trading.strategy.structures.specs.fly.old.fly import build_fly
 
     # Select fly legs
     legs_table = select_fly_legs(
@@ -555,8 +555,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Signal type: {args.signal}")
 
     # Build fly and get fly yield
-    from mlstudy.trading.strategy.structures.specs.fly import select_fly_legs
-    from mlstudy.trading.strategy.structures.specs.fly import build_fly
+    from mlstudy.trading.strategy.structures.selection.curve_selection import select_fly_legs
+    from mlstudy.trading.strategy.structures.specs.fly.old.fly import build_fly
 
     legs_table = select_fly_legs(
         panel_df,

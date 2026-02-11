@@ -1,6 +1,6 @@
 """Shared construction primitives for spread trading."""
 
-# from mlstudy.trading.strategy.structures.construction import (
+# from mlstudy.trading.strategy.structures.construction.construction import (
 #     changes_residual_3leg,
 #     enforce_dv01_neutral,
 #     fit_ar1_half_life,

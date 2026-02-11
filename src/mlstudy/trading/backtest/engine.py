@@ -14,6 +14,8 @@ import pandas as pd
 from numpy.typing import NDArray
 
 
+
+
 class SizingMode(Enum):
     """Position sizing mode."""
 
@@ -359,7 +361,8 @@ def backtest_fly_from_panel(
     Returns:
         BacktestResult with daily P&L.
     """
-    from mlstudy.trading.strategy.structures.specs.fly import build_fly
+    from mlstudy.trading.strategy.structures.specs.fly.old.fly import build_fly
+    
     from mlstudy.trading.strategy.alpha.mean_reversion.signals import build_signal_dataframe
 
     # Build fly

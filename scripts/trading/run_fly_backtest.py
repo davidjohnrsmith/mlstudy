@@ -41,7 +41,7 @@ from mlstudy.trading.backtest import (
     generate_report,
     print_metrics_summary,
 )
-from mlstudy.trading.strategy.structures.specs.fly import select_fly_legs
+from mlstudy.trading.strategy.structures.selection.curve_selection import select_fly_legs
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
