@@ -222,5 +222,6 @@ def run_backtest(
         float(cfg.size_haircut),
         int(scope),
         float(cfg.initial_capital),
+        int(VALIDATE_REF_ONLY),
     )
     return MRBacktestResults.from_loop_output(raw)

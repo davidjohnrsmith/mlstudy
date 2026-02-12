@@ -36,6 +36,8 @@ from mlstudy.trading.backtest.mean_reversion import (
     STATE_FLAT,
     STATE_LONG,
     STATE_SHORT,
+    STATE_SL_COOLDOWN,
+    STATE_TP_COOLDOWN,
     TRADE_ENTRY,
     TRADE_EXIT_SL,
     TRADE_EXIT_TP,
@@ -257,7 +259,8 @@ class TestMRBacktestEndToEnd:
         res, d = self._run()
         tb = d["tp_bar"]
         assert res.codes[tb] == EXIT_TP_OK
-        assert res.state[tb] == STATE_FLAT
+        # tp_quarantine_bars=2 > 0 → enters TP_COOLDOWN state
+        assert res.state[tb] == STATE_TP_COOLDOWN
         # Position should be flat after TP
         assert np.all(np.abs(res.positions[tb]) < 1e-10)
 
@@ -265,7 +268,8 @@ class TestMRBacktestEndToEnd:
         res, d = self._run()
         sb = d["sl_bar"]
         assert res.codes[sb] == EXIT_SL_FORCED
-        assert res.state[sb] == STATE_FLAT
+        # sl_quarantine_bars=3 > 0 → enters SL_COOLDOWN state
+        assert res.state[sb] == STATE_SL_COOLDOWN
 
     def test_cooldown_after_tp(self):
         """After TP at bar tp_bar, next 2 bars should be in cooldown."""
@@ -279,9 +283,9 @@ class TestMRBacktestEndToEnd:
         # Check that entry signals during cooldown produce ENTRY_IN_COOLDOWN
         # Our scripted data has zscore=0 during cooldown, so we expect NO_ACTION
         # rather than IN_COOLDOWN (no signal to trigger entry).
-        # But verify state is FLAT during cooldown:
-        assert res.state[tb + 1] == STATE_FLAT
-        assert res.state[tb + 2] == STATE_FLAT
+        # Verify state is TP_COOLDOWN during cooldown:
+        assert res.state[tb + 1] == STATE_TP_COOLDOWN
+        assert res.state[tb + 2] == STATE_TP_COOLDOWN
 
     def test_cooldown_after_sl(self):
         """After SL, sl_quarantine_bars=3 bars should block entry."""
@@ -289,7 +293,7 @@ class TestMRBacktestEndToEnd:
         sb = d["sl_bar"]
         for offset in range(1, 4):
             if sb + offset < d["T"]:
-                assert res.state[sb + offset] == STATE_FLAT
+                assert res.state[sb + offset] == STATE_SL_COOLDOWN
 
     def test_re_entry_after_cooldown(self):
         """After TP cooldown, re-entry should happen."""

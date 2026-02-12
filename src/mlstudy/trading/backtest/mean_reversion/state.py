@@ -52,6 +52,6 @@ class TradeType(IntEnum):
 NO_POSITION_STATES = (
     State.STATE_FLAT.value,
     State.STATE_TP_COOLDOWN.value,
-    State.STATE_TP_COOLDOWN.value,
+    State.STATE_SL_COOLDOWN.value,
     State.STATE_TIME_COOLDOWN.value,
 )

@@ -18,7 +18,7 @@ class MRBacktestResults:
     equity    : (T,)    total equity (cash + MTM).
     pnl       : (T,)    step PnL (equity[t] - equity[t-1]).
     codes     : (T,)    int32 attempt/outcome code per bar.
-    state     : (T,)    int32 state at end of bar (0 flat, +1 long, -1 short).
+    state     : (T,)    int32 state at end of bar (0 flat, +1 long, -1 short, 2-4 cooldown).
     holding   : (T,)    int32 bars held in current position (0 when flat).
 
     Per-trade arrays (length *n_trades*)
@@ -27,6 +27,7 @@ class MRBacktestResults:
     tr_type      : 0=entry, 1=exit_tp, 2=exit_sl, 3=exit_time.
     tr_side      : +1 long, -1 short.
     tr_sizes     : (n_trades, N)  signed leg sizes.
+    tr_risks     : (n_trades, N)  signed DV01-weighted risk per leg.
     tr_vwaps     : (n_trades, N)  fill VWAPs per leg.
     tr_mids      : (n_trades, N)  mid prices at fill time per leg.
     tr_cost      : basket execution cost (always >= 0).
@@ -48,6 +49,7 @@ class MRBacktestResults:
     tr_type: np.ndarray
     tr_side: np.ndarray
     tr_sizes: np.ndarray
+    tr_risks: np.ndarray
     tr_vwaps: np.ndarray
     tr_mids: np.ndarray
     tr_cost: np.ndarray
@@ -58,7 +60,7 @@ class MRBacktestResults:
     @staticmethod
     def from_loop_output(out: tuple) -> "MRBacktestResults":
         """Construct from the raw tuple returned by :func:`mr_loop` / ``mr_loop_jit``."""
-        n = int(out[16])
+        n = int(out[17])
         return MRBacktestResults(
             positions=out[0],
             cash=out[1],
@@ -71,10 +73,11 @@ class MRBacktestResults:
             tr_type=out[8][:n],
             tr_side=out[9][:n],
             tr_sizes=out[10][:n],
-            tr_vwaps=out[11][:n],
-            tr_mids=out[12][:n],
-            tr_cost=out[13][:n],
-            tr_code=out[14][:n],
-            tr_pkg_yield=out[15][:n],
+            tr_risks=out[11][:n],
+            tr_vwaps=out[12][:n],
+            tr_mids=out[13][:n],
+            tr_cost=out[14][:n],
+            tr_code=out[15][:n],
+            tr_pkg_yield=out[16][:n],
             n_trades=n,
         )

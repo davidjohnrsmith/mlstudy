@@ -139,6 +139,7 @@ def _make_synthetic_results() -> MRBacktestResults:
         tr_type=tr_type,
         tr_side=tr_side,
         tr_sizes=tr_sizes,
+        tr_risks=tr_sizes.copy(),  # synthetic risk = sizes (no dv01 scaling)
         tr_vwaps=vwaps,
         tr_mids=mids,
         tr_cost=tr_cost,

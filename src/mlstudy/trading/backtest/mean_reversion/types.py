@@ -1,13 +1,13 @@
 """
 Attempt/outcome codes and constants for the mean-reversion backtester.
 
-Layout: category * 100 + suffix
-  Category: 0=NO_ACTION, 1=ENTRY, 2=EXIT_TP, 3=EXIT_SL, 4=EXIT_TIME
-  Suffix:   0=OK, 1=NO_SIGNAL, 2=INVALID_BOOK, 3=NO_LIQUIDITY,
-            4=TOO_WIDE, 5=IN_COOLDOWN, 6=NOT_FLAT, 7=FORCED
+The canonical IntEnum definitions for the loop's action codes live in
+:mod:`.state`.  This module re-exports ``ActionCode`` from there and
+provides backward-compatible module-level aliases.
 
-All values are ``IntEnum`` members (and therefore plain ``int`` subclasses)
-so they work in arithmetic, comparisons, and as numpy dtype values.
+``State`` and ``TradeType`` are defined locally with short member names
+(``FLAT`` vs ``STATE_FLAT``) for backward compatibility; their integer
+values match :mod:`.state` exactly.
 
 .. note::
 
@@ -20,50 +20,8 @@ from __future__ import annotations
 
 from enum import IntEnum
 
-
-# ---------------------------------------------------------------------------
-# Attempt / outcome codes
-# ---------------------------------------------------------------------------
-
-
-class ActionCode(IntEnum):
-    """Outcome code written to ``out_codes`` on every bar.
-
-    Encoding: ``category * 100 + suffix``.
-
-    ====  ============  ====================================================
-    Cat   Prefix        Meaning
-    ====  ============  ====================================================
-    0     NO_ACTION     No entry/exit attempted (flat & quiet, or holding).
-    1     ENTRY_*       Entry attempted.
-    2     EXIT_TP_*     Take-profit exit attempted.
-    3     EXIT_SL_*     Stop-loss exit attempted.
-    4     EXIT_TIME_*   Time-limit exit attempted.
-    ====  ============  ====================================================
-    """
-
-    NO_ACTION = 0
-
-    ENTRY_OK = 100
-    ENTRY_NO_SIGNAL = 101
-    ENTRY_INVALID_BOOK = 102
-    ENTRY_NO_LIQUIDITY = 103
-    ENTRY_TOO_WIDE = 104
-    ENTRY_IN_COOLDOWN = 105
-    ENTRY_NOT_FLAT = 106
-
-    EXIT_TP_OK = 200
-    EXIT_TP_INVALID_BOOK = 202
-    EXIT_TP_NO_LIQUIDITY = 203
-    EXIT_TP_TOO_WIDE = 204
-
-    EXIT_SL_OK = 300
-    EXIT_SL_NO_LIQUIDITY = 303
-    EXIT_SL_FORCED = 307
-
-    EXIT_TIME_OK = 400
-    EXIT_TIME_NO_LIQUIDITY = 403
-    EXIT_TIME_FORCED = 407
+from .state import ActionCode  # canonical source; re-exported
+from .state import State as _LoopState
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +37,7 @@ class ValidateScope(IntEnum):
 
 
 # ---------------------------------------------------------------------------
-# State constants
+# State constants  (short member names for backward compat)
 # ---------------------------------------------------------------------------
 
 
@@ -108,34 +66,35 @@ class TradeType(IntEnum):
 # ---------------------------------------------------------------------------
 # Backwards-compatible module-level aliases
 #
-# Every consumer currently does ``from .types import ENTRY_OK, ...`` so we
-# re-export every member as a module-level name.  Since IntEnum members ARE
-# ints, existing ``==`` / ``!=`` / dict-key / numpy comparisons keep working.
+# Values match what the loop in .loop actually emits (state.py ActionCode).
 # ---------------------------------------------------------------------------
 
 # ActionCode
 NO_ACTION: int = ActionCode.NO_ACTION
+NO_ACTION_NO_SIGNAL: int = ActionCode.NO_ACTION_NO_SIGNAL
+NO_ACTION_HOLD: int = ActionCode.NO_ACTION_HOLD
 
 ENTRY_OK: int = ActionCode.ENTRY_OK
-ENTRY_NO_SIGNAL: int = ActionCode.ENTRY_NO_SIGNAL
-ENTRY_INVALID_BOOK: int = ActionCode.ENTRY_INVALID_BOOK
-ENTRY_NO_LIQUIDITY: int = ActionCode.ENTRY_NO_LIQUIDITY
-ENTRY_TOO_WIDE: int = ActionCode.ENTRY_TOO_WIDE
-ENTRY_IN_COOLDOWN: int = ActionCode.ENTRY_IN_COOLDOWN
-ENTRY_NOT_FLAT: int = ActionCode.ENTRY_NOT_FLAT
+ENTRY_INVALID_BOOK: int = ActionCode.ENTRY_FAILED_INVALID_BOOK
+ENTRY_NO_LIQUIDITY: int = ActionCode.ENTRY_FAILED_NO_LIQUIDITY
+ENTRY_TOO_WIDE: int = ActionCode.ENTRY_FAILED_TOO_WIDE
+ENTRY_IN_COOLDOWN: int = ActionCode.ENTRY_FAILED_IN_COOLDOWN
+# Deprecated aliases — mapped to closest new equivalent
+ENTRY_NO_SIGNAL: int = ActionCode.NO_ACTION_NO_SIGNAL  # was 101, now 1
+ENTRY_NOT_FLAT: int = 106  # no longer emitted by the loop
 
 EXIT_TP_OK: int = ActionCode.EXIT_TP_OK
-EXIT_TP_INVALID_BOOK: int = ActionCode.EXIT_TP_INVALID_BOOK
-EXIT_TP_NO_LIQUIDITY: int = ActionCode.EXIT_TP_NO_LIQUIDITY
-EXIT_TP_TOO_WIDE: int = ActionCode.EXIT_TP_TOO_WIDE
+EXIT_TP_INVALID_BOOK: int = ActionCode.EXIT_FAILED_TP_INVALID_BOOK
+EXIT_TP_NO_LIQUIDITY: int = ActionCode.EXIT_FAILED_TP_NO_LIQUIDITY
+EXIT_TP_TOO_WIDE: int = ActionCode.EXIT_FAILED_TP_TOO_WIDE
 
 EXIT_SL_OK: int = ActionCode.EXIT_SL_OK
-EXIT_SL_NO_LIQUIDITY: int = ActionCode.EXIT_SL_NO_LIQUIDITY
-EXIT_SL_FORCED: int = ActionCode.EXIT_SL_FORCED
+EXIT_SL_NO_LIQUIDITY: int = ActionCode.EXIT_FAILED_SL_NO_LIQUIDITY
+EXIT_SL_FORCED: int = ActionCode.EXIT_SL_OK  # was 307; SL is always forced
 
 EXIT_TIME_OK: int = ActionCode.EXIT_TIME_OK
-EXIT_TIME_NO_LIQUIDITY: int = ActionCode.EXIT_TIME_NO_LIQUIDITY
-EXIT_TIME_FORCED: int = ActionCode.EXIT_TIME_FORCED
+EXIT_TIME_NO_LIQUIDITY: int = ActionCode.EXIT_FAILED_TIME_NO_LIQUIDITY
+EXIT_TIME_FORCED: int = ActionCode.EXIT_TIME_OK  # was 407; time-exit is always forced
 
 # ValidateScope
 VALIDATE_REF_ONLY: int = ValidateScope.REF_ONLY
@@ -145,6 +104,11 @@ VALIDATE_ALL_LEGS: int = ValidateScope.ALL_LEGS
 STATE_FLAT: int = State.FLAT
 STATE_LONG: int = State.LONG
 STATE_SHORT: int = State.SHORT
+
+# Cooldown states (from .state — used in the loop's output)
+STATE_TP_COOLDOWN: int = int(_LoopState.STATE_TP_COOLDOWN)
+STATE_SL_COOLDOWN: int = int(_LoopState.STATE_SL_COOLDOWN)
+STATE_TIME_COOLDOWN: int = int(_LoopState.STATE_TIME_COOLDOWN)
 
 # TradeType
 TRADE_ENTRY: int = TradeType.ENTRY
