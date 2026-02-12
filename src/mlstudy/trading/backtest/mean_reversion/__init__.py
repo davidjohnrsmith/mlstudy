@@ -3,6 +3,7 @@
 from . import analysis, sweep
 from .engine import MRBacktestConfig, run_backtest
 from .results import MRBacktestResults
+from .sweep import MetricsOnlyResult, SweepError, SweepSummary
 
 try:
     from . import plots
@@ -98,6 +99,10 @@ __all__ = [
     "ValidateScope",
     # helpers
     "CODE_NAMES",
+    # sweep dataclasses
+    "MetricsOnlyResult",
+    "SweepSummary",
+    "SweepError",
     # analysis, plots & sweep
     "analysis",
     "plots",
