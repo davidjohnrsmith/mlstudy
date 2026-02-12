@@ -58,8 +58,9 @@ _ENTRY_FAILED_TOO_WIDE = int(ActionCode.ENTRY_FAILED_TOO_WIDE)
 _ENTRY_FAILED_NO_LIQUIDITY = int(ActionCode.ENTRY_FAILED_NO_LIQUIDITY)
 _ENTRY_FAILED_IN_COOLDOWN = int(ActionCode.ENTRY_FAILED_IN_COOLDOWN)
 _EXIT_TP_OK = int(ActionCode.EXIT_TP_OK)
-_EXIT_FAILED_TP_NO_LIQUIDITY = int(ActionCode.EXIT_FAILED_TP_NO_LIQUIDITY)
+_EXIT_FAILED_TP_INVALID_BOOK = int(ActionCode.EXIT_FAILED_TP_INVALID_BOOK)
 _EXIT_FAILED_TP_TOO_WIDE = int(ActionCode.EXIT_FAILED_TP_TOO_WIDE)
+_EXIT_FAILED_TP_NO_LIQUIDITY = int(ActionCode.EXIT_FAILED_TP_NO_LIQUIDITY)
 _EXIT_SL_OK = int(ActionCode.EXIT_SL_OK)
 _EXIT_FAILED_SL_NO_LIQUIDITY = int(ActionCode.EXIT_FAILED_SL_NO_LIQUIDITY)
 _EXIT_TIME_OK = int(ActionCode.EXIT_TIME_OK)
@@ -563,7 +564,7 @@ def _mr_loop_jit_impl(
                     is_validate_book_for_ref_only,
                 )
                 if not valid:
-                    code = _EXIT_FAILED_TP_NO_LIQUIDITY
+                    code = _EXIT_FAILED_TP_INVALID_BOOK
                 else:
                     # Gate 2: liquidity — walk book to fill each leg.
                     all_filled = True
