@@ -14,6 +14,8 @@ scikit-learn = "*"
 pyyaml = "*"
 xgboost = { version = "*", optional = true }
 lightgbm = { version = "*", optional = true }
+numba = "^0.63.1"
+black = "^26.1.0"
 
 [tool.poetry.extras]
 boosting = ["xgboost", "lightgbm"]

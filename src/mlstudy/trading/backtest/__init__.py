@@ -13,7 +13,7 @@ Provides:
 from __future__ import annotations
 
 # engine must be imported first (other modules depend on BacktestConfig)
-from mlstudy.trading.backtest.engine import (
+from mlstudy.trading.backtest.old.engine import (
     BacktestConfig,
     BacktestResult,
     SizingMode,
@@ -36,7 +36,7 @@ from mlstudy.trading.backtest.metrics import (
     compute_turnover,
     compute_win_loss_stats,
 )
-from mlstudy.trading.backtest.intraday import (
+from mlstudy.trading.backtest.old.intraday import (
     IntradayBacktestConfig,
     IntradayBacktestResult,
     aggregate_to_daily,

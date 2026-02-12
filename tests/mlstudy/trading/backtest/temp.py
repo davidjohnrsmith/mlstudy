@@ -8,3 +8,11 @@ from mlstudy.trading.backtest.core.types import (
     PortfolioMapping,
     Availability,
 )
+from mlstudy.trading.backtest.core.types import (
+    GovernanceConfig,
+    GovernanceState,
+    StopMode,
+    ExitReason,
+    EntryBlockReason,
+)
+from mlstudy.trading.backtest.lifecycle.overlay import GovernanceOverlay

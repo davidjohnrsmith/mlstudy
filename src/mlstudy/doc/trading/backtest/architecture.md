@@ -51,3 +51,14 @@
 - Store **truth positions in legs (N)**; portfolios (M) are mapped to legs via weights `W[t,m,i]` if used.
 - Execution uses L2 book snapshots; MTM typically uses mid = (best_bid+best_ask)/2 unless overridden.
 EOF
+
+
+
+
+
+
+
+
+
+
+

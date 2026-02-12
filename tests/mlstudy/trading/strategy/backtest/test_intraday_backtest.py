@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from mlstudy.trading.backtest import SizingMode
-from mlstudy.trading.backtest.intraday import (
+from mlstudy.trading.backtest.old.intraday import (
     IntradayBacktestConfig,
     IntradayBacktestResult,
     aggregate_to_daily,
