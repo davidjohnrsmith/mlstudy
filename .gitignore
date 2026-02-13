@@ -145,3 +145,4 @@ desktop.ini
 *.tmp
 *.temp
 scratch/
+claude_task/
