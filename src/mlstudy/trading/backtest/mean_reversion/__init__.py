@@ -4,6 +4,7 @@ from . import analysis, sweep
 from .engine import MRBacktestConfig, run_backtest
 from .results import MRBacktestResults
 from .sweep import MetricsOnlyResult, SweepError, SweepSummary
+from .sweep_rank import RankingPlan
 
 try:
     from . import plots
@@ -103,6 +104,7 @@ __all__ = [
     "MetricsOnlyResult",
     "SweepSummary",
     "SweepError",
+    "RankingPlan",
     # analysis, plots & sweep
     "analysis",
     "plots",

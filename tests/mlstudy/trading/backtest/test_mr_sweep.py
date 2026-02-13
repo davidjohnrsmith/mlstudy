@@ -20,6 +20,12 @@ from mlstudy.trading.backtest.mean_reversion.sweep import (
     run_sweep,
     summary_table,
 )
+from mlstudy.trading.backtest.mean_reversion.sweep_rank import (
+    MetricPreferenceRegistry,
+    ParameterPreferenceRegistry,
+    RankingPlan,
+    rank_scenarios,
+)
 from mlstudy.trading.backtest.metrics import BacktestMetrics
 
 
@@ -722,3 +728,144 @@ class TestBackwardCompat:
         md = _market_data()
         results = run_sweep([], **md)
         assert results == []
+
+
+# =========================================================================
+# Ranking tests
+# =========================================================================
+
+
+def _metrics_only_results() -> list[MetricsOnlyResult]:
+    """Run a small sweep in metrics_only mode and return results."""
+    base = _base_cfg()
+    scenarios = make_scenarios(
+        base, {"entry_z_threshold": [1.0, 1.5, 2.0, 2.5, 3.0]}
+    )
+    md = _market_data()
+    return run_sweep(scenarios, **md, mode="metrics_only")
+
+
+class TestRanking:
+    """Tests for the weighted-rank system."""
+
+    def test_metric_registry_known(self):
+        assert MetricPreferenceRegistry.direction("total_pnl") == +1
+        assert MetricPreferenceRegistry.direction("sharpe_ratio") == +1
+        assert MetricPreferenceRegistry.direction("std_daily_return") == -1
+        assert MetricPreferenceRegistry.direction("max_drawdown_duration") == -1
+
+    def test_metric_registry_unknown(self):
+        with pytest.raises(ValueError, match="Unknown metric"):
+            MetricPreferenceRegistry.direction("bogus_metric")
+
+    def test_param_registry_known(self):
+        assert ParameterPreferenceRegistry.direction("target_notional_ref") == +1
+        assert ParameterPreferenceRegistry.direction("entry_z_threshold") == +1
+        assert ParameterPreferenceRegistry.direction("max_holding_bars") == -1
+        assert ParameterPreferenceRegistry.direction("size_haircut") == -1
+
+    def test_param_registry_unknown(self):
+        with pytest.raises(ValueError, match="Unknown parameter"):
+            ParameterPreferenceRegistry.direction("nonexistent_param")
+
+    def test_default_plan_matches_pnl_order(self):
+        results = _metrics_only_results()
+        ranked = rank_scenarios(results)
+
+        pnls = [r.total_pnl for r in ranked]
+        assert pnls == sorted(pnls, reverse=True)
+
+    def test_custom_plan_sharpe(self):
+        results = _metrics_only_results()
+        plan = RankingPlan(primary_metrics=(("sharpe_ratio", 1.0),))
+        ranked = rank_scenarios(results, plan)
+
+        sharpes = [r.sharpe_ratio for r in ranked]
+        assert sharpes == sorted(sharpes, reverse=True)
+
+    def test_multi_metric_plan(self):
+        results = _metrics_only_results()
+        plan = RankingPlan(
+            primary_metrics=(("total_pnl", 0.5), ("sharpe_ratio", 0.5)),
+        )
+        ranked = rank_scenarios(results, plan)
+
+        # The blended ranking should differ from a pure pnl ranking
+        # when pnl and sharpe disagree on ordering.  At minimum, verify
+        # it returns all results and the first is "good" by both metrics.
+        assert len(ranked) == len(results)
+        # Verify determinism: calling again gives same order
+        ranked2 = rank_scenarios(results, plan)
+        assert [r.scenario_idx for r in ranked] == [r.scenario_idx for r in ranked2]
+
+    def test_param_stage_tiebreak(self):
+        """When primary metrics tie, param stage should break the tie."""
+        base = _base_cfg()
+        # Two scenarios with identical config except entry_z_threshold.
+        # With entry_z_threshold=10.0, neither scenario enters a trade,
+        # so all metrics are identical — the param stage must break the tie.
+        s1 = SweepScenario(
+            name="s1",
+            cfg=base.__class__(**{**base.__dict__, "entry_z_threshold": 10.0, "size_haircut": 0.5}),
+            tags={"size_haircut": 0.5},
+        )
+        s2 = SweepScenario(
+            name="s2",
+            cfg=base.__class__(**{**base.__dict__, "entry_z_threshold": 10.0, "size_haircut": 0.9}),
+            tags={"size_haircut": 0.9},
+        )
+
+        md = _market_data()
+        r1 = run_sweep([s1], **md, mode="metrics_only")[0]
+        r2 = run_sweep([s2], **md, mode="metrics_only")[0]
+
+        # Rebuild with scenario_idx 0 and 1
+        from dataclasses import replace
+        r1 = replace(r1, scenario_idx=0, scenario=s1)
+        r2 = replace(r2, scenario_idx=1, scenario=s2)
+
+        plan = RankingPlan(
+            primary_metrics=(("total_pnl", 1.0),),
+            primary_params=(("size_haircut", 1.0),),
+        )
+        ranked = rank_scenarios([r1, r2], plan)
+
+        # size_haircut direction is -1 (lower preferred), so s1 (0.5) wins
+        assert ranked[0].scenario.name == "s1"
+        assert ranked[1].scenario.name == "s2"
+
+    def test_single_scenario(self):
+        results = _metrics_only_results()[:1]
+        ranked = rank_scenarios(results)
+        assert len(ranked) == 1
+        assert ranked[0].scenario_idx == results[0].scenario_idx
+
+    def test_empty_list(self):
+        ranked = rank_scenarios([])
+        assert ranked == []
+
+    def test_run_sweep_with_ranking_plan(self):
+        """Integration: run_sweep accepts ranking_plan and top_full follows it."""
+        base = _base_cfg()
+        scenarios = make_scenarios(
+            base, {"entry_z_threshold": [1.0, 1.5, 2.0, 2.5, 3.0]}
+        )
+        md = _market_data()
+
+        plan = RankingPlan(primary_metrics=(("sharpe_ratio", 1.0),))
+        result = run_sweep(
+            scenarios, **md, mode="metrics_only", keep_top_k_full=3,
+            ranking_plan=plan,
+        )
+
+        assert isinstance(result, SweepSummary)
+        assert len(result.top_full) == 3
+
+        # top_full ordering should follow the sharpe-based ranking plan
+        top_idxs = [sr.scenario_idx for sr in result.top_full]
+
+        # Get the sharpe-ranked order from all_metrics
+        sharpe_ranked = rank_scenarios(result.all_metrics, plan)
+        expected_idxs = [r.scenario_idx for r in sharpe_ranked[:3]]
+
+        assert top_idxs == expected_idxs

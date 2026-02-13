@@ -8,9 +8,17 @@ from typing import Any
 
 import pandas as pd
 
+from .sweep_build import make_scenarios
 from .sweep_dispatch import _dispatch
 from .sweep_persist import _save_top_full
-from .sweep_types import MetricsOnlyResult, SweepResult, SweepScenario, SweepSummary
+from .sweep_rank import RankingPlan, rank_scenarios
+from .sweep_types import (
+    MetricsOnlyResult,
+    SweepError,
+    SweepResult,
+    SweepScenario,
+    SweepSummary,
+)
 from ..metrics import BacktestMetrics
 
 
@@ -34,6 +42,7 @@ def run_sweep(
     mode: str = "full",
     keep_top_k_full: int = 0,
     save_top_full_dir: str | Path | None = None,
+    ranking_plan: RankingPlan | None = None,
 ) -> list[SweepResult] | list[MetricsOnlyResult] | SweepSummary:
     if parallel and backend == "serial":
         warnings.warn(
@@ -75,14 +84,15 @@ def run_sweep(
     if keep_top_k_full <= 0:
         return metrics_results
 
-    ranked = sorted(metrics_results, key=lambda r: (-r.total_pnl, r.scenario_idx))
+    ranked = rank_scenarios(metrics_results, ranking_plan)
     top_k = ranked[:keep_top_k_full]
 
     top_indexed = [(r.scenario_idx, r.scenario) for r in top_k]
 
     top_full_results = _dispatch(top_indexed, market_data, backend, workers, csize, "full")
 
-    top_full_results.sort(key=lambda r: (-r.metrics.total_pnl, r.scenario_idx))
+    rank_order = {r.scenario_idx: i for i, r in enumerate(top_k)}
+    top_full_results.sort(key=lambda r: rank_order[r.scenario_idx])
 
     if save_top_full_dir is not None:
         _save_top_full(top_full_results, save_top_full_dir)

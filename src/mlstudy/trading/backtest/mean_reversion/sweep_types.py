@@ -26,6 +26,15 @@ class MetricsOnlyResult:
     sharpe_ratio: float
     code_counts: dict[str, int]
 
+    def metrics_dict(self) -> dict[str, float]:
+        return {
+            "total_pnl": self.total_pnl,
+            "final_equity": self.final_equity,
+            "n_trades": float(self.n_trades),
+            "max_drawdown": self.max_drawdown,
+            "sharpe_ratio": self.sharpe_ratio,
+        }
+
 
 @dataclass
 class SweepResult:
