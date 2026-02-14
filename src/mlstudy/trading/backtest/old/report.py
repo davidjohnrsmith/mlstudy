@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from mlstudy.trading.backtest.old.engine import BacktestResult
-from mlstudy.trading.backtest.metrics import BacktestMetrics, compute_metrics
+from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics, compute_metrics
 
 # Optional matplotlib import
 try:
