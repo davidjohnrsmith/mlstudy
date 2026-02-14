@@ -3,87 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .sweep_types import MetricsOnlyResult
-
-
-class MetricPreferenceRegistry:
-    """Direction registry for backtest metric names.
-
-    +1 means higher is better, -1 means lower is better.
-    """
-
-    _DIRECTIONS: dict[str, int] = {
-        # higher-is-better (+1)
-        "total_pnl": +1,
-        "final_equity": +1,
-        "mean_daily_return": +1,
-        "sharpe_ratio": +1,
-        "sortino_ratio": +1,
-        "max_drawdown": +1,  # <= 0; less negative = better
-        "calmar_ratio": +1,
-        "avg_holding_period": +1,
-        "hit_rate": +1,
-        "profit_factor": +1,
-        "avg_win": +1,
-        "avg_loss": +1,  # negative; less negative = better
-        "win_loss_ratio": +1,
-        "skewness": +1,
-        "var_95": +1,  # negative; less negative = better
-        "cvar_95": +1,
-        "n_trades": +1,
-        "pct_time_in_market": +1,
-        # lower-is-better (-1)
-        "std_daily_return": -1,
-        "max_drawdown_duration": -1,
-        "kurtosis": -1,
-        "turnover_annual": -1,
-    }
-
-    @classmethod
-    def direction(cls, name: str) -> int:
-        try:
-            return cls._DIRECTIONS[name]
-        except KeyError:
-            raise ValueError(
-                f"Unknown metric {name!r}; choose from {sorted(cls._DIRECTIONS)}"
-            )
-
-
-class ParameterPreferenceRegistry:
-    """Direction registry for MRBacktestConfig numeric fields.
-
-    +1 means higher is preferred, -1 means lower is preferred.
-    """
-
-    _DIRECTIONS: dict[str, int] = {
-        # higher-is-preferred (+1)
-        "target_notional_ref": +1,
-        "entry_z_threshold": +1,
-        "expected_yield_pnl_bps_multiplier": +1,
-        "entry_cost_premium_yield_bps": +1,
-        "tp_cost_premium_yield_bps": +1,
-        "sl_cost_premium_yield_bps": +1,
-        "tp_quarantine_bars": +1,
-        "sl_quarantine_bars": +1,
-        "time_quarantine_bars": +1,
-        "initial_capital": +1,
-        # lower-is-preferred (-1)
-        "take_profit_zscore_soft_threshold": -1,
-        "take_profit_yield_change_soft_threshold": -1,
-        "take_profit_yield_change_hard_threshold": -1,
-        "stop_loss_yield_change_hard_threshold": -1,
-        "max_holding_bars": -1,
-        "max_levels_to_cross": -1,
-        "size_haircut": -1,
-    }
-
-    @classmethod
-    def direction(cls, name: str) -> int:
-        try:
-            return cls._DIRECTIONS[name]
-        except KeyError:
-            raise ValueError(
-                f"Unknown parameter {name!r}; choose from {sorted(cls._DIRECTIONS)}"
-            )
+from ..metrics.metrics_registry import MetricPreferenceRegistry
+from ..parameters.parameters_registry import ParameterPreferenceRegistry
 
 
 @dataclass(frozen=True)
@@ -182,3 +103,5 @@ def rank_scenarios(
     decorated.sort()
 
     return [item[-1] for item in decorated]
+
+

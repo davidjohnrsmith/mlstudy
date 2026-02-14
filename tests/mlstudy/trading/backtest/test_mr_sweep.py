@@ -21,12 +21,12 @@ from mlstudy.trading.backtest.mean_reversion.sweep import (
     summary_table,
 )
 from mlstudy.trading.backtest.mean_reversion.sweep_rank import (
-    MetricPreferenceRegistry,
-    ParameterPreferenceRegistry,
     RankingPlan,
     rank_scenarios,
 )
-from mlstudy.trading.backtest.metrics import BacktestMetrics
+from mlstudy.trading.backtest.parameters.parameters_registry import ParameterPreferenceRegistry
+from mlstudy.trading.backtest.metrics.metrics_registry import MetricPreferenceRegistry
+from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 
 
 # =========================================================================

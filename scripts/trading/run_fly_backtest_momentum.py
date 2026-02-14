@@ -58,7 +58,7 @@ from mlstudy.trading.backtest import (
     SizingMode,
     print_metrics_summary,
 )
-from mlstudy.trading.backtest.metrics import compute_metrics
+from mlstudy.trading.backtest.metrics.metrics import compute_metrics
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

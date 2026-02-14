@@ -182,7 +182,7 @@ class TestToDataframe:
 
 class TestComputePerformanceMetrics:
     def test_returns_backtest_metrics(self, res):
-        from mlstudy.trading.backtest.metrics import BacktestMetrics
+        from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 
         metrics = compute_performance_metrics(res)
         assert isinstance(metrics, BacktestMetrics)
@@ -329,3 +329,120 @@ class TestPlots:
 
         fig = plot_slippage(res)
         assert isinstance(fig, matplotlib.figure.Figure)
+
+
+# ---------------------------------------------------------------------------
+# Metric enum & MetricsCalculator tests
+# ---------------------------------------------------------------------------
+
+import dataclasses
+import pandas as pd
+
+from mlstudy.trading.backtest.metrics.metrics import (
+    BacktestMetrics,
+    MetricCategory,
+    MetricsCalculator,
+    compute_metrics,
+)
+from mlstudy.trading.backtest.metrics.metrics_enum import Metric
+
+
+def _make_pnl_df() -> pd.DataFrame:
+    """Build a small pnl DataFrame suitable for MetricsCalculator."""
+    rng = np.random.default_rng(99)
+    n = 60
+    returns = rng.normal(0.001, 0.01, n)
+    position = np.zeros(n, dtype=float)
+    position[5:20] = 1.0
+    position[30:45] = -1.0
+    cumulative_pnl = np.cumsum(returns)
+    traded_notional = np.abs(np.diff(position, prepend=0)) * 100.0
+    gross_notional = np.abs(position) * 100.0
+    return pd.DataFrame({
+        "net_return": returns,
+        "position": position,
+        "cumulative_pnl": cumulative_pnl,
+        "traded_notional": traded_notional,
+        "gross_notional": gross_notional,
+    })
+
+
+class TestMetricEnum:
+    def test_metric_enum_has_all_fields(self):
+        """Every BacktestMetrics field has a corresponding Metric member."""
+        field_names = {f.name for f in dataclasses.fields(BacktestMetrics)}
+        enum_names = {m.name for m in Metric}
+        assert field_names == enum_names
+
+    def test_metric_categories(self):
+        equity_names = {
+            "total_pnl", "mean_daily_return", "std_daily_return",
+            "sharpe_ratio", "sortino_ratio", "max_drawdown",
+            "max_drawdown_duration", "calmar_ratio", "skewness",
+            "kurtosis", "var_95", "cvar_95",
+        }
+        trade_names = {
+            "turnover_annual", "avg_holding_period", "hit_rate",
+            "profit_factor", "avg_win", "avg_loss", "win_loss_ratio",
+            "n_trades", "pct_time_in_market",
+        }
+        for m in Metric:
+            if m.name in equity_names:
+                assert m.category == MetricCategory.EQUITY, m.name
+            elif m.name in trade_names:
+                assert m.category == MetricCategory.TRADE, m.name
+            else:
+                raise AssertionError(f"Unexpected metric {m.name}")
+
+    def test_metric_from_name(self):
+        m = Metric.from_key("sharpe_ratio")
+        assert m is Metric.SHARPE_RATIO
+        assert m.direction == +1
+
+    def test_metric_from_name_unknown(self):
+        with pytest.raises(ValueError, match="Unknown metric"):
+            Metric.from_key("nonexistent_metric")
+
+
+class TestMetricsCalculator:
+    def test_calculator_compute_all(self):
+        """MetricsCalculator.compute_all() matches old compute_metrics()."""
+        pnl_df = _make_pnl_df()
+        old = compute_metrics(pnl_df)
+        new = MetricsCalculator(pnl_df).compute_all()
+        for field in dataclasses.fields(BacktestMetrics):
+            assert getattr(old, field.name) == pytest.approx(
+                getattr(new, field.name)
+            ), field.name
+
+    def test_calculator_compute_equity(self):
+        pnl_df = _make_pnl_df()
+        result = MetricsCalculator(pnl_df).compute_equity()
+        # Equity fields should be non-default
+        assert result.sharpe_ratio != 0.0 or result.total_pnl != 0.0
+        # Trade fields should be zero
+        assert result.n_trades == 0
+        assert result.turnover_annual == 0.0
+        assert result.avg_holding_period == 0.0
+        assert result.hit_rate == 0.0
+        assert result.pct_time_in_market == 0.0
+
+    def test_calculator_compute_trades(self):
+        pnl_df = _make_pnl_df()
+        result = MetricsCalculator(pnl_df).compute_trades()
+        # Trade fields should be non-default
+        assert result.n_trades > 0
+        assert result.pct_time_in_market > 0.0
+        # Equity fields should be zero
+        assert result.total_pnl == 0.0
+        assert result.sharpe_ratio == 0.0
+        assert result.max_drawdown == 0.0
+        assert result.max_drawdown_duration == 0
+
+    def test_backward_compat_compute_metrics(self):
+        """compute_metrics() still works unchanged as a thin wrapper."""
+        pnl_df = _make_pnl_df()
+        result = compute_metrics(pnl_df)
+        assert isinstance(result, BacktestMetrics)
+        assert result.n_trades > 0
+        assert result.total_pnl != 0.0
