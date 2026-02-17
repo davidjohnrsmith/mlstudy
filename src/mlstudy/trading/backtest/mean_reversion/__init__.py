@@ -4,7 +4,9 @@ from . import analysis, sweep
 from .engine import MRBacktestConfig, run_backtest
 from .results import MRBacktestResults
 from .sweep import MetricsOnlyResult, SweepError, SweepSummary
+from .sweep_config import SweepConfig, load_config_map, load_sweep_config, load_sweep_config_by_name
 from .sweep_rank import RankingPlan
+from .sweep_runner import SweepRunResult, run_sweep_from_config
 
 try:
     from . import plots
@@ -105,6 +107,14 @@ __all__ = [
     "SweepSummary",
     "SweepError",
     "RankingPlan",
+    # sweep config
+    "SweepConfig",
+    "load_sweep_config",
+    "load_sweep_config_by_name",
+    "load_config_map",
+    # sweep runner
+    "SweepRunResult",
+    "run_sweep_from_config",
     # analysis, plots & sweep
     "analysis",
     "plots",

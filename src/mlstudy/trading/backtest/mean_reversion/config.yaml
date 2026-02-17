@@ -1,5 +1,4 @@
 grid_name: "mr_grid_v1"
-strategy: "mr"
 
 base_config:
   ref_leg_idx: 0
@@ -28,13 +27,25 @@ sweep:
   keep_top_k_full: 20
   save_top_full_dir: "runs/mr_grid_v1/top_full"
 
-# Optional: allow selecting which metrics to rank/tie on (NO parameter direction here)
+# Ranking plan — controls how scenarios are ranked when using keep_top_k_full.
+#
+# Each entry can be a simple string (weight defaults to 1.0):
+#     primary_metrics:
+#       - "total_pnl"
+#
+# Or an explicit [name, weight] pair:
+#     primary_metrics:
+#       - ["total_pnl", 1.0]
+#       - ["sharpe_ratio", 0.5]
+#
+# Available stages (evaluated in order for tie-breaking):
+#   primary_metrics  — main metric ranking
+#   tie_metrics      — break ties among primary
+#   primary_params   — prefer certain parameter directions
+#   tie_params       — final tie-break on parameters
 rank:
-  primary_metric: "score"     # default comes from code if omitted
-  tie_metrics:                # default comes from code if omitted
-    - "max_drawdown"
-    - "turnover"
-    - "fill_rate"
-    - "conservative"
-    - "centrality"
-    - "scenario_index"
+  primary_metrics:
+    - ["total_pnl", 1.0]
+  tie_metrics:
+    - ["max_drawdown", 1.0]
+    - ["sharpe_ratio", 0.5]
