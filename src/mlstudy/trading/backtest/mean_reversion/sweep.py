@@ -8,18 +8,16 @@ from typing import Any
 
 import pandas as pd
 
-from .sweep_build import make_scenarios
 from .sweep_dispatch import _dispatch
 from .sweep_persist import _save_top_full
 from .sweep_rank import RankingPlan, rank_scenarios
 from .sweep_types import (
     MetricsOnlyResult,
-    SweepError,
     SweepResult,
     SweepScenario,
     SweepSummary,
 )
-from ..metrics import BacktestMetrics
+from ..metrics.metrics import BacktestMetrics
 
 
 def run_sweep(

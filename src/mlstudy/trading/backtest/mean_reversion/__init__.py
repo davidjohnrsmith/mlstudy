@@ -1,10 +1,15 @@
 """Mean-reversion backtester with L2 book execution and explicit state machine."""
 
 from . import analysis, sweep
-from .engine import MRBacktestConfig, run_backtest
+from .data_loader import BacktestDataLoader, MarketData
+from .engine import run_backtest
+from .config import MRBacktestConfig
 from .results import MRBacktestResults
-from .sweep import MetricsOnlyResult, SweepError, SweepSummary
+from .sweep import MetricsOnlyResult, SweepSummary
+from .sweep_config import SweepConfig, load_config_map, load_sweep_config, load_sweep_config_by_name
 from .sweep_rank import RankingPlan
+from .sweep_results_reader import FullScenario, SweepRunData, load_sweep_run
+from .sweep_runner import SweepRunResult, run_sweep_from_config
 
 try:
     from . import plots
@@ -53,7 +58,6 @@ from .types import (
 )
 
 __all__ = [
-    "MRBacktestConfig",
     "MRBacktestResults",
     "run_backtest",
     # codes
@@ -103,8 +107,22 @@ __all__ = [
     # sweep dataclasses
     "MetricsOnlyResult",
     "SweepSummary",
-    "SweepError",
     "RankingPlan",
+    # sweep config
+    "SweepConfig",
+    "load_sweep_config",
+    "load_sweep_config_by_name",
+    "load_config_map",
+    # sweep runner
+    "SweepRunResult",
+    "run_sweep_from_config",
+    # sweep results reader
+    "SweepRunData",
+    "FullScenario",
+    "load_sweep_run",
+    # data loader
+    "BacktestDataLoader",
+    "MarketData",
     # analysis, plots & sweep
     "analysis",
     "plots",

@@ -19,7 +19,7 @@ Sign conventions
 DV01 / sizing convention
 ------------------------
 - dv01[t, i]: price change per 1 bp yield change per 1 unit of par notional.
-- size_i = target_notional_ref * dv01[t, ref] * hedge_ratios[i] / dv01[t, i]
+- size_i = target_notional_ref * dv01[t, ref] * hedge_ratios[t, i] / dv01[t, i]
 - basket_dv01_ref = target_notional_ref * dv01[t, ref]  (ref-leg DV01 exposure)
 - acceptable_cost (price units) = acceptable_yield_bps * basket_dv01_ref
 
@@ -302,14 +302,14 @@ def _mr_loop_jit_impl(
     package_yield_bps : ndarray, shape (T,)
         Package yield level in bps.  Tracked from entry to compute
         direction-adjusted yield deltas for TP / SL checks.
-    hedge_ratios : ndarray, shape (N,)
-        Yield-space hedge ratios.  ``hedge_ratios[ref_idx] == 1.0`` and
-        ``sum(hedge_ratios) == 0`` (DV01-neutral).
+    hedge_ratios : ndarray, shape (T, N)
+        Yield-space hedge ratios per bar.  ``hedge_ratios[:, ref_idx] == 1.0``
+        and ``sum(hedge_ratios, axis=1) == 0`` (DV01-neutral).
     ref_idx : int
         Index of the reference leg in the instrument dimension.
     target_notional_ref : float
         Par notional for the reference leg.  Other legs are sized so that
-        ``size_i = target_notional_ref * dv01[t, ref] * hedge_ratios[i] / dv01[t, i]``.
+        ``size_i = target_notional_ref * dv01[t, ref] * hedge_ratios[t, i] / dv01[t, i]``.
     entry_z_threshold : float
         Minimum ``|zscore[t]|`` to consider entering.
     tp_zscore_soft : float
@@ -695,7 +695,7 @@ def _mr_loop_jit_impl(
                             intended_side
                             * target_notional_ref
                             * ref_dv01_t
-                            * hedge_ratios[i]
+                            * hedge_ratios[t, i]
                             / dv01[t, i]
                         )
                         trade_risks[i] = trade_sizes[i] * dv01[t, i]

@@ -366,7 +366,7 @@ class MetricsCalculator:
 
         max_dd, max_dd_duration = compute_max_drawdown(cumulative)
         annual_return = mean_ret * 252
-        calmar = abs(annual_return / max_dd) if abs(max_dd) > 1e-10 else 0.0
+        calmar = (annual_return / abs(max_dd)) if abs(max_dd) > 1e-10 else 0.0
 
         skew, kurt, var_95, cvar_95 = compute_tail_stats(returns)
 

@@ -1,8 +1,7 @@
 # Optional data section — load market data from parquet files.
 # When present, market data is loaded automatically by run_sweep_from_config.
-# Note: data_path, instrument_ids, and ref_instrument_id are intentionally
-#   omitted — pass them at runtime so the same config works across platforms
-#   and different instrument sets.
+# Note: data_path is intentionally omitted — pass it at runtime via
+#   --data-path so the same config works on Windows, Linux, etc.
 #
 data:
    book_filename: "book.parquet"
@@ -21,25 +20,24 @@ base_config:
   use_jit: true
 
 grid:
-  entry_z_threshold: [1.5, 2.0, 2.5]
-  take_profit_zscore_soft_threshold: [0.5, 1.0]
-  take_profit_yield_change_soft_threshold: [2.0, 3.0]
-  take_profit_yield_change_hard_threshold: [6.0, 8.0]
-  stop_loss_yield_change_hard_threshold: [8.0, 10.0]
-  max_holding_bars: [20, 40]
-  max_levels_to_cross: [1, 2]
-  size_haircut: [1.0, 0.8]
-  tp_quarantine_bars: [0, 5]
-  sl_quarantine_bars: [0, 20]
-  time_quarantine_bars: [0, 10]
+  entry_z_threshold: [0.5, 2.0, 2.5]
+  take_profit_zscore_soft_threshold: [0.0, ]
+  take_profit_yield_change_soft_threshold: [0.0, ]
+  take_profit_yield_change_hard_threshold: [6.0,]
+  stop_loss_yield_change_hard_threshold: [8.0,]
+  max_holding_bars: [20, ]
+  max_levels_to_cross: [1,]
+  size_haircut: [1.0, ]
+  tp_quarantine_bars: [0, ]
+  sl_quarantine_bars: [0, ]
+  time_quarantine_bars: [0, ]
 
 sweep:
-  backend: "process"          # serial | thread | process
-  n_workers: 6
+  backend: "serial"          # serial | thread | process
+  n_workers: 1
   chunk_size: 50
   mode: "metrics_only"        # metrics_only | full
   keep_top_k_full: 20
-  save_top_full_dir: "runs/mr_grid_v1/top_full"
 
 # Ranking plan — controls how scenarios are ranked when using keep_top_k_full.
 #

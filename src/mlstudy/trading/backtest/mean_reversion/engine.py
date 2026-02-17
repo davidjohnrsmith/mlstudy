@@ -7,79 +7,14 @@ arrays into :class:`MRBacktestResults`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 
+from .config import MRBacktestConfig
 from .loop import HAS_NUMBA, mr_loop_jit, _mr_loop_jit_impl
 from .results import MRBacktestResults
 from .types import VALIDATE_ALL_LEGS, VALIDATE_REF_ONLY
-
-
-@dataclass(frozen=True)
-class MRBacktestConfig:
-    """All scalar knobs for a single mean-reversion backtest run.
-
-    Threshold sign conventions
-    -------------------------
-    All TP / SL thresholds are applied to **direction-adjusted** values
-    inside the loop.  See :mod:`.loop` module docstring for details.
-
-    DV01 / sizing
-    -------------
-    ``target_notional_ref`` is the par-notional size of the reference leg.
-    Leg sizes for other instruments are derived so that yield-space hedge
-    ratios are maintained::
-
-        size_i = target_notional_ref * dv01[t, ref] * hedge_ratios[i] / dv01[t, i]
-
-    Basket execution cost (always >= 0) is compared against::
-
-        acceptable_cost = acceptable_yield_bps * target_notional_ref * dv01[t, ref]
-    """
-
-    # -- sizing / reference ------------------------------------------------
-    target_notional_ref: float = 100.0
-    ref_leg_idx: int = 0
-
-    # -- entry -------------------------------------------------------------
-    entry_z_threshold: float = 2.0
-
-    # -- take-profit -------------------------------------------------------
-    take_profit_zscore_soft_threshold: float = 0.5
-    take_profit_yield_change_soft_threshold: float = 1.0  # yield bps
-    take_profit_yield_change_hard_threshold: float = 3.0  # yield bps
-
-    # -- stop-loss ---------------------------------------------------------
-    stop_loss_yield_change_hard_threshold: float = 5.0  # yield bps
-
-    # -- max holding -------------------------------------------------------
-    max_holding_bars: int = 0  # 0 = disabled
-
-    # -- cost premia -------------------------------------------------------
-    expected_yield_pnl_bps_multiplier: float = 1.0
-    entry_cost_premium_yield_bps: float = 0.0
-    tp_cost_premium_yield_bps: float = 0.0
-    sl_cost_premium_yield_bps: float = 0.0  # unused for forced
-
-    # -- quarantine --------------------------------------------------------
-    tp_quarantine_bars: int = 0
-    sl_quarantine_bars: int = 0
-    time_quarantine_bars: int = 0
-
-    # -- execution ---------------------------------------------------------
-    max_levels_to_cross: int = 5
-    size_haircut: float = 1.0
-
-    # -- market validity ---------------------------------------------------
-    validate_scope: str = "REF_ONLY"  # "REF_ONLY" | "ALL_LEGS"
-
-    # -- initial state -----------------------------------------------------
-    initial_capital: float = 0.0
-
-    # -- JIT ---------------------------------------------------------------
-    use_jit: bool = False
 
 
 def _validate(
@@ -113,22 +48,28 @@ def _validate(
         raise ValueError(f"expected_yield_pnl_bps shape != ({T},)")
     if package_yield_bps.shape != (T,):
         raise ValueError(f"package_yield_bps shape != ({T},)")
-    if hedge_ratios.shape != (N,):
-        raise ValueError(f"hedge_ratios shape {hedge_ratios.shape} != ({N},)")
+    if hedge_ratios.shape != (T, N):
+        raise ValueError(f"hedge_ratios shape {hedge_ratios.shape} != expected {(T, N)}")
     if not (0 <= cfg.ref_leg_idx < N):
         raise ValueError(f"ref_leg_idx {cfg.ref_leg_idx} out of range [0, {N})")
 
-    hr_sum = float(np.sum(hedge_ratios))
-    if abs(hr_sum) > 1e-8:
+    hr_sums = np.sum(hedge_ratios, axis=1)
+    bad_sum_mask = np.abs(hr_sums) > 1e-8
+    if np.any(bad_sum_mask):
+        first_bad = int(np.argmax(bad_sum_mask))
         raise ValueError(
-            f"hedge_ratios must sum to 0 (got {hr_sum:.6g}).  "
+            f"hedge_ratios must sum to 0 per row (row {first_bad} sums to "
+            f"{hr_sums[first_bad]:.6g}).  "
             "Ensure the package is DV01-neutral in yield space."
         )
 
-    if abs(hedge_ratios[cfg.ref_leg_idx] - 1.0) > 1e-8:
+    ref_vals = hedge_ratios[:, cfg.ref_leg_idx]
+    bad_ref_mask = np.abs(ref_vals - 1.0) > 1e-8
+    if np.any(bad_ref_mask):
+        first_bad = int(np.argmax(bad_ref_mask))
         raise ValueError(
-            f"hedge_ratios[ref_leg_idx={cfg.ref_leg_idx}] must be 1.0 "
-            f"(got {hedge_ratios[cfg.ref_leg_idx]:.6g})"
+            f"hedge_ratios[:, ref_leg_idx={cfg.ref_leg_idx}] must be 1.0 "
+            f"(row {first_bad} has {ref_vals[first_bad]:.6g})"
         )
 
 
@@ -162,8 +103,9 @@ def run_backtest(
         Expected yield PnL magnitude in bps (non-negative).
     package_yield_bps : (T,)
         Package yield level in bps.
-    hedge_ratios : (N,)
-        Yield-space hedge ratios.  ``hedge_ratios[ref] == 1``, ``sum == 0``.
+    hedge_ratios : (T, N)
+        Yield-space hedge ratios per bar.  ``hedge_ratios[:, ref] == 1``,
+        ``sum(axis=1) == 0``.
     cfg : MRBacktestConfig, optional
         If *None*, defaults are used.
 
@@ -171,8 +113,6 @@ def run_backtest(
     -------
     MRBacktestResults
     """
-    if cfg is None:
-        cfg = MRBacktestConfig()
 
     _validate(
         bid_px,

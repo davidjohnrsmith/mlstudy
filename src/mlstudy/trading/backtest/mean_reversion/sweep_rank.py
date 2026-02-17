@@ -7,6 +7,7 @@ from ..metrics.metrics_registry import MetricPreferenceRegistry
 from ..parameters.parameters_registry import ParameterPreferenceRegistry
 
 
+
 @dataclass(frozen=True)
 class RankingPlan:
     primary_metrics: tuple[tuple[str, float], ...] = (("total_pnl", 1.0),)
