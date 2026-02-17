@@ -22,17 +22,16 @@ The function returns a ``SweepRunResult`` that bundles:
 
 from __future__ import annotations
 
-import json
 import logging
-import shutil
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .sweep_results_saver import _persist
+
 logger = logging.getLogger(__name__)
 
-import numpy as np
 import pandas as pd
 
 from .sweep import run_sweep, summary_table
@@ -70,92 +69,6 @@ class SweepRunResult:
 # ---------------------------------------------------------------------------
 # Persistence helpers
 # ---------------------------------------------------------------------------
-
-def _save_run_metadata(
-    output_dir: Path,
-    cfg: SweepConfig,
-    n_scenarios: int,
-    elapsed_seconds: float | None,
-) -> None:
-    """Write run metadata to ``output_dir/run_meta.json``."""
-    meta = {
-        "grid_name": cfg.grid_name,
-        "n_scenarios": n_scenarios,
-        "base_config": asdict(cfg.base_config),
-        "grid": {k: list(v) for k, v in cfg.grid.items()},
-        "sweep_kwargs": {
-            k: str(v) if isinstance(v, Path) else v
-            for k, v in cfg.sweep_kwargs.items()
-            if k != "ranking_plan"
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    if elapsed_seconds is not None:
-        meta["elapsed_seconds"] = round(elapsed_seconds, 2)
-    with open(output_dir / "run_meta.json", "w") as f:
-        json.dump(meta, f, indent=2, default=str)
-
-
-def _save_summary_table(output_dir: Path, table: pd.DataFrame) -> None:
-    """Write the summary table as CSV."""
-    table.to_csv(output_dir / "summary.csv", index=False)
-
-
-def _save_config_snapshot(output_dir: Path, cfg: SweepConfig) -> None:
-    """Snapshot the parsed config as JSON for reproducibility."""
-    import yaml
-
-    snapshot: dict[str, Any] = {
-        "grid_name": cfg.grid_name,
-        "base_config": asdict(cfg.base_config),
-        "grid": {k: list(v) for k, v in cfg.grid.items()},
-    }
-    if cfg.ranking_plan is not None:
-        rp = cfg.ranking_plan
-        snapshot["rank"] = {
-            "primary_metrics": [list(t) for t in rp.primary_metrics],
-            "tie_metrics": [list(t) for t in rp.tie_metrics],
-            "primary_params": [list(t) for t in rp.primary_params],
-            "tie_params": [list(t) for t in rp.tie_params],
-        }
-    sweep_kw = {
-        k: str(v) if isinstance(v, Path) else v
-        for k, v in cfg.sweep_kwargs.items()
-        if k != "ranking_plan"
-    }
-    snapshot["sweep"] = sweep_kw
-
-    with open(output_dir / "config_snapshot.yaml", "w") as f:
-        yaml.dump(snapshot, f, default_flow_style=False, sort_keys=False)
-
-
-def _save_metrics_results(
-    output_dir: Path,
-    results: list[MetricsOnlyResult],
-) -> None:
-    """Save all metrics-only results as a single CSV."""
-    rows = []
-    for r in results:
-        row: dict[str, Any] = {
-            "scenario_idx": r.scenario_idx,
-            "name": r.scenario.name,
-        }
-        row.update(r.scenario.tags)
-        row.update(r.metrics_dict())
-        rows.append(row)
-    pd.DataFrame(rows).to_csv(output_dir / "all_metrics.csv", index=False)
-
-
-def _save_full_results(
-    output_dir: Path,
-    results: list[SweepResult],
-    label: str = "full",
-) -> None:
-    """Save full backtest results (arrays + spec) per scenario."""
-    from .sweep_persist import _save_top_full
-
-    full_dir = output_dir / label
-    _save_top_full(results, full_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +186,10 @@ def run_sweep_from_config(
     resolved_output_dir = None
     if save:
         resolved_output_dir = _resolve_output_dir(output_dir, cfg)
-        _persist(resolved_output_dir, cfg, raw, table, len(scenarios), elapsed)
+        _persist(
+            resolved_output_dir, cfg, raw, table, len(scenarios), elapsed,
+            zscore=md.get("zscore"),
+        )
 
     return SweepRunResult(
         config=cfg,
@@ -316,23 +232,3 @@ def _resolve_output_dir(
     return d
 
 
-def _persist(
-    output_dir: Path,
-    cfg: SweepConfig,
-    raw: list[SweepResult] | list[MetricsOnlyResult] | SweepSummary,
-    table: pd.DataFrame,
-    n_scenarios: int,
-    elapsed: float,
-) -> None:
-    _save_config_snapshot(output_dir, cfg)
-    _save_run_metadata(output_dir, cfg, n_scenarios, elapsed)
-    _save_summary_table(output_dir, table)
-
-    if isinstance(raw, SweepSummary):
-        _save_metrics_results(output_dir, raw.all_metrics)
-        if raw.top_full:
-            _save_full_results(output_dir, raw.top_full, label="top_full")
-    elif raw and isinstance(raw[0], MetricsOnlyResult):
-        _save_metrics_results(output_dir, raw)
-    elif raw and isinstance(raw[0], SweepResult):
-        _save_full_results(output_dir, raw, label="full")

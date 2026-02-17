@@ -8,6 +8,7 @@ from .results import MRBacktestResults
 from .sweep import MetricsOnlyResult, SweepSummary
 from .sweep_config import SweepConfig, load_config_map, load_sweep_config, load_sweep_config_by_name
 from .sweep_rank import RankingPlan
+from .sweep_results_reader import FullScenario, SweepRunData, load_sweep_run
 from .sweep_runner import SweepRunResult, run_sweep_from_config
 
 try:
@@ -115,6 +116,10 @@ __all__ = [
     # sweep runner
     "SweepRunResult",
     "run_sweep_from_config",
+    # sweep results reader
+    "SweepRunData",
+    "FullScenario",
+    "load_sweep_run",
     # data loader
     "BacktestDataLoader",
     "MarketData",

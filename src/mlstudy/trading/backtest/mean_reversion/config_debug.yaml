@@ -20,9 +20,9 @@ base_config:
   use_jit: true
 
 grid:
-  entry_z_threshold: [1.5, 2.0, 2.5]
-  take_profit_zscore_soft_threshold: [0.5, ]
-  take_profit_yield_change_soft_threshold: [2.0, ]
+  entry_z_threshold: [0.5, 2.0, 2.5]
+  take_profit_zscore_soft_threshold: [0.0, ]
+  take_profit_yield_change_soft_threshold: [0.0, ]
   take_profit_yield_change_hard_threshold: [6.0,]
   stop_loss_yield_change_hard_threshold: [8.0,]
   max_holding_bars: [20, ]
@@ -38,7 +38,6 @@ sweep:
   chunk_size: 50
   mode: "metrics_only"        # metrics_only | full
   keep_top_k_full: 20
-  save_top_full_dir: "runs/mr_grid_v1/top_full"
 
 # Ranking plan — controls how scenarios are ranked when using keep_top_k_full.
 #
