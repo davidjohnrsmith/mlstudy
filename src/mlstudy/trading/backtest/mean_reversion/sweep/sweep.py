@@ -10,12 +10,12 @@ from typing import Any
 
 import pandas as pd
 
-from mlstudy.trading.backtest.mean_reversion.analysis import compute_code_distribution, compute_performance_metrics
+from mlstudy.trading.backtest.mean_reversion.analysis import compute_performance_metrics
 from mlstudy.trading.backtest.mean_reversion.single_backtest.engine import run_backtest
 from .sweep_persist import SweepPersister
 from .sweep_rank import RankingPlan, SweepRanker
 from .sweep_types import (
-    MetricsOnlyResult,
+    SweepResultLight,
     SweepError,
     SweepResult,
     SweepScenario,
@@ -39,7 +39,7 @@ def _worker_init(market_data: dict) -> None:
 def _run_chunk_process(
     chunk: list[tuple[int, SweepScenario]],
     mode: str,
-) -> list[tuple[int, MetricsOnlyResult | SweepResult]]:
+) -> list[tuple[int, SweepResultLight | SweepResult]]:
     return SweepExecutor._run_chunk(chunk, _WORKER_MARKET_DATA, mode)
 
 
@@ -71,7 +71,7 @@ class SweepExecutor:
         keep_top_k_full: int = 0,
         save_top_full_dir: str | Path | None = None,
         ranking_plan: RankingPlan | None = None,
-    ) -> list[SweepResult] | list[MetricsOnlyResult] | SweepSummary:
+    ) -> list[SweepResult] | list[SweepResultLight] | SweepSummary:
         if parallel and backend == "serial":
             warnings.warn(
                 "parallel=True is deprecated; use backend='thread'",
@@ -127,60 +127,16 @@ class SweepExecutor:
 
         return SweepSummary(all_metrics=metrics_results, top_full=top_full_results)
 
-    _METRICS_ONLY_FIELDS = frozenset(
-        {"total_pnl", "final_equity", "n_trades", "max_drawdown", "sharpe_ratio"}
-    )
-
-    @staticmethod
-    def rank_results(
-        results: list[SweepResult] | list[MetricsOnlyResult],
-        metric: str = "sharpe_ratio",
-        top_n: int = 5,
-        ascending: bool = False,
-    ) -> list[SweepResult] | list[MetricsOnlyResult]:
-        if results and isinstance(results[0], MetricsOnlyResult):
-            if metric not in SweepExecutor._METRICS_ONLY_FIELDS:
-                raise ValueError(
-                    f"Unknown metric {metric!r} for MetricsOnlyResult; "
-                    f"choose from {sorted(SweepExecutor._METRICS_ONLY_FIELDS)}"
-                )
-            sorted_results = sorted(
-                results,
-                key=lambda r: getattr(r, metric),
-                reverse=not ascending,
-            )
-        else:
-            valid_fields = {f.name for f in fields(BacktestMetrics)}
-            if metric not in valid_fields:
-                raise ValueError(f"Unknown metric {metric!r}; choose from {sorted(valid_fields)}")
-            sorted_results = sorted(
-                results,
-                key=lambda r: getattr(r.metrics, metric),
-                reverse=not ascending,
-            )
-        return sorted_results[:top_n]
 
     @staticmethod
     def summary_table(
-        results: list[SweepResult] | list[MetricsOnlyResult],
+        results: list[SweepResult] | list[SweepResultLight],
     ) -> pd.DataFrame:
         rows: list[dict[str, Any]] = []
         for r in results:
             row: dict[str, Any] = {"name": r.scenario.name}
             row.update(r.scenario.tags)
-
-            if isinstance(r, MetricsOnlyResult):
-                row.update(
-                    {
-                        "total_pnl": r.total_pnl,
-                        "final_equity": r.final_equity,
-                        "n_trades": r.n_trades,
-                        "max_drawdown": r.max_drawdown,
-                        "sharpe_ratio": r.sharpe_ratio,
-                    }
-                )
-            else:
-                row.update(asdict(r.metrics))
+            row.update(asdict(r.metrics))
             rows.append(row)
         return pd.DataFrame(rows)
 
@@ -194,22 +150,16 @@ class SweepExecutor:
         scenario: SweepScenario,
         market_data: dict,
         mode: str,
-    ) -> MetricsOnlyResult | SweepResult:
+    ) -> SweepResultLight | SweepResult:
         try:
             res = run_backtest(cfg=scenario.cfg, **market_data)
             metrics = compute_performance_metrics(res)
 
             if mode == "metrics_only":
-                code_counts = compute_code_distribution(res)
-                return MetricsOnlyResult(
+                return SweepResultLight(
                     scenario_idx=scenario_idx,
                     scenario=scenario,
-                    total_pnl=metrics.total_pnl,
-                    final_equity=float(res.equity[-1]),
-                    n_trades=metrics.n_trades,
-                    max_drawdown=metrics.max_drawdown,
-                    sharpe_ratio=metrics.sharpe_ratio,
-                    code_counts=code_counts,
+                    metrics=metrics,
                 )
 
             return SweepResult(
@@ -233,7 +183,7 @@ class SweepExecutor:
         chunk: list[tuple[int, SweepScenario]],
         market_data: dict,
         mode: str,
-    ) -> list[tuple[int, MetricsOnlyResult | SweepResult]]:
+    ) -> list[tuple[int, SweepResultLight | SweepResult]]:
         return [(idx, SweepExecutor._run_one(idx, sc, market_data, mode)) for idx, sc in chunk]
 
     @staticmethod
@@ -244,7 +194,7 @@ class SweepExecutor:
         n_workers: int,
         chunk_size: int,
         mode: str,
-    ) -> list[MetricsOnlyResult] | list[SweepResult]:
+    ) -> list[SweepResultLight] | list[SweepResult]:
         if not indexed_scenarios:
             return []
 

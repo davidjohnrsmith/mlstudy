@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import SweepConfig
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResult, MetricsOnlyResult, SweepSummary
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResult, SweepResultLight, SweepSummary
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ class SweepPersister:
     @staticmethod
     def _save_metrics_results(
         output_dir: Path,
-        results: list[MetricsOnlyResult],
+        results: list[SweepResultLight],
     ) -> None:
         """Save all metrics-only results as a single CSV."""
         rows = []
@@ -131,7 +131,7 @@ class SweepPersister:
                 "name": r.scenario.name,
             }
             row.update(r.scenario.tags)
-            row.update(r.metrics_dict())
+            row.update(asdict(r.metrics))
             rows.append(row)
         pd.DataFrame(rows).to_csv(output_dir / "all_metrics.csv", index=False)
 
@@ -185,7 +185,7 @@ class SweepPersister:
     def persist(
         output_dir: Path,
         cfg: SweepConfig,
-        raw: list[SweepResult] | list[MetricsOnlyResult] | SweepSummary,
+        raw: list[SweepResult] | list[SweepResultLight] | SweepSummary,
         table: pd.DataFrame,
         n_scenarios: int,
         elapsed: float,
@@ -200,7 +200,7 @@ class SweepPersister:
             if raw.top_full:
                 SweepPersister._save_full_results(output_dir, raw.top_full, label="top_full")
                 SweepPersister._save_scenario_plots(output_dir, raw.top_full, zscore, label="plots")
-        elif raw and isinstance(raw[0], MetricsOnlyResult):
+        elif raw and isinstance(raw[0], SweepResultLight):
             SweepPersister._save_metrics_results(output_dir, raw)
         elif raw and isinstance(raw[0], SweepResult):
             SweepPersister._save_full_results(output_dir, raw, label="full")

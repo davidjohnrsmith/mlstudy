@@ -20,19 +20,21 @@ from .types import (
     TRADE_EXIT_TIME,
     TRADE_EXIT_TP,
 )
-from ..metrics import (
-    BacktestMetrics,
+from mlstudy.trading.backtest.metrics.trades_utils import (
+    compute_turnover,
     compute_avg_holding_period,
-    compute_hit_rate,
-    compute_max_drawdown,
     compute_n_trades,
-    compute_profit_factor,
+)
+from mlstudy.trading.backtest.metrics.equity_utils import (
     compute_sharpe_ratio,
     compute_sortino_ratio,
+    compute_max_drawdown,
     compute_tail_stats,
-    compute_turnover,
+    compute_hit_rate,
+    compute_profit_factor,
     compute_win_loss_stats,
 )
+from ..metrics.metrics import BacktestMetrics
 
 # Maps tr_type int to human-readable exit type string
 _EXIT_TYPE_NAMES: dict[int, str] = {

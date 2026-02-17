@@ -61,3 +61,8 @@ rank:
   tie_metrics:
     - ["max_drawdown", 1.0]
     - ["sharpe_ratio", 0.5]
+#  primary_params:
+#    - [ "total_pnl", 1.0 ]
+#  tie_params:
+#    - [ "max_drawdown", 1.0 ]
+#    - [ "sharpe_ratio", 0.5 ]

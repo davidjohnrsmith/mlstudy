@@ -10,12 +10,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import (
-    FullScenario,
-    SweepRunData,
-    SweepResultsReader,
-)
-
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import SweepResultsReader
 
 # ---------------------------------------------------------------------------
 # Helpers — write synthetic run directories

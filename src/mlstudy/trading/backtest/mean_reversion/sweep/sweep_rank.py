@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .sweep_types import MetricsOnlyResult
+from .sweep_types import SweepResultLight
 from ...metrics.metrics_registry import MetricPreferenceRegistry
 from ...parameters.parameters_registry import ParameterPreferenceRegistry
 
@@ -43,7 +43,7 @@ class SweepRanker:
 
     @staticmethod
     def _stage_scores(
-        results: list[MetricsOnlyResult],
+        results: list[SweepResultLight],
         features: tuple[tuple[str, float], ...],
         source: str,
     ) -> list[float]:
@@ -60,7 +60,7 @@ class SweepRanker:
         for name, weight in features:
             if source == "metric":
                 direction = MetricPreferenceRegistry.direction(name)
-                raw = [r.metrics_dict()[name] for r in results]
+                raw = [getattr(r.metrics, name) for r in results]
             else:
                 direction = ParameterPreferenceRegistry.direction(name)
                 raw = [float(getattr(r.scenario.cfg, name)) for r in results]
@@ -80,9 +80,9 @@ class SweepRanker:
 
     @staticmethod
     def rank_scenarios(
-        results: list[MetricsOnlyResult],
+        results: list[SweepResultLight],
         plan: RankingPlan | None = None,
-    ) -> list[MetricsOnlyResult]:
+    ) -> list[SweepResultLight]:
         """Rank scenarios according to a multi-stage weighted-rank plan.
 
         Returns a new list sorted best-first.

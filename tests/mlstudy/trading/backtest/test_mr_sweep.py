@@ -8,9 +8,9 @@ import warnings
 import numpy as np
 import pytest
 
-from mlstudy.trading.backtest.mean_reversion import MRBacktestConfig
+from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import (
-    MetricsOnlyResult,
+    SweepResultLight,
     SweepResult,
     SweepScenario,
     SweepSummary,
@@ -231,34 +231,6 @@ class TestRankResults:
         )
         return SweepExecutor.run_sweep(scenarios, **_market_data())
 
-    def test_top_n(self):
-        results = self._make_results()
-        top3 = SweepExecutor.rank_results(results, metric="sharpe_ratio", top_n=3)
-        assert len(top3) == 3
-
-    def test_descending_order(self):
-        results = self._make_results()
-        ranked = SweepExecutor.rank_results(results, metric="total_pnl", top_n=5, ascending=False)
-        pnls = [r.metrics.total_pnl for r in ranked]
-        assert pnls == sorted(pnls, reverse=True)
-
-    def test_ascending_order(self):
-        results = self._make_results()
-        ranked = SweepExecutor.rank_results(results, metric="max_drawdown", top_n=5, ascending=True)
-        dds = [r.metrics.max_drawdown for r in ranked]
-        assert dds == sorted(dds)
-
-    def test_top_n_exceeds_length(self):
-        results = self._make_results()
-        ranked = SweepExecutor.rank_results(results, metric="sharpe_ratio", top_n=100)
-        assert len(ranked) == len(results)
-
-    def test_invalid_metric_raises(self):
-        results = self._make_results()
-        with pytest.raises(ValueError, match="Unknown metric"):
-            SweepExecutor.rank_results(results, metric="nonexistent_field")
-
-
 class TestSummaryTable:
     def test_columns(self):
         base = _base_cfg()
@@ -409,7 +381,7 @@ class TestChunking:
 
 
 class TestMetricsOnlyMode:
-    """mode="metrics_only" returns MetricsOnlyResult with correct values."""
+    """mode="metrics_only" returns SweepResultLight with correct values."""
 
     def test_returns_metrics_only_result(self):
         base = _base_cfg()
@@ -420,7 +392,7 @@ class TestMetricsOnlyMode:
 
         assert len(results) == 3
         for r in results:
-            assert isinstance(r, MetricsOnlyResult)
+            assert isinstance(r, SweepResultLight)
 
     def test_fields_exist(self):
         base = _base_cfg()
@@ -432,13 +404,8 @@ class TestMetricsOnlyMode:
 
         assert hasattr(r, "scenario_idx")
         assert hasattr(r, "scenario")
-        assert hasattr(r, "total_pnl")
-        assert hasattr(r, "final_equity")
-        assert hasattr(r, "n_trades")
-        assert hasattr(r, "max_drawdown")
-        assert hasattr(r, "sharpe_ratio")
-        assert hasattr(r, "code_counts")
-        assert isinstance(r.code_counts, dict)
+        assert hasattr(r, "metrics")
+        assert isinstance(r.metrics, BacktestMetrics)
 
     def test_values_match_full_mode(self):
         base = _base_cfg()
@@ -449,24 +416,11 @@ class TestMetricsOnlyMode:
         metrics = SweepExecutor.run_sweep(scenarios, **md, mode="metrics_only")
 
         for f, m in zip(full, metrics):
-            assert f.metrics.total_pnl == pytest.approx(m.total_pnl)
-            assert f.metrics.sharpe_ratio == pytest.approx(m.sharpe_ratio)
-            assert f.metrics.max_drawdown == pytest.approx(m.max_drawdown)
-            assert f.metrics.n_trades == m.n_trades
+            assert f.metrics.total_pnl == pytest.approx(m.metrics.total_pnl)
+            assert f.metrics.sharpe_ratio == pytest.approx(m.metrics.sharpe_ratio)
+            assert f.metrics.max_drawdown == pytest.approx(m.metrics.max_drawdown)
+            assert f.metrics.n_trades == m.metrics.n_trades
 
-    def test_metrics_only_rank(self):
-        base = _base_cfg()
-        scenarios = ScenarioBuilder.make_scenarios(
-            base, {"entry_z_threshold": [1.0, 1.5, 2.0, 2.5, 3.0]}
-        )
-        md = _market_data()
-
-        results = SweepExecutor.run_sweep(scenarios, **md, mode="metrics_only")
-        ranked = SweepExecutor.rank_results(results, metric="total_pnl", top_n=3)
-
-        assert len(ranked) == 3
-        pnls = [r.total_pnl for r in ranked]
-        assert pnls == sorted(pnls, reverse=True)
 
     def test_metrics_only_summary_table(self):
         base = _base_cfg()
@@ -479,7 +433,6 @@ class TestMetricsOnlyMode:
         assert len(df) == 2
         assert "total_pnl" in df.columns
         assert "sharpe_ratio" in df.columns
-        assert "final_equity" in df.columns
 
     def test_invalid_mode_raises(self):
         base = _base_cfg()
@@ -592,8 +545,8 @@ class TestProcessBackend:
         )
 
         for s, p in zip(serial, process):
-            assert isinstance(p, MetricsOnlyResult)
-            assert s.total_pnl == pytest.approx(p.total_pnl)
+            assert isinstance(p, SweepResultLight)
+            assert s.metrics.total_pnl == pytest.approx(p.metrics.total_pnl)
 
 
 class TestPersistence:
@@ -734,7 +687,7 @@ class TestBackwardCompat:
 # =========================================================================
 
 
-def _metrics_only_results() -> list[MetricsOnlyResult]:
+def _metrics_only_results() -> list[SweepResultLight]:
     """Run a small sweep in metrics_only mode and return results."""
     base = _base_cfg()
     scenarios = ScenarioBuilder.make_scenarios(
@@ -771,7 +724,7 @@ class TestRanking:
         results = _metrics_only_results()
         ranked = SweepRanker.rank_scenarios(results)
 
-        pnls = [r.total_pnl for r in ranked]
+        pnls = [r.metrics.total_pnl for r in ranked]
         assert pnls == sorted(pnls, reverse=True)
 
     def test_custom_plan_sharpe(self):
@@ -779,7 +732,7 @@ class TestRanking:
         plan = RankingPlan(primary_metrics=(("sharpe_ratio", 1.0),))
         ranked = SweepRanker.rank_scenarios(results, plan)
 
-        sharpes = [r.sharpe_ratio for r in ranked]
+        sharpes = [r.metrics.sharpe_ratio for r in ranked]
         assert sharpes == sorted(sharpes, reverse=True)
 
     def test_multi_metric_plan(self):

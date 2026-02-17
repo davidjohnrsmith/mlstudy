@@ -340,9 +340,9 @@ import pandas as pd
 from mlstudy.trading.backtest.metrics.metrics import (
     BacktestMetrics,
     MetricCategory,
-    MetricsCalculator,
     compute_metrics,
 )
+from mlstudy.trading.backtest.metrics.metrics_calculator import MetricsCalculator
 from mlstudy.trading.backtest.metrics.metrics_enum import Metric
 
 

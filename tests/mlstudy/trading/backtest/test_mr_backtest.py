@@ -24,7 +24,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mlstudy.trading.backtest.mean_reversion import (
+from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
+from mlstudy.trading.backtest.mean_reversion.single_backtest.engine import run_backtest
+from mlstudy.trading.backtest.mean_reversion.types import (
     ENTRY_IN_COOLDOWN,
     ENTRY_NO_LIQUIDITY,
     ENTRY_NO_SIGNAL,
@@ -38,8 +40,6 @@ from mlstudy.trading.backtest.mean_reversion import (
     STATE_TP_COOLDOWN,
     TRADE_ENTRY,
     TRADE_EXIT_TP,
-    MRBacktestConfig,
-    run_backtest,
 )
 from mlstudy.trading.backtest.mean_reversion.single_backtest.loop import HAS_NUMBA
 

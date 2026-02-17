@@ -38,7 +38,7 @@ import pandas as pd
 from .sweep import SweepExecutor
 from .sweep_build import ScenarioBuilder
 from ..configs.sweep_config import SweepConfig
-from .sweep_types import MetricsOnlyResult, SweepResult, SweepSummary
+from .sweep_types import SweepResultLight, SweepResult, SweepSummary
 
 
 @dataclass
@@ -46,15 +46,15 @@ class SweepRunResult:
     """Everything produced by a single sweep run."""
 
     config: SweepConfig
-    raw: list[SweepResult] | list[MetricsOnlyResult] | SweepSummary
+    raw: list[SweepResult] | list[SweepResultLight] | SweepSummary
     table: pd.DataFrame
     output_dir: Path | None
 
     @property
-    def all_metrics(self) -> list[MetricsOnlyResult] | None:
+    def all_metrics(self) -> list[SweepResultLight] | None:
         if isinstance(self.raw, SweepSummary):
             return self.raw.all_metrics
-        if self.raw and isinstance(self.raw[0], MetricsOnlyResult):
+        if self.raw and isinstance(self.raw[0], SweepResultLight):
             return self.raw
         return None
 

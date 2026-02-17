@@ -10,17 +10,21 @@ import pandas as pd
 import pytest
 import yaml
 
-from mlstudy.trading.backtest.mean_reversion import MRBacktestConfig, load_config_map, load_sweep_config_by_name
+from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
 from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import (
+
     load_sweep_config,
+
 )
+from mlstudy.trading.backtest.mean_reversion.configs.utils import load_sweep_config_by_name, load_config_map
+
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import RankingPlan
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import (
     SweepRunResult,
     SweepRunner,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import RankingPlan
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import (
-    MetricsOnlyResult,
+    SweepResultLight,
     SweepResult,
     SweepSummary,
 )
@@ -346,7 +350,7 @@ class TestRunSweepFromConfigMetricsOnly:
         )
         assert len(result.raw) == 3
         for r in result.raw:
-            assert isinstance(r, MetricsOnlyResult)
+            assert isinstance(r, SweepResultLight)
 
     def test_all_metrics_property(self, metrics_only_yaml, market_data, tmp_path):
         result = SweepRunner.run_sweep_from_config(
@@ -637,4 +641,4 @@ class TestConsistencyWithDirectSweep:
 
         assert len(result.raw) == len(direct)
         for r, d in zip(result.raw, direct):
-            assert r.total_pnl == pytest.approx(d.total_pnl)
+            assert r.metrics.total_pnl == pytest.approx(d.metrics.total_pnl)
