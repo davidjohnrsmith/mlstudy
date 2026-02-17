@@ -166,6 +166,7 @@ def run_sweep_from_config(
     config: str | Path | SweepConfig,
     *,
     market_data: dict[str, Any] | None = None,
+    data_path: str | Path | None = None,
     output_dir: str | Path | None = None,
     save: bool = True,
     config_map_path: str | Path | None = None,
@@ -186,6 +187,11 @@ def run_sweep_from_config(
         ``mid_px``, ``dv01``, ``zscore``, ``expected_yield_pnl_bps``,
         ``package_yield_bps``, ``hedge_ratios``.
         If *None*, you must pass them as ``**market_data_kwargs``.
+    data_path : str or Path, optional
+        Directory containing parquet files.  Passed to
+        ``BacktestDataLoader.load()`` when the config has a ``data``
+        section.  Use this to keep the YAML config platform-independent
+        and supply the data directory at runtime.
     output_dir : str or Path, optional
         Directory to save results.  Defaults to ``runs/<grid_name>/``.
     save : bool
@@ -210,7 +216,7 @@ def run_sweep_from_config(
     md.update(market_data_kwargs)
     if not md and cfg.data_loader is not None:
         logger.info("Loading market data from config data section")
-        loaded = cfg.data_loader.load()
+        loaded = cfg.data_loader.load(data_path=data_path)
         md = loaded.to_dict()
     if not md:
         raise ValueError(

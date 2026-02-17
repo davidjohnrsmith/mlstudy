@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""
+Generate synthetic parquet inputs compatible with BacktestDataLoader.
+
+Creates:
+  - book.parquet           (datetime, instrument_id, bid/ask price/size levels)
+  - mid.parquet            (datetime, instrument_id, mid_px)
+  - dv01.parquet           (datetime, instrument_id, dv01)
+  - signal.parquet         (datetime, instrument_id, zscore, expected_yield_pnl_bps, package_yield_bps)
+  - hedge_ratios.parquet   (datetime, instrument_id, hedge_ratio)
+
+All are long-format (datetime × instrument_id) to match BacktestDataLoader. :contentReference[oaicite:1]{index=1}
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+@dataclass
+class GenConfig:
+    out_dir: Path
+    instrument_ids: list[str]
+    ref_instrument_id: str
+    start: str
+    periods: int
+    freq: str
+    levels: int
+    seed: int
+    missing_prob: float  # probability per row to drop (simulate gaps)
+    jitter_bps: float    # typical mid move scale in bps per step
+
+
+def _make_datetimes(start: str, periods: int, freq: str) -> pd.DatetimeIndex:
+    # Keep timezone-naive; loader uses pd.DatetimeIndex and .values datetime64. :contentReference[oaicite:2]{index=2}
+    return pd.date_range(start=start, periods=periods, freq=freq, tz=None)
+
+
+def _random_walk(rng: np.random.Generator, n: int, step_scale: float) -> np.ndarray:
+    steps = rng.normal(loc=0.0, scale=step_scale, size=n)
+    return np.cumsum(steps)
+
+
+def _drop_rows(df: pd.DataFrame, rng: np.random.Generator, p: float) -> pd.DataFrame:
+    if p <= 0:
+        return df
+    mask = rng.random(len(df)) >= p
+    return df.loc[mask].reset_index(drop=True)
+
+
+def generate_parquets(cfg: GenConfig) -> None:
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(cfg.seed)
+
+    dts = _make_datetimes(cfg.start, cfg.periods, cfg.freq)
+    instruments = cfg.instrument_ids
+    if cfg.ref_instrument_id not in instruments:
+        raise ValueError(f"ref_instrument_id {cfg.ref_instrument_id!r} not in instrument_ids")
+
+    # ---- Base "mid" generation per instrument ---------------------------------
+    # Create smooth mid prices around ~100 with correlated moves.
+    T = len(dts)
+    common = _random_walk(rng, T, step_scale=cfg.jitter_bps * 1e-4)  # bps -> price units
+    mid_frames = []
+    for j, inst in enumerate(instruments):
+        inst_noise = _random_walk(rng, T, step_scale=(cfg.jitter_bps * 0.6) * 1e-4)
+        base = 100.0 + 0.25 * j  # slight level shift per instrument
+        mid = base + common + inst_noise
+        mid_frames.append(
+            pd.DataFrame(
+                {
+                    "datetime": dts,
+                    "instrument_id": inst,
+                    "mid_px": mid.astype(np.float64),
+                }
+            )
+        )
+    mid_df = pd.concat(mid_frames, ignore_index=True)
+    mid_df = _drop_rows(mid_df, rng, cfg.missing_prob)
+    mid_df.to_parquet(cfg.out_dir / "mid.parquet", index=False)
+
+    # ---- DV01 per instrument ---------------------------------------------------
+    # Simple positive values, mostly stable with small noise.
+    dv01_frames = []
+    for j, inst in enumerate(instruments):
+        base = 0.05 + 0.01 * j
+        dv01 = base + rng.normal(0, 0.001, size=T)
+        dv01_frames.append(
+            pd.DataFrame(
+                {
+                    "datetime": dts,
+                    "instrument_id": inst,
+                    "dv01": dv01.astype(np.float64),
+                }
+            )
+        )
+    dv01_df = pd.concat(dv01_frames, ignore_index=True)
+    dv01_df = _drop_rows(dv01_df, rng, cfg.missing_prob)
+    dv01_df.to_parquet(cfg.out_dir / "dv01.parquet", index=False)
+
+    # ---- Book levels (bid/ask px/sz) ------------------------------------------
+    # Loader auto-detects levels via bid_price_l0..L-1 columns. :contentReference[oaicite:3]{index=3}
+    # We build around mid with a spread that widens with depth.
+    book_frames = []
+    # Merge mid values so book is consistent with mid
+    mid_pivot = mid_df.pivot(index="datetime", columns="instrument_id", values="mid_px").reindex(dts)
+    # If mid_df had missing rows, mid_pivot can have NaNs; book gaps are fine (loader can ffill/drop). :contentReference[oaicite:4]{index=4}
+    for inst in instruments:
+        inst_mid = mid_pivot[inst].to_numpy()
+        rows = {"datetime": dts, "instrument_id": inst}
+        for l in range(cfg.levels):
+            # spread in price units; deeper levels have worse prices
+            spread = (0.8 + 0.3 * l) * 1e-2  # ~0.008..0.017 price units
+            # sizes increase with depth
+            bid_sz = (100 + 50 * l) * (1.0 + rng.normal(0, 0.05, size=T))
+            ask_sz = (100 + 50 * l) * (1.0 + rng.normal(0, 0.05, size=T))
+
+            rows[f"bid_price_l{l}"] = (inst_mid - spread).astype(np.float64)
+            rows[f"ask_price_l{l}"] = (inst_mid + spread).astype(np.float64)
+            rows[f"bid_size_l{l}"] = np.maximum(1.0, bid_sz).astype(np.float64)
+            rows[f"ask_size_l{l}"] = np.maximum(1.0, ask_sz).astype(np.float64)
+
+        book_frames.append(pd.DataFrame(rows))
+
+    book_df = pd.concat(book_frames, ignore_index=True)
+    book_df = _drop_rows(book_df, rng, cfg.missing_prob)
+    book_df.to_parquet(cfg.out_dir / "book.parquet", index=False)
+
+    # ---- Signal (only ref instrument used by loader) ---------------------------
+    # Loader filters signal_df to ref_instrument_id then expects (T,) arrays. :contentReference[oaicite:5]{index=5}
+    # Build a zscore series with occasional excursions; expected pnl/yield are toy functions of zscore.
+    z = rng.normal(0, 1.0, size=T)
+    # add mild mean reversion
+    for t in range(1, T):
+        z[t] = 0.92 * z[t - 1] + 0.35 * z[t]
+
+    expected_yield_pnl_bps = (-0.8 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
+    package_yield_bps = (0.5 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
+
+    signal_df = pd.DataFrame(
+        {
+            "datetime": dts,
+            "instrument_id": cfg.ref_instrument_id,
+            "zscore": z.astype(np.float64),
+            "expected_yield_pnl_bps": expected_yield_pnl_bps,
+            "package_yield_bps": package_yield_bps,
+        }
+    )
+    signal_df = _drop_rows(signal_df, rng, cfg.missing_prob)
+    signal_df.to_parquet(cfg.out_dir / "signal.parquet", index=False)
+
+    # ---- Hedge ratios ----------------------------------------------------------
+    # Loader pivots to (T,N) then extracts last row (warns if varying). :contentReference[oaicite:6]{index=6}
+    # We'll create stable ratios that sum ~ 0.
+    N = len(instruments)
+    raw = rng.normal(0, 1.0, size=N)
+    raw = raw - raw.mean()  # sum ~ 0
+    raw = raw / (np.sum(np.abs(raw)) + 1e-12)  # scale
+    hedge_frames = []
+    for j, inst in enumerate(instruments):
+        hedge_frames.append(
+            pd.DataFrame(
+                {
+                    "datetime": dts,
+                    "instrument_id": inst,
+                    "hedge_ratio": np.full(T, raw[j], dtype=np.float64),
+                }
+            )
+        )
+    hedge_df = pd.concat(hedge_frames, ignore_index=True)
+    hedge_df = _drop_rows(hedge_df, rng, cfg.missing_prob)
+    hedge_df.to_parquet(cfg.out_dir / "hedge_ratios.parquet", index=False)
+
+    print(f"Wrote synthetic parquets to: {cfg.out_dir.resolve()}")
+    print("Files:", ", ".join(sorted(p.name for p in cfg.out_dir.glob("*.parquet"))))
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", type=str, required=True, help="Output directory, e.g. data/sim_20260217")
+    ap.add_argument("--instruments", type=str, default="UST_2Y,UST_5Y,UST_10Y",
+                    help="Comma-separated instrument_ids in desired order")
+    ap.add_argument("--ref", type=str, default="UST_5Y", help="ref_instrument_id for signal")
+    ap.add_argument("--start", type=str, default="2026-01-01 09:00:00", help="Start datetime (naive)")
+    ap.add_argument("--periods", type=int, default=2000, help="Number of timestamps")
+    ap.add_argument("--freq", type=str, default="1min", help="Pandas date_range freq, e.g. 1min, 5s, 1H")
+    ap.add_argument("--levels", type=int, default=5, help="Number of book levels L")
+    ap.add_argument("--seed", type=int, default=7, help="RNG seed")
+    ap.add_argument("--missing-prob", type=float, default=0.02,
+                    help="Probability to drop individual rows to create gaps (0..0.3 typical)")
+    ap.add_argument("--jitter-bps", type=float, default=1.2,
+                    help="Typical mid move scale in bps per step (rough)")
+    args = ap.parse_args()
+
+    cfg = GenConfig(
+        out_dir=Path(args.out),
+        instrument_ids=[s.strip() for s in args.instruments.split(",") if s.strip()],
+        ref_instrument_id=args.ref.strip(),
+        start=args.start,
+        periods=args.periods,
+        freq=args.freq,
+        levels=args.levels,
+        seed=args.seed,
+        missing_prob=float(args.missing_prob),
+        jitter_bps=float(args.jitter_bps),
+    )
+    generate_parquets(cfg)
+
+
+if __name__ == "__main__":
+    main()

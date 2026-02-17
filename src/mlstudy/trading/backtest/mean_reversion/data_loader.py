@@ -84,14 +84,17 @@ class BacktestDataLoader:
 
     Parameters
     ----------
-    data_path : str or Path
-        Directory containing the parquet files.
     book_filename, mid_filename, dv01_filename, signal_filename, hedge_ratio_filename : str
         Filenames within *data_path*.
     instrument_ids : list[str]
         Ordered list of instrument IDs — defines N and column order.
     ref_instrument_id : str
         Instrument ID to filter signal by (produces ``(T,)`` arrays).
+    data_path : str, Path, or None
+        Directory containing the parquet files.  Can be omitted here
+        and passed to :meth:`load` instead — useful for keeping the
+        YAML config platform-independent while supplying the path at
+        launch time.
     datetime_col : str
         Name of the datetime column in parquets (default ``"datetime"``).
     instrument_col : str
@@ -101,7 +104,6 @@ class BacktestDataLoader:
         ``"drop"`` (keep only rows where all sources have data).
     """
 
-    data_path: str | Path
     book_filename: str
     mid_filename: str
     dv01_filename: str
@@ -109,24 +111,40 @@ class BacktestDataLoader:
     hedge_ratio_filename: str
     instrument_ids: list[str]
     ref_instrument_id: str
+    data_path: str | Path | None = None
     datetime_col: str = "datetime"
     instrument_col: str = "instrument_id"
     fill_method: str = "ffill"
 
-    def load(self) -> MarketData:
-        """Read parquets, align, pivot, and return ``MarketData``."""
-        data_path = Path(self.data_path)
+    def load(self, data_path: str | Path | None = None) -> MarketData:
+        """Read parquets, align, pivot, and return ``MarketData``.
+
+        Parameters
+        ----------
+        data_path : str, Path, or None
+            Directory containing the parquet files.  Overrides
+            ``self.data_path`` when supplied — use this to keep a
+            platform-independent YAML config and pass the path at
+            runtime.
+        """
+        resolved = data_path or self.data_path
+        if resolved is None:
+            raise ValueError(
+                "data_path must be provided either at construction time "
+                "or as an argument to load()"
+            )
+        data_path_dir = Path(resolved)
         dt_col = self.datetime_col
         inst_col = self.instrument_col
         instruments = self.instrument_ids
         n_inst = len(instruments)
 
         # --- 1. Read parquets ---------------------------------------------------
-        book_df = pd.read_parquet(data_path / self.book_filename)
-        mid_df = pd.read_parquet(data_path / self.mid_filename)
-        dv01_df = pd.read_parquet(data_path / self.dv01_filename)
-        signal_df = pd.read_parquet(data_path / self.signal_filename)
-        hedge_df = pd.read_parquet(data_path / self.hedge_ratio_filename)
+        book_df = pd.read_parquet(data_path_dir / self.book_filename)
+        mid_df = pd.read_parquet(data_path_dir / self.mid_filename)
+        dv01_df = pd.read_parquet(data_path_dir / self.dv01_filename)
+        signal_df = pd.read_parquet(data_path_dir / self.signal_filename)
+        hedge_df = pd.read_parquet(data_path_dir / self.hedge_ratio_filename)
 
         # --- 2. Auto-detect book levels -----------------------------------------
         n_levels = _detect_book_levels(book_df.columns)
