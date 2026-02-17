@@ -2,9 +2,10 @@
 
 from . import analysis, sweep
 from .data_loader import BacktestDataLoader, MarketData
-from .engine import MRBacktestConfig, run_backtest
+from .engine import run_backtest
+from .config import MRBacktestConfig
 from .results import MRBacktestResults
-from .sweep import MetricsOnlyResult, SweepError, SweepSummary
+from .sweep import MetricsOnlyResult, SweepSummary
 from .sweep_config import SweepConfig, load_config_map, load_sweep_config, load_sweep_config_by_name
 from .sweep_rank import RankingPlan
 from .sweep_runner import SweepRunResult, run_sweep_from_config
@@ -56,7 +57,6 @@ from .types import (
 )
 
 __all__ = [
-    "MRBacktestConfig",
     "MRBacktestResults",
     "run_backtest",
     # codes
@@ -106,7 +106,6 @@ __all__ = [
     # sweep dataclasses
     "MetricsOnlyResult",
     "SweepSummary",
-    "SweepError",
     "RankingPlan",
     # sweep config
     "SweepConfig",

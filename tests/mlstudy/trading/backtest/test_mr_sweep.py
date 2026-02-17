@@ -8,7 +8,7 @@ import warnings
 import numpy as np
 import pytest
 
-from mlstudy.trading.backtest.mean_reversion.engine import MRBacktestConfig
+from mlstudy.trading.backtest.mean_reversion import MRBacktestConfig
 from mlstudy.trading.backtest.mean_reversion.sweep import (
     MetricsOnlyResult,
     SweepError,

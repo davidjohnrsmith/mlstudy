@@ -9,8 +9,6 @@ data:
    dv01_filename: "dv01.parquet"
    signal_filename: "signal.parquet"
    hedge_ratio_filename: "hedge_ratios.parquet"
-   instrument_ids: ["UST_2Y", "UST_5Y", "UST_10Y"]
-   ref_instrument_id: "UST_5Y"
    fill_method: "ffill"
 
 grid_name: "mr_grid_v1"

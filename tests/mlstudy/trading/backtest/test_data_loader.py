@@ -157,11 +157,22 @@ def _make_loader(data_dir, **overrides) -> BacktestDataLoader:
         dv01_filename="dv01.parquet",
         signal_filename="signal.parquet",
         hedge_ratio_filename="hedge_ratios.parquet",
+    )
+    defaults.update(overrides)
+    # Extract load-time params so they don't go into the constructor
+    defaults.pop("instrument_ids", None)
+    defaults.pop("ref_instrument_id", None)
+    return BacktestDataLoader(**defaults)
+
+
+def _load(loader, **overrides):
+    """Call loader.load() with default instrument_ids/ref_instrument_id."""
+    defaults = dict(
         instrument_ids=INSTRUMENTS,
         ref_instrument_id="B",
     )
     defaults.update(overrides)
-    return BacktestDataLoader(**defaults)
+    return loader.load(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +211,7 @@ class TestBasicLoad:
         T = 10
         dts = _make_datetimes(T)
         _write_all_parquets(tmp_path, datetimes=dts)
-        loader = _make_loader(tmp_path)
-        md = loader.load()
+        md = _load(_make_loader(tmp_path))
 
         N = len(INSTRUMENTS)
         L = N_LEVELS
@@ -220,7 +230,7 @@ class TestBasicLoad:
 
     def test_values(self, tmp_path):
         _write_all_parquets(tmp_path, datetimes=_make_datetimes(5))
-        md = _make_loader(tmp_path).load()
+        md = _load(_make_loader(tmp_path))
 
         # bid_px level 0 should be 100.0 for all instruments
         np.testing.assert_allclose(md.bid_px[:, :, 0], 100.0)
@@ -237,7 +247,7 @@ class TestBasicLoad:
 
     def test_to_dict_keys(self, tmp_path):
         _write_all_parquets(tmp_path, datetimes=_make_datetimes(5))
-        md = _make_loader(tmp_path).load()
+        md = _load(_make_loader(tmp_path))
         d = md.to_dict()
         expected_keys = {
             "bid_px", "bid_sz", "ask_px", "ask_sz", "mid_px",
@@ -252,14 +262,14 @@ class TestSignalFiltering:
         dts = _make_datetimes(5)
         _write_all_parquets(tmp_path, datetimes=dts, ref_instrument="A")
         # Load with ref_instrument_id="A" — zscore for A is 1.5
-        md = _make_loader(tmp_path, ref_instrument_id="A").load()
+        md = _load(_make_loader(tmp_path), ref_instrument_id="A")
         np.testing.assert_allclose(md.zscore, 1.5)
 
     def test_invalid_ref_instrument_raises(self, tmp_path):
         _write_all_parquets(tmp_path, datetimes=_make_datetimes(5))
-        loader = _make_loader(tmp_path, ref_instrument_id="NONEXISTENT")
+        loader = _make_loader(tmp_path)
         with pytest.raises(ValueError, match="No signal data"):
-            loader.load()
+            _load(loader, ref_instrument_id="NONEXISTENT")
 
 
 class TestDatetimeAlignment:
@@ -291,8 +301,7 @@ class TestDatetimeAlignment:
             tmp_path / "hedge_ratios.parquet", index=False
         )
 
-        loader = _make_loader(tmp_path, fill_method="ffill")
-        md = loader.load()
+        md = _load(_make_loader(tmp_path, fill_method="ffill"))
 
         # First bar (09:00) has book but not mid → mid NaN → leading NaN dropped
         # First valid bar is 09:01 where both have data after ffill
@@ -322,8 +331,7 @@ class TestDatetimeAlignment:
             tmp_path / "hedge_ratios.parquet", index=False
         )
 
-        loader = _make_loader(tmp_path, fill_method="drop")
-        md = loader.load()
+        md = _load(_make_loader(tmp_path, fill_method="drop"))
 
         # Only 09:01, 09:02 are common to both book and mid
         assert md.bid_px.shape[0] == 2
@@ -333,13 +341,13 @@ class TestAutoDetectLevels:
     def test_three_levels(self, tmp_path):
         dts = _make_datetimes(5)
         _write_all_parquets(tmp_path, datetimes=dts, n_levels=3)
-        md = _make_loader(tmp_path).load()
+        md = _load(_make_loader(tmp_path))
         assert md.bid_px.shape[2] == 3
 
     def test_one_level(self, tmp_path):
         dts = _make_datetimes(5)
         _write_all_parquets(tmp_path, datetimes=dts, n_levels=1)
-        md = _make_loader(tmp_path).load()
+        md = _load(_make_loader(tmp_path))
         assert md.bid_px.shape[2] == 1
 
 
@@ -352,7 +360,7 @@ class TestHedgeRatios:
             datetimes=_make_datetimes(T),
             hedge_ratios=[-0.6, 1.0, -0.4],
         )
-        md = _make_loader(tmp_path).load()
+        md = _load(_make_loader(tmp_path))
         assert md.hedge_ratios.shape == (T, 3)
         # Every row should be the same
         for t in range(T):
@@ -378,7 +386,7 @@ class TestHedgeRatios:
         _make_dv01_df(dts, instruments).to_parquet(tmp_path / "dv01.parquet", index=False)
         _make_signal_df(dts, instruments, "B").to_parquet(tmp_path / "signal.parquet", index=False)
 
-        md = _make_loader(tmp_path).load()
+        md = _load(_make_loader(tmp_path))
         assert md.hedge_ratios.shape == (5, 3)
         # First bar: A=-0.5, B=1.0, C=-0.5
         np.testing.assert_allclose(md.hedge_ratios[0], [-0.5, 1.0, -0.5])
@@ -394,7 +402,7 @@ class TestHedgeRatios:
         )
         loader = _make_loader(tmp_path)
         with pytest.warns(UserWarning, match="do not sum to zero"):
-            loader.load()
+            _load(loader)
 
     def test_missing_instrument_raises(self, tmp_path):
         """If a backtest instrument is not in hedge_instruments, raise."""
@@ -417,7 +425,7 @@ class TestHedgeRatios:
 
         loader = _make_loader(tmp_path)
         with pytest.raises(ValueError, match="not found in hedge_instruments"):
-            loader.load()
+            _load(loader)
 
     def test_ffill_aligns_hedge(self, tmp_path):
         """Hedge ratios at different frequency get ffilled to common index."""
@@ -440,7 +448,7 @@ class TestHedgeRatios:
         ]
         pd.DataFrame(rows).to_parquet(tmp_path / "hedge_ratios.parquet", index=False)
 
-        md = _make_loader(tmp_path, fill_method="ffill").load()
+        md = _load(_make_loader(tmp_path, fill_method="ffill"))
         assert md.hedge_ratios.shape[0] == 6
         # Bars 0-2: ffilled from 09:00 values
         np.testing.assert_allclose(md.hedge_ratios[0], [-0.5, 1.0, -0.5])
@@ -453,7 +461,7 @@ class TestHedgeRatios:
 class TestMarketDataToDict:
     def test_round_trip(self, tmp_path):
         _write_all_parquets(tmp_path, datetimes=_make_datetimes(5))
-        md = _make_loader(tmp_path).load()
+        md = _load(_make_loader(tmp_path))
         d = md.to_dict()
         # All values should be numpy arrays
         for k, v in d.items():
@@ -481,8 +489,6 @@ class TestSweepConfigDataSection:
                 "dv01_filename": "dv01.parquet",
                 "signal_filename": "signal.parquet",
                 "hedge_ratio_filename": "hedge_ratios.parquet",
-                "instrument_ids": ["A", "B"],
-                "ref_instrument_id": "A",
             },
         }
         yaml_path = tmp_path / "test_config.yaml"
@@ -491,8 +497,7 @@ class TestSweepConfigDataSection:
 
         cfg = load_sweep_config(yaml_path)
         assert cfg.data_loader is not None
-        assert cfg.data_loader.ref_instrument_id == "A"
-        assert cfg.data_loader.instrument_ids == ["A", "B"]
+        assert cfg.data_loader.book_filename == "book.parquet"
 
     def test_no_data_section(self, tmp_path):
         import yaml

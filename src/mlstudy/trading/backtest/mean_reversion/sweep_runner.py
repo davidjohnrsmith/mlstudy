@@ -167,6 +167,8 @@ def run_sweep_from_config(
     *,
     market_data: dict[str, Any] | None = None,
     data_path: str | Path | None = None,
+    instrument_ids: list[str] | None = None,
+    ref_instrument_id: str | None = None,
     output_dir: str | Path | None = None,
     save: bool = True,
     config_map_path: str | Path | None = None,
@@ -192,6 +194,12 @@ def run_sweep_from_config(
         ``BacktestDataLoader.load()`` when the config has a ``data``
         section.  Use this to keep the YAML config platform-independent
         and supply the data directory at runtime.
+    instrument_ids : list[str], optional
+        Ordered list of instrument IDs.  Passed to
+        ``BacktestDataLoader.load()`` when auto-loading market data.
+    ref_instrument_id : str, optional
+        Reference instrument ID for signal filtering.  Passed to
+        ``BacktestDataLoader.load()`` when auto-loading market data.
     output_dir : str or Path, optional
         Directory to save results.  Defaults to ``runs/<grid_name>/``.
     save : bool
@@ -215,8 +223,17 @@ def run_sweep_from_config(
     md = dict(market_data or {})
     md.update(market_data_kwargs)
     if not md and cfg.data_loader is not None:
+        if instrument_ids is None or ref_instrument_id is None:
+            raise ValueError(
+                "instrument_ids and ref_instrument_id must be provided "
+                "when auto-loading market data from the config data section."
+            )
         logger.info("Loading market data from config data section")
-        loaded = cfg.data_loader.load(data_path=data_path)
+        loaded = cfg.data_loader.load(
+            instrument_ids=instrument_ids,
+            ref_instrument_id=ref_instrument_id,
+            data_path=data_path,
+        )
         md = loaded.to_dict()
     if not md:
         raise ValueError(

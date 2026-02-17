@@ -1,7 +1,8 @@
 # Optional data section — load market data from parquet files.
 # When present, market data is loaded automatically by run_sweep_from_config.
-# Note: data_path is intentionally omitted — pass it at runtime via
-#   --data-path so the same config works on Windows, Linux, etc.
+# Note: data_path, instrument_ids, and ref_instrument_id are intentionally
+#   omitted — pass them at runtime so the same config works across platforms
+#   and different instrument sets.
 #
 data:
    book_filename: "book.parquet"
@@ -9,8 +10,6 @@ data:
    dv01_filename: "dv01.parquet"
    signal_filename: "signal.parquet"
    hedge_ratio_filename: "hedge_ratios.parquet"
-   instrument_ids: ["UST_2Y", "UST_5Y", "UST_10Y"]
-   ref_instrument_id: "UST_5Y"
    fill_method: "ffill"
 
 grid_name: "mr_grid_v1"

@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from mlstudy.trading.backtest.mean_reversion.engine import MRBacktestConfig
+from mlstudy.trading.backtest.mean_reversion import MRBacktestConfig
 from mlstudy.trading.backtest.mean_reversion.sweep_config import (
     SweepConfig,
     load_config_map,

@@ -26,7 +26,7 @@ from typing import Any, Sequence
 
 import yaml
 
-from .engine import MRBacktestConfig
+from . import MRBacktestConfig
 from .sweep_rank import RankingPlan
 
 

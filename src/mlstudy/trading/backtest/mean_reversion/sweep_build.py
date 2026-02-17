@@ -4,7 +4,9 @@ from dataclasses import replace
 from itertools import product
 from typing import Sequence
 
-from .engine import MRBacktestConfig
+from .config import MRBacktestConfig
+
+
 from .sweep_types import SweepScenario
 
 

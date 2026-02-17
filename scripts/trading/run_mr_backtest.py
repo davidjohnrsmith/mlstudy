@@ -2,23 +2,24 @@
 """End-to-end launch script for the mean-reversion L2-book backtester.
 
 Runs a parameter sweep from a YAML config file.  The YAML stores
-platform-independent settings (filenames, instruments, grid, thresholds).
-The ``--data-path`` is always supplied at runtime so the same config
-works on Linux and Windows without modification.
+platform-independent settings (filenames, grid, thresholds).
+Runtime parameters (``--data-path``, ``--instruments``, ``--ref-instrument``)
+are always supplied at launch so the same config works across platforms
+and different instrument sets.
 
 Usage::
 
     python scripts/trading/run_mr_backtest.py \\
         --config configs/mr_grid_v1.yaml \\
-        --data-path /mnt/data/20240101          # Linux
+        --data-path /mnt/data/20240101 \\
+        --instruments UST_2Y UST_5Y UST_10Y \\
+        --ref-instrument UST_5Y
 
     python scripts/trading/run_mr_backtest.py \\
         --config configs/mr_grid_v1.yaml \\
-        --data-path D:\\data\\20240101            # Windows
-
-    python scripts/trading/run_mr_backtest.py \\
-        --config configs/mr_grid_v1.yaml \\
-        --data-path data/20240101 \\
+        --data-path D:\\data\\20240101 \\
+        --instruments UST_2Y UST_5Y UST_10Y \\
+        --ref-instrument UST_5Y \\
         --outdir runs/sweep_20240101
 """
 
@@ -50,6 +51,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Directory with parquet files.",
     )
+    parser.add_argument("--instruments", type=str, required=True,
+                        help="Comma-separated instrument IDs, e.g. UST_2Y,UST_5Y,UST_10Y")
+    parser.add_argument(
+        "--ref-instrument",
+        type=str,
+        required=True,
+        help="Reference instrument ID for signal filtering.",
+    )
 
     out = parser.add_argument_group("output")
     out.add_argument("--outdir", type=str, default=None, help="Output directory.")
@@ -73,9 +82,12 @@ def main(argv: list[str] | None = None) -> int:
     _print(f"Loading sweep config from {args.config} ...", quiet)
 
     t0 = time.perf_counter()
+    instruments = [s.strip() for s in args.instruments.split(",") if s.strip()]
     result = run_sweep_from_config(
         config=args.config,
         data_path=args.data_path,
+        instrument_ids=instruments,
+        ref_instrument_id=args.ref_instrument,
         output_dir=args.outdir,
         save=not args.no_save,
     )

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..metrics import BacktestMetrics
-from .engine import MRBacktestConfig
+from .config import MRBacktestConfig
 from .results import MRBacktestResults
 
 

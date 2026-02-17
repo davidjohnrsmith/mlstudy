@@ -7,16 +7,17 @@ to the numpy arrays expected by ``run_backtest`` / ``run_sweep``.
 Usage::
 
     loader = BacktestDataLoader(
-        data_path="data/20240101",
         book_filename="book.parquet",
         mid_filename="mid.parquet",
         dv01_filename="dv01.parquet",
         signal_filename="signal.parquet",
         hedge_ratio_filename="hedge_ratios.parquet",
+    )
+    md = loader.load(
+        data_path="data/20240101",
         instrument_ids=["UST_2Y", "UST_5Y", "UST_10Y"],
         ref_instrument_id="UST_5Y",
     )
-    md = loader.load()
     results = run_sweep(scenarios, **md.to_dict())
 """
 
@@ -85,10 +86,6 @@ class BacktestDataLoader:
     ----------
     book_filename, mid_filename, dv01_filename, signal_filename, hedge_ratio_filename : str
         Filenames within *data_path*.
-    instrument_ids : list[str]
-        Ordered list of instrument IDs — defines N and column order.
-    ref_instrument_id : str
-        Instrument ID to filter signal by (produces ``(T,)`` arrays).
     data_path : str, Path, or None
         Directory containing the parquet files.  Can be omitted here
         and passed to :meth:`load` instead — useful for keeping the
@@ -108,18 +105,25 @@ class BacktestDataLoader:
     dv01_filename: str
     signal_filename: str
     hedge_ratio_filename: str
-    instrument_ids: list[str]
-    ref_instrument_id: str
     data_path: str | Path | None = None
     datetime_col: str = "datetime"
     instrument_col: str = "instrument_id"
     fill_method: str = "ffill"
 
-    def load(self, data_path: str | Path | None = None) -> MarketData:
+    def load(
+        self,
+        instrument_ids: list[str],
+        ref_instrument_id: str,
+        data_path: str | Path | None = None,
+    ) -> MarketData:
         """Read parquets, align, pivot, and return ``MarketData``.
 
         Parameters
         ----------
+        instrument_ids : list[str]
+            Ordered list of instrument IDs — defines N and column order.
+        ref_instrument_id : str
+            Instrument ID to filter signal by (produces ``(T,)`` arrays).
         data_path : str, Path, or None
             Directory containing the parquet files.  Overrides
             ``self.data_path`` when supplied — use this to keep a
@@ -135,7 +139,7 @@ class BacktestDataLoader:
         data_path_dir = Path(resolved)
         dt_col = self.datetime_col
         inst_col = self.instrument_col
-        instruments = self.instrument_ids
+        instruments = instrument_ids
         n_inst = len(instruments)
 
         # --- 1. Read parquets ---------------------------------------------------
@@ -151,11 +155,11 @@ class BacktestDataLoader:
 
         # --- 3. Filter signal to ref instrument ---------------------------------
         signal_df = signal_df[
-            signal_df[inst_col] == self.ref_instrument_id
+            signal_df[inst_col] == ref_instrument_id
         ].copy()
         if signal_df.empty:
             raise ValueError(
-                f"No signal data for ref_instrument_id={self.ref_instrument_id!r}"
+                f"No signal data for ref_instrument_id={ref_instrument_id!r}"
             )
 
         # --- 4. Pivot long → wide -----------------------------------------------
@@ -173,7 +177,7 @@ class BacktestDataLoader:
         # then pivot the list columns into a (T_hedge, N) DataFrame.
         hedge_pivoted = _pivot_hedge_ratios(
             hedge_df, inst_col, dt_col,
-            self.ref_instrument_id, instruments,
+            ref_instrument_id, instruments,
         )
 
         # --- 5. Build unified datetime index & align ----------------------------
@@ -263,7 +267,7 @@ class BacktestDataLoader:
             package_yield_bps=package_yield_bps,
             hedge_ratios=hedge_ratios,
             datetimes=datetimes,
-            instrument_ids=list(self.instrument_ids),
+            instrument_ids=list(instrument_ids),
         )
 
 
