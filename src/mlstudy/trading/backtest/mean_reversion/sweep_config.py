@@ -39,6 +39,7 @@ class SweepConfig:
     grid: dict[str, Sequence]
     sweep_kwargs: dict[str, Any]
     ranking_plan: RankingPlan | None
+    data_loader: Any | None = None  # BacktestDataLoader, if ``data`` section present
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +131,19 @@ def _build_sweep_kwargs(
     return kwargs
 
 
+def _build_data_loader(raw: dict[str, Any] | None) -> Any | None:
+    """Construct ``BacktestDataLoader`` from the ``data`` YAML section.
+
+    Returns *None* when no ``data`` section is present.
+    """
+    if raw is None:
+        return None
+
+    from .data_loader import BacktestDataLoader
+
+    return BacktestDataLoader(**raw)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -160,12 +174,15 @@ def load_sweep_config(path: str | Path) -> SweepConfig:
     ranking_plan = _build_ranking_plan(raw.get("rank"))
     sweep_kwargs = _build_sweep_kwargs(raw.get("sweep"), ranking_plan)
 
+    data_loader = _build_data_loader(raw.get("data"))
+
     return SweepConfig(
         grid_name=grid_name,
         base_config=base_config,
         grid=grid,
         sweep_kwargs=sweep_kwargs,
         ranking_plan=ranking_plan,
+        data_loader=data_loader,
     )
 
 

@@ -23,11 +23,14 @@ The function returns a ``SweepRunResult`` that bundles:
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
@@ -205,10 +208,15 @@ def run_sweep_from_config(
     # --- 2. Merge market data -------------------------------------------------
     md = dict(market_data or {})
     md.update(market_data_kwargs)
+    if not md and cfg.data_loader is not None:
+        logger.info("Loading market data from config data section")
+        loaded = cfg.data_loader.load()
+        md = loaded.to_dict()
     if not md:
         raise ValueError(
-            "No market data provided.  Pass market_data=dict(...) or "
-            "individual arrays as keyword arguments."
+            "No market data provided.  Pass market_data=dict(...), "
+            "individual arrays as keyword arguments, or add a 'data' "
+            "section to the YAML config."
         )
 
     _REQUIRED_KEYS = {

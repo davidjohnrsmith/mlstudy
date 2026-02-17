@@ -1,6 +1,7 @@
 """Mean-reversion backtester with L2 book execution and explicit state machine."""
 
 from . import analysis, sweep
+from .data_loader import BacktestDataLoader, MarketData
 from .engine import MRBacktestConfig, run_backtest
 from .results import MRBacktestResults
 from .sweep import MetricsOnlyResult, SweepError, SweepSummary
@@ -115,6 +116,9 @@ __all__ = [
     # sweep runner
     "SweepRunResult",
     "run_sweep_from_config",
+    # data loader
+    "BacktestDataLoader",
+    "MarketData",
     # analysis, plots & sweep
     "analysis",
     "plots",
