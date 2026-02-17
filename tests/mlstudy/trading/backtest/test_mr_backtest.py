@@ -32,19 +32,16 @@ from mlstudy.trading.backtest.mean_reversion import (
     ENTRY_TOO_WIDE,
     EXIT_SL_FORCED,
     EXIT_TP_OK,
-    NO_ACTION,
     STATE_FLAT,
     STATE_LONG,
-    STATE_SHORT,
     STATE_SL_COOLDOWN,
     STATE_TP_COOLDOWN,
     TRADE_ENTRY,
-    TRADE_EXIT_SL,
     TRADE_EXIT_TP,
     MRBacktestConfig,
     run_backtest,
 )
-from mlstudy.trading.backtest.mean_reversion.loop import HAS_NUMBA
+from mlstudy.trading.backtest.mean_reversion.single_backtest.loop import HAS_NUMBA
 
 
 # =========================================================================

@@ -6,10 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .sweep_types import SweepResult
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResult
 
-
-_ARRAY_FIELDS = [
+ARRAY_FIELDS = [
     "positions",
     "cash",
     "equity",
@@ -48,6 +47,6 @@ def _save_top_full(results: list[SweepResult], output_dir: str | Path) -> None:
         with open(scenario_dir / "spec.json", "w") as f:
             json.dump(spec, f, indent=2, default=str)
 
-        for field_name in _ARRAY_FIELDS:
+        for field_name in ARRAY_FIELDS:
             arr = getattr(sr.results, field_name)
             np.save(scenario_dir / f"{field_name}.npy", arr)

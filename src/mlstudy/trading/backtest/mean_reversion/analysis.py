@@ -9,6 +9,17 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
+from .types import (
+    CODE_NAMES,
+    STATE_FLAT,
+    STATE_LONG,
+    STATE_SHORT,
+    TRADE_ENTRY,
+    TRADE_EXIT_SL,
+    TRADE_EXIT_TIME,
+    TRADE_EXIT_TP,
+)
 from ..metrics import (
     BacktestMetrics,
     compute_avg_holding_period,
@@ -21,17 +32,6 @@ from ..metrics import (
     compute_tail_stats,
     compute_turnover,
     compute_win_loss_stats,
-)
-from .results import MRBacktestResults
-from .types import (
-    CODE_NAMES,
-    STATE_FLAT,
-    STATE_LONG,
-    STATE_SHORT,
-    TRADE_ENTRY,
-    TRADE_EXIT_SL,
-    TRADE_EXIT_TIME,
-    TRADE_EXIT_TP,
 )
 
 # Maps tr_type int to human-readable exit type string

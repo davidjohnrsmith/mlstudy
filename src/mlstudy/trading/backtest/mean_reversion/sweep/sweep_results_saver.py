@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from mlstudy.trading.backtest.mean_reversion import SweepConfig, MetricsOnlyResult, SweepSummary
-from mlstudy.trading.backtest.mean_reversion.sweep_types import SweepResult
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResult
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def _save_scenario_plots(
     """Generate and save scenario dashboard plots."""
     try:
         from .plots import plot_scenario
-        from .sweep_results_reader import FullScenario
+        from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import FullScenario
     except ImportError:
         logger.debug("matplotlib not available, skipping plot generation")
         return

@@ -6,9 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlstudy.trading.backtest.mean_reversion.data_loader import (
+from mlstudy.trading.backtest.mean_reversion.data.data_loader import (
     BacktestDataLoader,
-    MarketData,
     _detect_book_levels,
 )
 
@@ -476,7 +475,7 @@ class TestSweepConfigDataSection:
 
     def test_parse_data_section(self, tmp_path):
         import yaml
-        from mlstudy.trading.backtest.mean_reversion.sweep_config import load_sweep_config
+        from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import load_sweep_config
 
         config = {
             "grid_name": "test",
@@ -501,7 +500,7 @@ class TestSweepConfigDataSection:
 
     def test_no_data_section(self, tmp_path):
         import yaml
-        from mlstudy.trading.backtest.mean_reversion.sweep_config import load_sweep_config
+        from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import load_sweep_config
 
         config = {
             "grid_name": "test",

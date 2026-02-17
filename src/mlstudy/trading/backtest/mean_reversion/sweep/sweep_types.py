@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..metrics import BacktestMetrics
-from .config import MRBacktestConfig
-from .results import MRBacktestResults
+from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
+from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
+from mlstudy.trading.backtest.metrics import BacktestMetrics
 
 
 @dataclass(frozen=True)

@@ -10,19 +10,16 @@ import pandas as pd
 import pytest
 import yaml
 
-from mlstudy.trading.backtest.mean_reversion import MRBacktestConfig
-from mlstudy.trading.backtest.mean_reversion.sweep_config import (
-    SweepConfig,
-    load_config_map,
+from mlstudy.trading.backtest.mean_reversion import MRBacktestConfig, load_config_map, load_sweep_config_by_name
+from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import (
     load_sweep_config,
-    load_sweep_config_by_name,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep_runner import (
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import (
     SweepRunResult,
     run_sweep_from_config,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep_rank import RankingPlan
-from mlstudy.trading.backtest.mean_reversion.sweep_types import (
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import RankingPlan
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import (
     MetricsOnlyResult,
     SweepResult,
     SweepSummary,
@@ -609,7 +606,7 @@ class TestRunnerPersistence:
 class TestConsistencyWithDirectSweep:
     def test_full_mode_pnl_matches(self, full_mode_yaml, market_data, tmp_path):
         from mlstudy.trading.backtest.mean_reversion.sweep import run_sweep
-        from mlstudy.trading.backtest.mean_reversion.sweep_build import make_scenarios
+        from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import make_scenarios
 
         cfg = load_sweep_config(full_mode_yaml)
         scenarios = make_scenarios(cfg.base_config, cfg.grid, name_prefix=cfg.grid_name)
@@ -628,7 +625,7 @@ class TestConsistencyWithDirectSweep:
         self, metrics_only_yaml, market_data, tmp_path
     ):
         from mlstudy.trading.backtest.mean_reversion.sweep import run_sweep
-        from mlstudy.trading.backtest.mean_reversion.sweep_build import make_scenarios
+        from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import make_scenarios
 
         cfg = load_sweep_config(metrics_only_yaml)
         scenarios = make_scenarios(cfg.base_config, cfg.grid, name_prefix=cfg.grid_name)

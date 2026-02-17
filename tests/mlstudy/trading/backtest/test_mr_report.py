@@ -9,14 +9,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mlstudy.trading.backtest.mean_reversion.results import MRBacktestResults
+from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
 from mlstudy.trading.backtest.mean_reversion.types import (
     ENTRY_NO_SIGNAL,
     ENTRY_OK,
     EXIT_SL_OK,
     EXIT_TP_OK,
     NO_ACTION,
-    STATE_FLAT,
     STATE_LONG,
     TRADE_ENTRY,
     TRADE_EXIT_SL,

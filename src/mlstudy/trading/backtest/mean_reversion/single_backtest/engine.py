@@ -11,10 +11,10 @@ from typing import Optional
 
 import numpy as np
 
-from .config import MRBacktestConfig
-from .loop import HAS_NUMBA, mr_loop_jit, _mr_loop_jit_impl
-from .results import MRBacktestResults
-from .types import VALIDATE_ALL_LEGS, VALIDATE_REF_ONLY
+from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
+from mlstudy.trading.backtest.mean_reversion.single_backtest.loop import HAS_NUMBA, mr_loop_jit, _mr_loop_jit_impl
+from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
+from mlstudy.trading.backtest.mean_reversion.types import VALIDATE_ALL_LEGS, VALIDATE_REF_ONLY
 
 
 def _validate(

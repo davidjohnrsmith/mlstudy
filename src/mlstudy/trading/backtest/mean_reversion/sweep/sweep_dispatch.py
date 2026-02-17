@@ -4,10 +4,10 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from typing import Any
 
-from .analysis import compute_code_distribution, compute_performance_metrics
-from .engine import run_backtest
-from .sweep_types import MetricsOnlyResult, SweepError, SweepResult, SweepScenario
-
+from mlstudy.trading.backtest.mean_reversion.analysis import compute_code_distribution, compute_performance_metrics
+from mlstudy.trading.backtest.mean_reversion.single_backtest.engine import run_backtest
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import MetricsOnlyResult, SweepError, SweepResult, \
+    SweepScenario
 
 _WORKER_MARKET_DATA: dict | None = None
 

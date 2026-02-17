@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .state import ActionCode, State, TradeType
+from mlstudy.trading.backtest.mean_reversion.single_backtest.state import ActionCode, State, TradeType
 
 # Plain-int duplicates of the IntEnum values in state.py.
 #

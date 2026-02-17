@@ -4,10 +4,8 @@ from dataclasses import replace
 from itertools import product
 from typing import Sequence
 
-from .config import MRBacktestConfig
-
-
-from .sweep_types import SweepScenario
+from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepScenario
 
 
 def make_scenarios(

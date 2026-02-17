@@ -8,18 +8,16 @@ from typing import Any
 
 import pandas as pd
 
-from .sweep_dispatch import _dispatch
-from .sweep_persist import _save_top_full
-from .sweep_rank import RankingPlan, rank_scenarios
-from .sweep_build import make_scenarios
-from .sweep_types import (
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_dispatch import _dispatch
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_persist import _save_top_full
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import RankingPlan, rank_scenarios
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import (
     MetricsOnlyResult,
-    SweepError,
     SweepResult,
     SweepScenario,
     SweepSummary,
 )
-from ..metrics.metrics import BacktestMetrics
+from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 
 
 def run_sweep(

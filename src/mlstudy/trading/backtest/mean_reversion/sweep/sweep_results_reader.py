@@ -31,14 +31,15 @@ Usage::
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from .results import MRBacktestResults
+from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_persist import ARRAY_FIELDS
 
 
 @dataclass(frozen=True)
@@ -111,38 +112,13 @@ class SweepRunData:
         return self.meta.get("elapsed_seconds")
 
 
-# ---------------------------------------------------------------------------
-# Array fields matching sweep_persist._ARRAY_FIELDS
-# ---------------------------------------------------------------------------
-
-_ARRAY_FIELDS = [
-    "positions",
-    "cash",
-    "equity",
-    "pnl",
-    "codes",
-    "state",
-    "holding",
-    "tr_bar",
-    "tr_type",
-    "tr_side",
-    "tr_sizes",
-    "tr_risks",
-    "tr_vwaps",
-    "tr_mids",
-    "tr_cost",
-    "tr_code",
-    "tr_pkg_yield",
-]
-
-
 def _load_full_scenario(scenario_dir: Path) -> FullScenario:
     """Load one scenario sub-directory (spec.json + .npy arrays)."""
     with open(scenario_dir / "spec.json") as f:
         spec = json.load(f)
 
     arrays = {}
-    for name in _ARRAY_FIELDS:
+    for name in ARRAY_FIELDS:
         npy_path = scenario_dir / f"{name}.npy"
         if npy_path.exists():
             arrays[name] = np.load(npy_path)

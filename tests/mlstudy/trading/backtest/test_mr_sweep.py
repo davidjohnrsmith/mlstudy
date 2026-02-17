@@ -11,7 +11,6 @@ import pytest
 from mlstudy.trading.backtest.mean_reversion import MRBacktestConfig
 from mlstudy.trading.backtest.mean_reversion.sweep import (
     MetricsOnlyResult,
-    SweepError,
     SweepResult,
     SweepScenario,
     SweepSummary,
@@ -20,7 +19,7 @@ from mlstudy.trading.backtest.mean_reversion.sweep import (
     run_sweep,
     summary_table,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep_rank import (
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import (
     RankingPlan,
     rank_scenarios,
 )
@@ -714,7 +713,7 @@ class TestBackwardCompat:
         from mlstudy.trading.backtest.mean_reversion.analysis import (
             compute_performance_metrics,
         )
-        from mlstudy.trading.backtest.mean_reversion.engine import run_backtest
+        from mlstudy.trading.backtest.mean_reversion.single_backtest.engine import run_backtest
 
         base = _base_cfg()
         sc = SweepScenario(name="test", cfg=base, tags={})

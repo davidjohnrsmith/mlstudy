@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import run_sweep_from_config
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -77,7 +79,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     quiet = args.quiet
 
-    from mlstudy.trading.backtest.mean_reversion import run_sweep_from_config
 
     _print(f"Loading sweep config from {args.config} ...", quiet)
 

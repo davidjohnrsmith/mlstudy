@@ -28,16 +28,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .sweep_results_saver import _persist
+from mlstudy.trading.backtest.mean_reversion.configs.utils import _resolve_config
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_saver import _persist
 
 logger = logging.getLogger(__name__)
 
 import pandas as pd
 
-from .sweep import run_sweep, summary_table
-from .sweep_build import make_scenarios
-from .sweep_config import SweepConfig, load_sweep_config, load_sweep_config_by_name
-from .sweep_types import MetricsOnlyResult, SweepResult, SweepSummary
+from mlstudy.trading.backtest.mean_reversion.sweep import run_sweep, summary_table
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import make_scenarios
+from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import SweepConfig
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import MetricsOnlyResult, SweepResult, SweepSummary
 
 
 @dataclass
@@ -95,7 +96,7 @@ def run_sweep_from_config(
         One of:
         - A ``SweepConfig`` object (already loaded).
         - A path to a YAML config file (contains ``/`` or ends with ``.yaml``).
-        - A config-map name (looked up via ``config_map.yaml``).
+        - A config-map name (looked up via ``sweep_config_map.yaml``).
     market_data : dict, optional
         Pre-loaded market data arrays.  Keys must match ``run_sweep``
         signature: ``bid_px``, ``bid_sz``, ``ask_px``, ``ask_sz``,
@@ -202,21 +203,6 @@ def run_sweep_from_config(
 # ---------------------------------------------------------------------------
 # Internal
 # ---------------------------------------------------------------------------
-
-def _resolve_config(
-    config: str | Path | SweepConfig,
-    config_map_path: str | Path | None,
-) -> SweepConfig:
-    if isinstance(config, SweepConfig):
-        return config
-
-    path = Path(config)
-    # Heuristic: if it looks like a file path, load directly
-    if path.suffix in (".yaml", ".yml") or "/" in str(config) or "\\" in str(config):
-        return load_sweep_config(path)
-
-    # Otherwise treat as a config-map name
-    return load_sweep_config_by_name(str(config), config_map_path=config_map_path)
 
 
 def _resolve_output_dir(

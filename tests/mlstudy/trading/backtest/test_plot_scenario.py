@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from matplotlib import pyplot as plt
 
-from mlstudy.trading.backtest.mean_reversion.sweep_results_reader import (
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import (
     FullScenario,
     _load_full_scenario,
 )
