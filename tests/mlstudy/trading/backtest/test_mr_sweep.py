@@ -164,9 +164,9 @@ class TestMakeScenariosSingleParam:
         base = _base_cfg()
         vals = [1.5, 2.0]
         scenarios = make_scenarios(base, {"entry_z_threshold": vals})
-        for sc, v in zip(scenarios, vals):
+        for idx, (sc, v) in enumerate(zip(scenarios, vals)):
             assert sc.tags == {"entry_z_threshold": v}
-            assert f"entry_z_threshold={v}" in sc.name
+            assert sc.name == f"sweep_{idx:04d}"
 
     def test_cfg_values(self):
         base = _base_cfg()

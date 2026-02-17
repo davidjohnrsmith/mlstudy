@@ -17,13 +17,14 @@ def make_scenarios(
     name_prefix: str = "sweep",
 ) -> list[SweepScenario]:
     keys = list(grid.keys())
-    scenarios: list[SweepScenario] = []
+    combos = list(product(*[grid[k] for k in keys]))
+    n_digits = max(len(str(len(combos) - 1)), 4)
 
-    for combo in product(*[grid[k] for k in keys]):
+    scenarios: list[SweepScenario] = []
+    for idx, combo in enumerate(combos):
         patch = dict(zip(keys, combo))
         cfg = replace(base_cfg, **patch)
-        suffix = ",".join(f"{k}={v}" for k, v in patch.items())
-        name = f"{name_prefix}:{suffix}"
+        name = f"{name_prefix}_{idx:0{n_digits}d}"
         scenarios.append(SweepScenario(name=name, cfg=cfg, tags=patch))
 
     return scenarios

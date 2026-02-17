@@ -11,8 +11,10 @@ import pandas as pd
 from .sweep_dispatch import _dispatch
 from .sweep_persist import _save_top_full
 from .sweep_rank import RankingPlan, rank_scenarios
+from .sweep_build import make_scenarios
 from .sweep_types import (
     MetricsOnlyResult,
+    SweepError,
     SweepResult,
     SweepScenario,
     SweepSummary,
