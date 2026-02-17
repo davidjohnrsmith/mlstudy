@@ -6,9 +6,9 @@
 # from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
 # from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import RankingPlan
 # from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import FullScenario, SweepRunData, \
-#     load_sweep_run
-# from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import SweepRunResult, run_sweep_from_config
-# from . import analysis, sweep
+#     SweepResultsReader
+# from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import SweepRunResult, SweepRunner
+# from . import analysis
 # from .configs.utils import load_config_map, load_sweep_config_by_name
 # from mlstudy.trading.backtest.mean_reversion.data.data_loader import BacktestDataLoader, MarketData
 # from .sweep.sweep_types import SweepSummary, MetricsOnlyResult
@@ -115,16 +115,15 @@
 #     "load_sweep_config",
 #     # sweep runner
 #     "SweepRunResult",
-#     "run_sweep_from_config",
+#     "SweepRunner",
 #     # sweep results reader
 #     "SweepRunData",
 #     "FullScenario",
-#     "load_sweep_run",
+#     "SweepResultsReader",
 #     # data loader
 #     "BacktestDataLoader",
 #     "MarketData",
 #     # analysis, plots & sweep
 #     "analysis",
 #     "plots",
-#     "sweep",
 # ]

@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import (
     FullScenario,
-    _load_full_scenario,
+    SweepResultsReader,
 )
 from mlstudy.trading.backtest.mean_reversion.types import (
     TRADE_ENTRY,
@@ -106,7 +106,7 @@ def _write_scenario(
 def _load_scenario(tmp_path: Path, **kwargs) -> FullScenario:
     sd = tmp_path / "scenario_000"
     _write_scenario(sd, **kwargs)
-    return _load_full_scenario(sd)
+    return SweepResultsReader.load_full_scenario(sd)
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ class TestPlotTopScenarios:
         for i in range(3):
             sd = tmp_path / "data" / f"scenario_{i:03d}"
             _write_scenario(sd, scenario_idx=i)
-            scenarios.append(_load_full_scenario(sd))
+            scenarios.append(SweepResultsReader.load_full_scenario(sd))
 
         figs = plot_top_scenarios(scenarios)
         assert len(figs) == 3
@@ -182,7 +182,7 @@ class TestPlotTopScenarios:
         for i in range(2):
             sd = tmp_path / "data" / f"scenario_{i:03d}"
             _write_scenario(sd, scenario_idx=i)
-            scenarios.append(_load_full_scenario(sd))
+            scenarios.append(SweepResultsReader.load_full_scenario(sd))
 
         save_dir = tmp_path / "plots"
         figs = plot_top_scenarios(scenarios, save_dir=save_dir)
@@ -197,7 +197,7 @@ class TestPlotTopScenarios:
         for i in range(2):
             sd = tmp_path / "data" / f"scenario_{i:03d}"
             _write_scenario(sd, scenario_idx=i, T=T)
-            scenarios.append(_load_full_scenario(sd))
+            scenarios.append(SweepResultsReader.load_full_scenario(sd))
 
         zscore = np.random.default_rng(99).normal(0, 1.5, T)
         figs = plot_top_scenarios(scenarios, zscore=zscore)

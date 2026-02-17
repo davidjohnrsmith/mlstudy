@@ -24,7 +24,9 @@
       "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd MR backtest post-analysis and reporting modules\n\n- analysis.py: pure-compute functions \\(to_dataframe, compute_performance_metrics,\n  compute_round_trips, compute_code/state_distribution, exit_type_stats,\n  execution_quality, print_summary\\)\n- plots.py: matplotlib-based plots \\(equity curve, state/codes, trade PnL,\n  exit breakdown, holding distribution, slippage\\)\n- Updated __init__.py with analysis/plots exports\n- Added 24 tests in test_mr_report.py\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(conda list:*)",
       "Bash(conda env list:*)",
-      "Bash(/c/Users/yihu0/Anaconda3/envs/mlstudy/python.exe:*)"
+      "Bash(/c/Users/yihu0/Anaconda3/envs/mlstudy/python.exe:*)",
+      "Bash(C:/Users/yihu0/Anaconda3/envs/mlstudy/python.exe -m pytest:*)",
+      "Bash(git stash:*)"
     ]
   }
 }

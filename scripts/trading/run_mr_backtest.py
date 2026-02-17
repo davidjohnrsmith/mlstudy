@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import run_sweep_from_config
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import SweepRunner
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
 
     t0 = time.perf_counter()
     instruments = [s.strip() for s in args.instruments.split(",") if s.strip()]
-    result = run_sweep_from_config(
+    result = SweepRunner.run_sweep_from_config(
         config=args.config,
         data_path=args.data_path,
         instrument_ids=instruments,
