@@ -154,25 +154,51 @@ def generate_parquets(cfg: GenConfig) -> None:
     signal_df = _drop_rows(signal_df, rng, cfg.missing_prob)
     signal_df.to_parquet(cfg.out_dir / "signal.parquet", index=False)
 
-    # ---- Hedge ratios ----------------------------------------------------------
-    # Loader pivots to (T,N) then extracts last row (warns if varying). :contentReference[oaicite:6]{index=6}
-    # We'll create stable ratios that sum ~ 0.
-    N = len(instruments)
-    raw = rng.normal(0, 1.0, size=N)
-    raw = raw - raw.mean()  # sum ~ 0
-    raw = raw / (np.sum(np.abs(raw)) + 1e-12)  # scale
-    hedge_frames = []
-    for j, inst in enumerate(instruments):
-        hedge_frames.append(
-            pd.DataFrame(
+    # ---- Hedge ratios (daily, list schema) -------------------------------------
+    # Hedge is daily (or business-daily) and must be forward-filled when aligning to intraday dts.
+
+    # Build daily timestamps spanning the intraday range
+    start_dt = pd.Timestamp(dts[0]).normalize()
+    end_dt = pd.Timestamp(dts[-1]).normalize()
+
+    # Use "D" for calendar daily, or "B" for business day
+    hedge_dts = pd.date_range(start=start_dt, end=end_dt, freq="B")
+
+    phi = 0.98  # smooth day-to-day changes
+    eps_scale = 0.15  # how much it changes each day
+
+    state = {target: None for target in instruments}
+
+    hedge_rows = []
+    for dt in hedge_dts:
+        for target in instruments:
+            hedge_legs = [x for x in instruments if x != target]
+            M = len(hedge_legs)
+
+            if state[target] is None:
+                state[target] = rng.normal(0, 1.0, size=M)
+
+            # AR(1) daily update
+            state[target] = phi * state[target] + rng.normal(0.0, eps_scale, size=M)
+
+            # Convert to weights that sum to 1
+            x = state[target] - np.max(state[target])
+            w = np.exp(x)
+            w = w / (np.sum(w) + 1e-12)
+
+            # Make hedge ratios negative and sum to -1
+            ratios = (-w).astype(np.float64)  # sum = -1
+
+            hedge_rows.append(
                 {
-                    "datetime": dts,
-                    "instrument_id": inst,
-                    "hedge_ratio": np.full(T, raw[j], dtype=np.float64),
+                    "datetime": dt,
+                    "instrument_id": target,  # TARGET being hedged
+                    "hedge_instruments": hedge_legs,  # excludes target
+                    "hedge_ratios": [float(r) for r in ratios],
                 }
             )
-        )
-    hedge_df = pd.concat(hedge_frames, ignore_index=True)
+
+    hedge_df = pd.DataFrame(hedge_rows)
     hedge_df = _drop_rows(hedge_df, rng, cfg.missing_prob)
     hedge_df.to_parquet(cfg.out_dir / "hedge_ratios.parquet", index=False)
 

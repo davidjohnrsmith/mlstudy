@@ -42,9 +42,8 @@ class MarketData:
     Shapes
     ------
     bid_px, bid_sz, ask_px, ask_sz : (T, N, L)
-    mid_px, dv01 : (T, N)
+    mid_px, dv01, hedge_ratios : (T, N)
     zscore, expected_yield_pnl_bps, package_yield_bps : (T,)
-    hedge_ratios : (N,)
     datetimes : (T,) datetime64
     instrument_ids : list[str] of length N
     """
@@ -164,12 +163,18 @@ class BacktestDataLoader:
         book_pivoted = _pivot_book(book_df, dt_col, inst_col, instruments, n_levels)
         mid_pivoted = _pivot_simple(mid_df, dt_col, inst_col, instruments, "mid_px")
         dv01_pivoted = _pivot_simple(dv01_df, dt_col, inst_col, instruments, "dv01")
-        hedge_pivoted = _pivot_simple(hedge_df, dt_col, inst_col, instruments, "hedge_ratio")
 
         # Signal: already filtered to single instrument, just set index
         signal_indexed = signal_df.set_index(dt_col)[
             ["zscore", "expected_yield_pnl_bps", "package_yield_bps"]
         ].sort_index()
+
+        # Hedge ratios: filter to ref instrument first (no list expansion),
+        # then pivot the list columns into a (T_hedge, N) DataFrame.
+        hedge_pivoted = _pivot_hedge_ratios(
+            hedge_df, inst_col, dt_col,
+            self.ref_instrument_id, instruments,
+        )
 
         # --- 5. Build unified datetime index & align ----------------------------
         all_dts = sorted(
@@ -231,9 +236,7 @@ class BacktestDataLoader:
         expected_yield_pnl_bps = sources["signal"]["expected_yield_pnl_bps"].values.astype(np.float64)
         package_yield_bps = sources["signal"]["package_yield_bps"].values.astype(np.float64)
 
-        # --- 7. Hedge ratios → static (N,) vector --------------------------------
-        hedge_arr = sources["hedge"].values.astype(np.float64)  # (T, N)
-        hedge_ratios = _extract_hedge_ratios(hedge_arr, instruments)
+        hedge_ratios = sources["hedge"].values.astype(np.float64)  # (T, N)
 
         datetimes = all_dts_idx.values  # datetime64
 
@@ -366,39 +369,96 @@ def _reshape_book(
     return bid_px, bid_sz, ask_px, ask_sz
 
 
-def _extract_hedge_ratios(
-    hedge_arr: np.ndarray,
+def _pivot_hedge_ratios(
+    hedge_df: pd.DataFrame,
+    inst_col: str,
+    dt_col: str,
+    ref_instrument_id: str,
     instruments: list[str],
-) -> np.ndarray:
-    """Extract a static ``(N,)`` hedge-ratio vector from a ``(T, N)`` array.
+) -> pd.DataFrame:
+    """Pivot list-column hedge ratios into a wide ``(T, N)`` DataFrame.
 
-    Uses the last row.  Warns if hedge ratios vary across time.
+    The parquet has columns ``[datetime, instrument_id, hedge_instruments,
+    hedge_ratios]`` where ``hedge_instruments`` and ``hedge_ratios`` are
+    lists.  The ``instrument_id`` column identifies the target/reference
+    instrument; the target instrument itself is **not** in
+    ``hedge_instruments`` — it is added here with ratio 1.0.
+
+    Steps:
+
+    1. Filter to ``ref_instrument_id`` — no list expansion beforehand.
+    2. For each row, map the list entries onto the ordered ``instruments``
+       positions, setting the target instrument to 1.0.
+    3. Return a DataFrame indexed by datetime with one column per instrument.
     """
-    if hedge_arr.shape[0] == 0:
-        raise ValueError("Empty hedge ratio array")
+    ref_rows = hedge_df[hedge_df[inst_col] == ref_instrument_id].copy()
+    if ref_rows.empty:
+        raise ValueError(
+            f"No hedge ratio data for ref_instrument_id={ref_instrument_id!r}"
+        )
 
-    # Check if values change over time
-    first_row = hedge_arr[0]
-    if hedge_arr.shape[0] > 1:
-        diffs = np.abs(hedge_arr - first_row[np.newaxis, :])
-        if np.nanmax(diffs) > 1e-10:
-            warnings.warn(
-                "Hedge ratios vary over time; using last row. "
-                f"Max deviation: {np.nanmax(diffs):.6g}",
-                stacklevel=2,
+    ref_rows = ref_rows.sort_values(dt_col)
+
+    N = len(instruments)
+    inst_to_idx = {inst: j for j, inst in enumerate(instruments)}
+    ref_idx = inst_to_idx.get(ref_instrument_id)
+
+    datetimes = []
+    ratio_rows = []
+
+    for _, row in ref_rows.iterrows():
+        hi_list = list(row["hedge_instruments"])
+        hr_list = list(row["hedge_ratios"])
+
+        if len(hi_list) != len(hr_list):
+            raise ValueError(
+                f"hedge_instruments length ({len(hi_list)}) != "
+                f"hedge_ratios length ({len(hr_list)}) "
+                f"at {row[dt_col]}"
             )
 
-    hedge_ratios = hedge_arr[-1].copy()
+        ratios = np.full(N, np.nan, dtype=np.float64)
 
-    # Validate sum ≈ 0
-    hr_sum = np.nansum(hedge_ratios)
+        # Target instrument gets 1.0
+        if ref_idx is not None:
+            ratios[ref_idx] = 1.0
+
+        for hi, hr in zip(hi_list, hr_list):
+            j = inst_to_idx.get(hi)
+            if j is not None:
+                ratios[j] = hr
+
+        # Check that all backtest instruments are covered
+        missing = [
+            instruments[j] for j in range(N)
+            if np.isnan(ratios[j])
+        ]
+        if missing:
+            raise ValueError(
+                f"Instruments {missing} not found in hedge_instruments "
+                f"for ref {ref_instrument_id!r} at {row[dt_col]}. "
+                f"Available: {hi_list}"
+            )
+
+        datetimes.append(row[dt_col])
+        ratio_rows.append(ratios)
+
+    result = pd.DataFrame(
+        np.array(ratio_rows),
+        index=pd.DatetimeIndex(datetimes),
+        columns=instruments,
+    )
+    result.index.name = dt_col
+
+    # Validate sum ≈ 0 on last row
+    hr_sum = float(result.iloc[-1].sum())
     if abs(hr_sum) > 1e-6:
         warnings.warn(
             f"Hedge ratios do not sum to zero: sum={hr_sum:.6g}",
-            stacklevel=2,
+            stacklevel=3,
         )
 
-    return hedge_ratios
+    return result
 
 
 def _validate_shapes(
@@ -427,7 +487,7 @@ def _validate_shapes(
         "zscore": (T,),
         "expected_yield_pnl_bps": (T,),
         "package_yield_bps": (T,),
-        "hedge_ratios": (N,),
+        "hedge_ratios": (T, N),
     }
     arrays = {
         "bid_px": bid_px,

@@ -1,0 +1,66 @@
+# Optional data section — load market data from parquet files.
+# When present, market data is loaded automatically by run_sweep_from_config.
+# Note: data_path is intentionally omitted — pass it at runtime via
+#   --data-path so the same config works on Windows, Linux, etc.
+#
+data:
+   book_filename: "book.parquet"
+   mid_filename: "mid.parquet"
+   dv01_filename: "dv01.parquet"
+   signal_filename: "signal.parquet"
+   hedge_ratio_filename: "hedge_ratios.parquet"
+   instrument_ids: ["UST_2Y", "UST_5Y", "UST_10Y"]
+   ref_instrument_id: "UST_5Y"
+   fill_method: "ffill"
+
+grid_name: "mr_grid_v1"
+
+base_config:
+  ref_leg_idx: 0
+  target_notional_ref: 100.0
+  validate_scope: "REF_ONLY"
+  use_jit: true
+
+grid:
+  entry_z_threshold: [1.5, 2.0, 2.5]
+  take_profit_zscore_soft_threshold: [0.5, ]
+  take_profit_yield_change_soft_threshold: [2.0, ]
+  take_profit_yield_change_hard_threshold: [6.0,]
+  stop_loss_yield_change_hard_threshold: [8.0,]
+  max_holding_bars: [20, ]
+  max_levels_to_cross: [1,]
+  size_haircut: [1.0, ]
+  tp_quarantine_bars: [0, ]
+  sl_quarantine_bars: [0, ]
+  time_quarantine_bars: [0, ]
+
+sweep:
+  backend: "serial"          # serial | thread | process
+  n_workers: 1
+  chunk_size: 50
+  mode: "metrics_only"        # metrics_only | full
+  keep_top_k_full: 20
+  save_top_full_dir: "runs/mr_grid_v1/top_full"
+
+# Ranking plan — controls how scenarios are ranked when using keep_top_k_full.
+#
+# Each entry can be a simple string (weight defaults to 1.0):
+#     primary_metrics:
+#       - "total_pnl"
+#
+# Or an explicit [name, weight] pair:
+#     primary_metrics:
+#       - ["total_pnl", 1.0]
+#       - ["sharpe_ratio", 0.5]
+#
+# Available stages (evaluated in order for tie-breaking):
+#   primary_metrics  — main metric ranking
+#   tie_metrics      — break ties among primary
+#   primary_params   — prefer certain parameter directions
+#   tie_params       — final tie-break on parameters
+rank:
+  primary_metrics:
+    - ["total_pnl", 1.0]
+  tie_metrics:
+    - ["max_drawdown", 1.0]
+    - ["sharpe_ratio", 0.5]

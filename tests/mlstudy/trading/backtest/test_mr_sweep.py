@@ -57,7 +57,9 @@ def _make_scripted_inputs(
     """Minimal scripted dataset (same pattern as test_mr_backtest.py)."""
     N = 3
     ref_idx = 1
-    hedge_ratios = np.array([-0.5, 1.0, -0.5], dtype=np.float64)
+    hedge_ratios = np.tile(
+        np.array([-0.5, 1.0, -0.5], dtype=np.float64), (T, 1)
+    )
 
     dv01_vals = np.array([0.02, 0.045, 0.08], dtype=np.float64)
     dv01 = np.tile(dv01_vals, (T, 1))

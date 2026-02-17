@@ -89,14 +89,36 @@ def _make_hedge_df(
     datetimes: pd.DatetimeIndex,
     instruments: list[str],
     ratios: list[float] | None = None,
+    ref_instrument: str = "B",
 ) -> pd.DataFrame:
+    """Build hedge ratio parquet in the list-column format.
+
+    Each row has: datetime, instrument_id (=ref), hedge_instruments (list),
+    hedge_ratios (list).  The ref instrument is NOT in the lists — its
+    ratio of 1.0 is implied by the loader.
+    """
     if ratios is None:
-        # Default: sum to 0
-        ratios = [1.0, -0.5, -0.5]
+        # Default: ref=1.0 (implied by loader), others = -0.5 each
+        # For instruments=["A","B","C"] with ref="B":
+        #   A=-0.5, B=1.0(ref), C=-0.5 → sum=0
+        ratios = [-0.5, 1.0, -0.5]
+
+    # Build the hedge_instruments / hedge_ratios lists (everything except ref)
+    hedge_instruments = []
+    hedge_ratios_list = []
+    for inst, r in zip(instruments, ratios):
+        if inst != ref_instrument:
+            hedge_instruments.append(inst)
+            hedge_ratios_list.append(r)
+
     rows = []
     for dt in datetimes:
-        for inst, r in zip(instruments, ratios):
-            rows.append({DT_COL: dt, INST_COL: inst, "hedge_ratio": r})
+        rows.append({
+            DT_COL: dt,
+            INST_COL: ref_instrument,
+            "hedge_instruments": hedge_instruments,
+            "hedge_ratios": hedge_ratios_list,
+        })
     return pd.DataFrame(rows)
 
 
@@ -118,7 +140,7 @@ def _write_all_parquets(
     mid_df = _make_mid_df(datetimes, instruments)
     dv01_df = _make_dv01_df(datetimes, instruments)
     signal_df = _make_signal_df(datetimes, instruments, ref_instrument)
-    hedge_df = _make_hedge_df(datetimes, instruments, hedge_ratios)
+    hedge_df = _make_hedge_df(datetimes, instruments, hedge_ratios, ref_instrument)
 
     book_df.to_parquet(data_dir / "book.parquet", index=False)
     mid_df.to_parquet(data_dir / "mid.parquet", index=False)
@@ -192,7 +214,7 @@ class TestBasicLoad:
         assert md.zscore.shape == (T,)
         assert md.expected_yield_pnl_bps.shape == (T,)
         assert md.package_yield_bps.shape == (T,)
-        assert md.hedge_ratios.shape == (N,)
+        assert md.hedge_ratios.shape == (T, N)
         assert md.datetimes.shape == (T,)
         assert md.instrument_ids == INSTRUMENTS
 
@@ -208,8 +230,10 @@ class TestBasicLoad:
         np.testing.assert_allclose(md.mid_px, 100.0)
         # zscore filtered to ref instrument "B" → 1.5
         np.testing.assert_allclose(md.zscore, 1.5)
-        # hedge_ratios
-        np.testing.assert_allclose(md.hedge_ratios, [1.0, -0.5, -0.5])
+        # hedge_ratios: (T, N) — A=-0.5, B(ref)=1.0, C=-0.5 at every bar
+        assert md.hedge_ratios.shape == (5, 3)
+        np.testing.assert_allclose(md.hedge_ratios[0], [-0.5, 1.0, -0.5])
+        np.testing.assert_allclose(md.hedge_ratios[-1], [-0.5, 1.0, -0.5])
 
     def test_to_dict_keys(self, tmp_path):
         _write_all_parquets(tmp_path, datetimes=_make_datetimes(5))
@@ -263,7 +287,7 @@ class TestDatetimeAlignment:
         _make_signal_df(all_dts, instruments, "B").to_parquet(
             tmp_path / "signal.parquet", index=False
         )
-        _make_hedge_df(all_dts, instruments).to_parquet(
+        _make_hedge_df(all_dts, instruments, ref_instrument="B").to_parquet(
             tmp_path / "hedge_ratios.parquet", index=False
         )
 
@@ -272,7 +296,6 @@ class TestDatetimeAlignment:
 
         # First bar (09:00) has book but not mid → mid NaN → leading NaN dropped
         # First valid bar is 09:01 where both have data after ffill
-        # Total bars: 09:01 through 09:04 = 9 bars (from union, after dropping leading)
         assert md.bid_px.shape[0] == md.mid_px.shape[0]
         assert md.bid_px.shape[0] > 0
         assert not np.any(np.isnan(md.mid_px))
@@ -295,7 +318,7 @@ class TestDatetimeAlignment:
         _make_signal_df(dts_common, instruments, "B").to_parquet(
             tmp_path / "signal.parquet", index=False
         )
-        _make_hedge_df(dts_common, instruments).to_parquet(
+        _make_hedge_df(dts_common, instruments, ref_instrument="B").to_parquet(
             tmp_path / "hedge_ratios.parquet", index=False
         )
 
@@ -322,24 +345,32 @@ class TestAutoDetectLevels:
 
 class TestHedgeRatios:
     def test_constant_ratios(self, tmp_path):
+        # ratios positionally: A=-0.6, B(ref)=1.0, C=-0.4
+        T = 5
         _write_all_parquets(
             tmp_path,
-            datetimes=_make_datetimes(5),
-            hedge_ratios=[1.0, -0.6, -0.4],
+            datetimes=_make_datetimes(T),
+            hedge_ratios=[-0.6, 1.0, -0.4],
         )
         md = _make_loader(tmp_path).load()
-        np.testing.assert_allclose(md.hedge_ratios, [1.0, -0.6, -0.4])
+        assert md.hedge_ratios.shape == (T, 3)
+        # Every row should be the same
+        for t in range(T):
+            np.testing.assert_allclose(md.hedge_ratios[t], [-0.6, 1.0, -0.4])
 
-    def test_varying_ratios_warns(self, tmp_path):
-        """Hedge ratios that change over time should produce a warning."""
+    def test_varying_ratios(self, tmp_path):
+        """Hedge ratios that change over time → (T, N) with per-bar values."""
         instruments = INSTRUMENTS
         dts = _make_datetimes(5)
+        # Build hedge file with varying ratios across time
         rows = []
         for i, dt in enumerate(dts):
-            for j, inst in enumerate(instruments):
-                # Vary the first instrument's ratio over time
-                r = 1.0 + i * 0.1 if j == 0 else -0.5
-                rows.append({DT_COL: dt, INST_COL: inst, "hedge_ratio": r})
+            rows.append({
+                DT_COL: dt,
+                INST_COL: "B",  # ref instrument
+                "hedge_instruments": ["A", "C"],
+                "hedge_ratios": [-0.5 - i * 0.1, -0.5],
+            })
         pd.DataFrame(rows).to_parquet(tmp_path / "hedge_ratios.parquet", index=False)
         # Write other files normally
         _make_book_df(dts, instruments).to_parquet(tmp_path / "book.parquet", index=False)
@@ -347,21 +378,76 @@ class TestHedgeRatios:
         _make_dv01_df(dts, instruments).to_parquet(tmp_path / "dv01.parquet", index=False)
         _make_signal_df(dts, instruments, "B").to_parquet(tmp_path / "signal.parquet", index=False)
 
-        loader = _make_loader(tmp_path)
-        with pytest.warns(UserWarning, match="vary over time"):
-            md = loader.load()
-        # Should use last row
-        np.testing.assert_allclose(md.hedge_ratios[0], 1.0 + 4 * 0.1)
+        md = _make_loader(tmp_path).load()
+        assert md.hedge_ratios.shape == (5, 3)
+        # First bar: A=-0.5, B=1.0, C=-0.5
+        np.testing.assert_allclose(md.hedge_ratios[0], [-0.5, 1.0, -0.5])
+        # Last bar: A=-0.5 - 4*0.1 = -0.9, B=1.0, C=-0.5
+        np.testing.assert_allclose(md.hedge_ratios[-1], [-0.9, 1.0, -0.5])
 
     def test_non_zero_sum_warns(self, tmp_path):
+        # A=0.5, B(ref)=1.0, C=0.5 → sum = 2.0 (not zero)
         _write_all_parquets(
             tmp_path,
             datetimes=_make_datetimes(5),
-            hedge_ratios=[1.0, 0.5, 0.5],  # sum = 2.0
+            hedge_ratios=[0.5, 1.0, 0.5],
         )
         loader = _make_loader(tmp_path)
         with pytest.warns(UserWarning, match="do not sum to zero"):
             loader.load()
+
+    def test_missing_instrument_raises(self, tmp_path):
+        """If a backtest instrument is not in hedge_instruments, raise."""
+        instruments = INSTRUMENTS
+        dts = _make_datetimes(5)
+        # Hedge file only mentions "A", not "C"
+        rows = []
+        for dt in dts:
+            rows.append({
+                DT_COL: dt,
+                INST_COL: "B",
+                "hedge_instruments": ["A"],
+                "hedge_ratios": [-1.0],
+            })
+        pd.DataFrame(rows).to_parquet(tmp_path / "hedge_ratios.parquet", index=False)
+        _make_book_df(dts, instruments).to_parquet(tmp_path / "book.parquet", index=False)
+        _make_mid_df(dts, instruments).to_parquet(tmp_path / "mid.parquet", index=False)
+        _make_dv01_df(dts, instruments).to_parquet(tmp_path / "dv01.parquet", index=False)
+        _make_signal_df(dts, instruments, "B").to_parquet(tmp_path / "signal.parquet", index=False)
+
+        loader = _make_loader(tmp_path)
+        with pytest.raises(ValueError, match="not found in hedge_instruments"):
+            loader.load()
+
+    def test_ffill_aligns_hedge(self, tmp_path):
+        """Hedge ratios at different frequency get ffilled to common index."""
+        instruments = INSTRUMENTS
+        # Book/mid/dv01/signal at minute frequency
+        dts_all = _make_datetimes(6, "2024-01-01 09:00")
+        # Hedge only at 09:00 and 09:03 (e.g. less frequent updates)
+        dts_hedge = pd.DatetimeIndex([dts_all[0], dts_all[3]])
+
+        _make_book_df(dts_all, instruments).to_parquet(tmp_path / "book.parquet", index=False)
+        _make_mid_df(dts_all, instruments).to_parquet(tmp_path / "mid.parquet", index=False)
+        _make_dv01_df(dts_all, instruments).to_parquet(tmp_path / "dv01.parquet", index=False)
+        _make_signal_df(dts_all, instruments, "B").to_parquet(tmp_path / "signal.parquet", index=False)
+
+        rows = [
+            {DT_COL: dts_hedge[0], INST_COL: "B",
+             "hedge_instruments": ["A", "C"], "hedge_ratios": [-0.5, -0.5]},
+            {DT_COL: dts_hedge[1], INST_COL: "B",
+             "hedge_instruments": ["A", "C"], "hedge_ratios": [-0.7, -0.3]},
+        ]
+        pd.DataFrame(rows).to_parquet(tmp_path / "hedge_ratios.parquet", index=False)
+
+        md = _make_loader(tmp_path, fill_method="ffill").load()
+        assert md.hedge_ratios.shape[0] == 6
+        # Bars 0-2: ffilled from 09:00 values
+        np.testing.assert_allclose(md.hedge_ratios[0], [-0.5, 1.0, -0.5])
+        np.testing.assert_allclose(md.hedge_ratios[2], [-0.5, 1.0, -0.5])
+        # Bars 3-5: from 09:03 values
+        np.testing.assert_allclose(md.hedge_ratios[3], [-0.7, 1.0, -0.3])
+        np.testing.assert_allclose(md.hedge_ratios[5], [-0.7, 1.0, -0.3])
 
 
 class TestMarketDataToDict:

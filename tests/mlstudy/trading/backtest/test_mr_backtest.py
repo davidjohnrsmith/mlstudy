@@ -102,7 +102,9 @@ def _make_scripted_inputs(
     N = 3
     L = 2
     ref_idx = 1
-    hedge_ratios = np.array([-0.5, 1.0, -0.5], dtype=np.float64)
+    hedge_ratios = np.tile(
+        np.array([-0.5, 1.0, -0.5], dtype=np.float64), (T, 1)
+    )
 
     # DV01: constant
     dv01_vals = np.array([0.02, 0.045, 0.08], dtype=np.float64)
@@ -344,7 +346,7 @@ class TestMRBacktestEndToEnd:
         sizes = res.tr_sizes[entry_idx]
         t = int(res.tr_bar[entry_idx])
         dv01_at_t = d["dv01"][t]
-        hr = d["hedge_ratios"]
+        hr = d["hedge_ratios"][t]
 
         # DV01 contributions
         dv01_contrib = sizes * dv01_at_t
@@ -444,7 +446,9 @@ class TestMRBacktestCooldownWithSignal:
         T = 30
         N = 3
         ref_idx = 1
-        hedge_ratios = np.array([-0.5, 1.0, -0.5], dtype=np.float64)
+        hedge_ratios = np.tile(
+            np.array([-0.5, 1.0, -0.5], dtype=np.float64), (T, 1)
+        )
 
         dv01 = np.tile(np.array([0.02, 0.045, 0.08]), (T, 1))
         mid_px = np.tile(np.array([99.0, 98.0, 97.0]), (T, 1))
@@ -513,7 +517,9 @@ class TestMRBacktestMaxHolding:
         T = 30
         N = 3
         ref_idx = 1
-        hedge_ratios = np.array([-0.5, 1.0, -0.5], dtype=np.float64)
+        hedge_ratios = np.tile(
+            np.array([-0.5, 1.0, -0.5], dtype=np.float64), (T, 1)
+        )
         dv01 = np.tile(np.array([0.02, 0.045, 0.08]), (T, 1))
         mid_px = np.tile(np.array([99.0, 98.0, 97.0]), (T, 1))
 

@@ -32,7 +32,7 @@ class MRBacktestConfig:
     Leg sizes for other instruments are derived so that yield-space hedge
     ratios are maintained::
 
-        size_i = target_notional_ref * dv01[t, ref] * hedge_ratios[i] / dv01[t, i]
+        size_i = target_notional_ref * dv01[t, ref] * hedge_ratios[t, i] / dv01[t, i]
 
     Basket execution cost (always >= 0) is compared against::
 
@@ -113,22 +113,28 @@ def _validate(
         raise ValueError(f"expected_yield_pnl_bps shape != ({T},)")
     if package_yield_bps.shape != (T,):
         raise ValueError(f"package_yield_bps shape != ({T},)")
-    if hedge_ratios.shape != (N,):
-        raise ValueError(f"hedge_ratios shape {hedge_ratios.shape} != ({N},)")
+    if hedge_ratios.shape != (T, N):
+        raise ValueError(f"hedge_ratios shape {hedge_ratios.shape} != expected {(T, N)}")
     if not (0 <= cfg.ref_leg_idx < N):
         raise ValueError(f"ref_leg_idx {cfg.ref_leg_idx} out of range [0, {N})")
 
-    hr_sum = float(np.sum(hedge_ratios))
-    if abs(hr_sum) > 1e-8:
+    hr_sums = np.sum(hedge_ratios, axis=1)
+    bad_sum_mask = np.abs(hr_sums) > 1e-8
+    if np.any(bad_sum_mask):
+        first_bad = int(np.argmax(bad_sum_mask))
         raise ValueError(
-            f"hedge_ratios must sum to 0 (got {hr_sum:.6g}).  "
+            f"hedge_ratios must sum to 0 per row (row {first_bad} sums to "
+            f"{hr_sums[first_bad]:.6g}).  "
             "Ensure the package is DV01-neutral in yield space."
         )
 
-    if abs(hedge_ratios[cfg.ref_leg_idx] - 1.0) > 1e-8:
+    ref_vals = hedge_ratios[:, cfg.ref_leg_idx]
+    bad_ref_mask = np.abs(ref_vals - 1.0) > 1e-8
+    if np.any(bad_ref_mask):
+        first_bad = int(np.argmax(bad_ref_mask))
         raise ValueError(
-            f"hedge_ratios[ref_leg_idx={cfg.ref_leg_idx}] must be 1.0 "
-            f"(got {hedge_ratios[cfg.ref_leg_idx]:.6g})"
+            f"hedge_ratios[:, ref_leg_idx={cfg.ref_leg_idx}] must be 1.0 "
+            f"(row {first_bad} has {ref_vals[first_bad]:.6g})"
         )
 
 
@@ -162,8 +168,9 @@ def run_backtest(
         Expected yield PnL magnitude in bps (non-negative).
     package_yield_bps : (T,)
         Package yield level in bps.
-    hedge_ratios : (N,)
-        Yield-space hedge ratios.  ``hedge_ratios[ref] == 1``, ``sum == 0``.
+    hedge_ratios : (T, N)
+        Yield-space hedge ratios per bar.  ``hedge_ratios[:, ref] == 1``,
+        ``sum(axis=1) == 0``.
     cfg : MRBacktestConfig, optional
         If *None*, defaults are used.
 
