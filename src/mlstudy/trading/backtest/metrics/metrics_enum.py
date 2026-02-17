@@ -18,6 +18,7 @@ class Metric(Enum):
     KURTOSIS = ("kurtosis", MetricCategory.EQUITY, -1)
     VAR_95 = ("var_95", MetricCategory.EQUITY, +1)
     CVAR_95 = ("cvar_95", MetricCategory.EQUITY, +1)
+
     TURNOVER_ANNUAL = ("turnover_annual", MetricCategory.TRADE, -1)
     AVG_HOLDING_PERIOD = ("avg_holding_period", MetricCategory.TRADE, +1)
     HIT_RATE = ("hit_rate", MetricCategory.TRADE, +1)

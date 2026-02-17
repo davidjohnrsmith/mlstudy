@@ -1,39 +1,67 @@
 from __future__ import annotations
 
+from typing import Union
+
+from mlstudy.trading.backtest.parameters.parameters_enum import Parameter
+
+ParameterLike = Union[Parameter, str]
+
 
 class ParameterPreferenceRegistry:
     """Direction registry for MRBacktestConfig numeric fields.
 
     +1 means higher is preferred, -1 means lower is preferred.
+    Defaults are derived from the ``Parameter`` enum.
     """
 
-    _DIRECTIONS: dict[str, int] = {
-        # higher-is-preferred (+1)
-        "target_notional_ref": +1,
-        "entry_z_threshold": +1,
-        "expected_yield_pnl_bps_multiplier": +1,
-        "entry_cost_premium_yield_bps": +1,
-        "tp_cost_premium_yield_bps": +1,
-        "sl_cost_premium_yield_bps": +1,
-        "tp_quarantine_bars": +1,
-        "sl_quarantine_bars": +1,
-        "time_quarantine_bars": +1,
-        "initial_capital": +1,
-        # lower-is-preferred (-1)
-        "take_profit_zscore_soft_threshold": -1,
-        "take_profit_yield_change_soft_threshold": -1,
-        "take_profit_yield_change_hard_threshold": -1,
-        "stop_loss_yield_change_hard_threshold": -1,
-        "max_holding_bars": -1,
-        "max_levels_to_cross": -1,
-        "size_haircut": -1,
-    }
+    _DIRECTIONS: dict[str, int] = {p.key: p.direction for p in Parameter}
 
     @classmethod
     def direction(cls, name: str) -> int:
         try:
-            return cls._DIRECTIONS[name]
-        except KeyError:
+            d = cls._DIRECTIONS[name]
+        except KeyError as e:
             raise ValueError(
                 f"Unknown parameter {name!r}; choose from {sorted(cls._DIRECTIONS)}"
+            ) from e
+        if d not in (+1, -1):
+            raise ValueError(f"Invalid direction {d} for parameter {name!r}")
+        return d
+
+    @classmethod
+    def override(cls, name: ParameterLike, direction: int) -> None:
+        """Override direction for a single parameter.
+
+        Args:
+            name: Parameter enum member or parameter key string (e.g. "max_holding_bars").
+            direction: +1 (higher preferred) or -1 (lower preferred).
+        """
+        key = cls._coerce(name)
+        if key not in cls._DIRECTIONS:
+            raise ValueError(
+                f"Unknown parameter {key!r}; choose from {sorted(cls._DIRECTIONS)}"
             )
+        if direction not in (+1, -1):
+            raise ValueError(
+                f"Direction must be +1 or -1, got {direction!r} for {key!r}"
+            )
+        cls._DIRECTIONS[key] = int(direction)
+
+    @classmethod
+    def override_multi(cls, overrides: dict[ParameterLike, int]) -> None:
+        """Override directions for multiple parameters."""
+        for name, direction in overrides.items():
+            cls.override(name, direction)
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset all directions to defaults from the ``Parameter`` enum."""
+        cls._DIRECTIONS = {p.key: p.direction for p in Parameter}
+
+    @staticmethod
+    def _coerce(param: ParameterLike) -> str:
+        if isinstance(param, Parameter):
+            return param.key
+        if isinstance(param, str):
+            return Parameter.from_key(param).key
+        raise TypeError(f"param must be Parameter or str, got {type(param)}")

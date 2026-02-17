@@ -19,7 +19,8 @@ from .sweep_types import (
     SweepScenario,
     SweepSummary,
 )
-from ..metrics import BacktestMetrics
+from ..metrics.metrics import BacktestMetrics
+
 
 
 def run_sweep(
