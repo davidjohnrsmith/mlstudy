@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import MetricsOnlyResult
-from mlstudy.trading.backtest.metrics.metrics_registry import MetricPreferenceRegistry
-from mlstudy.trading.backtest.parameters.parameters_registry import ParameterPreferenceRegistry
+from .sweep_types import MetricsOnlyResult
+from ...metrics.metrics_registry import MetricPreferenceRegistry
+from ...parameters.parameters_registry import ParameterPreferenceRegistry
 
 
 @dataclass(frozen=True)

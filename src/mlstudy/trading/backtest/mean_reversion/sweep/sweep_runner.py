@@ -28,17 +28,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from mlstudy.trading.backtest.mean_reversion.configs.utils import _resolve_config
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_saver import _persist
+from ..configs.utils import _resolve_config
+from .sweep_results_saver import _persist
 
 logger = logging.getLogger(__name__)
 
 import pandas as pd
 
-from mlstudy.trading.backtest.mean_reversion.sweep import run_sweep, summary_table
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import make_scenarios
-from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import SweepConfig
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import MetricsOnlyResult, SweepResult, SweepSummary
+from .sweep import run_sweep, summary_table
+from .sweep_build import make_scenarios
+from ..configs.sweep_config import SweepConfig
+from .sweep_types import MetricsOnlyResult, SweepResult, SweepSummary
 
 
 @dataclass

@@ -20,8 +20,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 
-from mlstudy.trading.backtest.mean_reversion.single_backtest.state import ActionCode  # canonical source; re-exported
-from mlstudy.trading.backtest.mean_reversion.single_backtest.state import State as _LoopState
+from .single_backtest.state import ActionCode, State as _LoopState
 
 
 # ---------------------------------------------------------------------------

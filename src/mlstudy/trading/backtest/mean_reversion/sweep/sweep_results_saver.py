@@ -10,8 +10,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from mlstudy.trading.backtest.mean_reversion import SweepConfig, MetricsOnlyResult, SweepSummary
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResult
+from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import SweepConfig
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResult, MetricsOnlyResult, SweepSummary
 
 logger = logging.getLogger(__name__)
 

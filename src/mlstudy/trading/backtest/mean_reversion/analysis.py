@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
+from .single_backtest.results import MRBacktestResults
 from .types import (
     CODE_NAMES,
     STATE_FLAT,

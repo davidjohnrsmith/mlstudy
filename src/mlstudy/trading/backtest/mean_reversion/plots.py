@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import FullScenario
+from .single_backtest.results import MRBacktestResults
+from .sweep.sweep_results_reader import FullScenario
 from .analysis import to_dataframe
 from .types import (
     STATE_FLAT,
