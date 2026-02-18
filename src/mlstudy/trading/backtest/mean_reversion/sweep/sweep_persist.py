@@ -13,6 +13,7 @@ import pandas as pd
 from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import SweepConfig
 from mlstudy.trading.backtest.mean_reversion.single_backtest.results import ARRAY_FIELDS
 from mlstudy.trading.backtest.mean_reversion.sweep.plots import plot_scenario
+from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResult, SweepResultLight, SweepSummary
 
 logger = logging.getLogger(__name__)
@@ -106,10 +107,11 @@ class SweepPersister:
         output_dir: Path,
         results: list[SweepResultLight],
     ) -> None:
-        """Save all metrics-only results as a single CSV."""
+        """Save all metrics-only results as a single CSV with rank column."""
         rows = []
-        for r in results:
+        for rank_idx, r in enumerate(results, 1):
             row: dict[str, Any] = {
+                "rank": rank_idx,
                 "scenario_idx": r.scenario_idx,
                 "name": r.scenario.name,
             }
@@ -117,6 +119,34 @@ class SweepPersister:
             row.update(asdict(r.metrics))
             rows.append(row)
         pd.DataFrame(rows).to_csv(output_dir / "all_metrics.csv", index=False)
+
+    @staticmethod
+    def _save_metrics_averages(
+        output_dir: Path,
+        results: list[SweepResultLight],
+        top_n: int,
+    ) -> None:
+        """Save avg_top_n.csv and avg_all.csv."""
+        if not results:
+            return
+
+        metric_fields = [f.name for f in BacktestMetrics.__dataclass_fields__.values()]
+
+        def _avg_row(subset: list[SweepResultLight]) -> dict[str, float]:
+            if not subset:
+                return {}
+            row: dict[str, float] = {}
+            for name in metric_fields:
+                vals = [getattr(r.metrics, name) for r in subset]
+                row[name] = sum(vals) / len(vals)
+            return row
+
+        avg_all = _avg_row(results)
+        pd.DataFrame([avg_all]).to_csv(output_dir / "avg_all.csv", index=False)
+
+        top_subset = results[:top_n]
+        avg_top = _avg_row(top_subset)
+        pd.DataFrame([avg_top]).to_csv(output_dir / "avg_top_n.csv", index=False)
 
     @staticmethod
     def _save_full_results(
@@ -173,6 +203,7 @@ class SweepPersister:
         n_scenarios: int,
         elapsed: float,
         zscore: np.ndarray | None = None,
+        top_n: int = 10,
     ) -> None:
         SweepPersister._save_config_snapshot(output_dir, cfg)
         SweepPersister._save_run_metadata(output_dir, cfg, n_scenarios, elapsed)
@@ -180,11 +211,13 @@ class SweepPersister:
 
         if isinstance(raw, SweepSummary):
             SweepPersister._save_metrics_results(output_dir, raw.all_metrics)
+            SweepPersister._save_metrics_averages(output_dir, raw.all_metrics, top_n)
             if raw.top_full:
                 SweepPersister._save_full_results(output_dir, raw.top_full, label="top_full")
                 SweepPersister._save_scenario_plots(output_dir, raw.top_full, zscore, label="plots")
         elif raw and isinstance(raw[0], SweepResultLight):
             SweepPersister._save_metrics_results(output_dir, raw)
+            SweepPersister._save_metrics_averages(output_dir, raw, top_n)
         elif raw and isinstance(raw[0], SweepResult):
             SweepPersister._save_full_results(output_dir, raw, label="full")
             SweepPersister._save_scenario_plots(output_dir, raw, zscore, label="plots")

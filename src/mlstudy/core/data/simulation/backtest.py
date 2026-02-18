@@ -131,26 +131,35 @@ def generate_parquets(cfg: GenConfig) -> None:
     book_df = _drop_rows(book_df, rng, cfg.missing_prob)
     book_df.to_parquet(cfg.out_dir / "book.parquet", index=False)
 
-    # ---- Signal (only ref instrument used by loader) ---------------------------
-    # Loader filters signal_df to ref_instrument_id then expects (T,) arrays. :contentReference[oaicite:5]{index=5}
-    # Build a zscore series with occasional excursions; expected pnl/yield are toy functions of zscore.
-    z = rng.normal(0, 1.0, size=T)
-    # add mild mean reversion
-    for t in range(1, T):
-        z[t] = 0.92 * z[t - 1] + 0.35 * z[t]
+    # ---- Signal (for ALL instruments) --------------------------------------------
+    # If your loader currently filters to one ref instrument, it can still do so;
+    # but this dataset now supports switching ref instruments without regenerating.
 
-    expected_yield_pnl_bps = (-0.8 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
-    package_yield_bps = (0.5 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
+    signal_frames = []
+    for j, inst in enumerate(instruments):
+        z = rng.normal(0, 1.0, size=T)
+        for t in range(1, T):
+            z[t] = 0.92 * z[t - 1] + 0.35 * z[t]
 
-    signal_df = pd.DataFrame(
-        {
-            "datetime": dts,
-            "instrument_id": cfg.ref_instrument_id,
-            "zscore": z.astype(np.float64),
-            "expected_yield_pnl_bps": expected_yield_pnl_bps,
-            "package_yield_bps": package_yield_bps,
-        }
-    )
+        # Make each instrument slightly different
+        z = z + 0.15 * j
+
+        expected_yield_pnl_bps = (-0.8 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
+        package_yield_bps = (0.5 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
+
+        signal_frames.append(
+            pd.DataFrame(
+                {
+                    "datetime": dts,
+                    "instrument_id": inst,
+                    "zscore": z.astype(np.float64),
+                    "expected_yield_pnl_bps": expected_yield_pnl_bps,
+                    "package_yield_bps": package_yield_bps,
+                }
+            )
+        )
+
+    signal_df = pd.concat(signal_frames, ignore_index=True)
     signal_df = _drop_rows(signal_df, rng, cfg.missing_prob)
     signal_df.to_parquet(cfg.out_dir / "signal.parquet", index=False)
 

@@ -16,7 +16,6 @@ Usage::
         --config configs/mr_grid_v1.yaml \
         --data-path D:\\data\\20240101 \
         --ref-instruments UST_2Y,UST_5Y,UST_10Y \
-        --ranking-metric total_pnl \
         --top-n 20 \
         --outdir runs/multi_ref_20240101
 """
@@ -68,12 +67,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     ranking = parser.add_argument_group("ranking")
     ranking.add_argument(
-        "--ranking-metric",
-        type=str,
-        default="sharpe_ratio",
-        help="Metric used to rank scenarios.",
-    )
-    ranking.add_argument(
         "--top-n",
         type=int,
         default=10,
@@ -118,7 +111,6 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.outdir,
         save=not args.no_save,
         top_n=args.top_n,
-        ranking_metric=args.ranking_metric,
     )
     elapsed = time.perf_counter() - t0
 
@@ -132,15 +124,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # Per-ref best
     if not result.per_ref_best.empty:
-        metric = args.ranking_metric
         print(f"\n{'=' * 70}")
-        print(f"BEST SCENARIO PER REF (by {metric.upper()})")
+        print("BEST SCENARIO PER REF (ranked by RankingPlan)")
         print(f"{'=' * 70}")
         display_cols = [c for c in [
-            "ref_instrument_id", "name", metric,
+            "rank", "ref_instrument_id", "name",
             "total_pnl", "sharpe_ratio", "max_drawdown", "n_trades",
         ] if c in result.per_ref_best.columns]
-        # Deduplicate while preserving order
         display_cols = list(dict.fromkeys(display_cols))
         with pd.option_context("display.max_columns", 20, "display.width", 120):
             print(result.per_ref_best[display_cols].to_string(index=False))
@@ -148,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     # Param leaderboard
     if not result.param_leaderboard.empty:
         print(f"\n{'=' * 70}")
-        print(f"PARAM LEADERBOARD (top {args.top_n} by mean {args.ranking_metric.upper()})")
+        print(f"PARAM LEADERBOARD (top {args.top_n})")
         print(f"{'=' * 70}")
         with pd.option_context("display.max_columns", 20, "display.width", 120):
             print(result.param_leaderboard.to_string(index=False))

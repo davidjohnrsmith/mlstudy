@@ -128,7 +128,8 @@ class SweepExecutor:
         if save_top_full_dir is not None:
             SweepPersister.save_top_full(top_full_results, save_top_full_dir)
 
-        return SweepSummary(all_metrics=metrics_results, top_full=top_full_results)
+        ranked_all = SweepRanker.rank_scenarios(metrics_results, ranking_plan)
+        return SweepSummary(all_metrics=ranked_all, top_full=top_full_results)
 
 
     @staticmethod

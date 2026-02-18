@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pandas as pd
+
 from .sweep_types import SweepResultLight
 from ...metrics.metrics_registry import MetricPreferenceRegistry
 from ...parameters.parameters_registry import ParameterPreferenceRegistry
@@ -79,7 +81,7 @@ class SweepRanker:
         return scores
 
     @staticmethod
-    def rank_scenarios(
+    def  rank_scenarios(
         results: list[SweepResultLight],
         plan: RankingPlan | None = None,
     ) -> list[SweepResultLight]:
@@ -105,3 +107,74 @@ class SweepRanker:
         decorated.sort()
 
         return [item[-1] for item in decorated]
+
+    # ------------------------------------------------------------------
+    # DataFrame ranking
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _df_stage_scores(
+        df: pd.DataFrame,
+        features: tuple[tuple[str, float], ...],
+        source: str,
+    ) -> list[float]:
+        """Compute weighted-rank score for a stage using DataFrame columns."""
+        n = len(df)
+        if n == 0:
+            return []
+
+        scores = [0.0] * n
+
+        for name, weight in features:
+            if name not in df.columns:
+                continue
+
+            if source == "metric":
+                direction = MetricPreferenceRegistry.direction(name)
+            else:
+                direction = ParameterPreferenceRegistry.direction(name)
+
+            raw = df[name].astype(float).tolist()
+            oriented = [v * direction for v in raw]
+            ranks = SweepRanker._average_ranks(oriented)
+
+            if n <= 1:
+                rank01 = [0.0] * n
+            else:
+                rank01 = [(r - 1) / (n - 1) for r in ranks]
+
+            for i in range(n):
+                scores[i] += weight * rank01[i]
+
+        return scores
+
+    @staticmethod
+    def rank_dataframe(
+        df: pd.DataFrame,
+        plan: RankingPlan | None = None,
+    ) -> pd.DataFrame:
+        """Rank DataFrame rows using the multi-stage weighted-rank plan.
+
+        Returns a copy sorted best-first with a ``rank`` column (1-based).
+        Expects metric columns and param columns to be present in *df*.
+        Silently skips features whose columns are missing from *df*.
+        """
+        if df.empty:
+            out = df.copy()
+            out.insert(0, "rank", pd.Series(dtype=int))
+            return out
+
+        if plan is None:
+            plan = DEFAULT_RANKING_PLAN
+
+        s1 = SweepRanker._df_stage_scores(df, plan.primary_metrics, "metric")
+        s2 = SweepRanker._df_stage_scores(df, plan.tie_metrics, "metric")
+        s3 = SweepRanker._df_stage_scores(df, plan.primary_params, "param")
+        s4 = SweepRanker._df_stage_scores(df, plan.tie_params, "param")
+
+        sort_keys = [(-s1[i], -s2[i], -s3[i], -s4[i], i) for i in range(len(df))]
+        order = sorted(range(len(df)), key=lambda i: sort_keys[i])
+
+        out = df.iloc[order].reset_index(drop=True)
+        out.insert(0, "rank", range(1, len(out) + 1))
+        return out

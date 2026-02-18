@@ -491,7 +491,7 @@ class TestTopKRerun:
         assert isinstance(result, SweepSummary)
         assert len(result.top_full) == 2  # only 2 scenarios exist
 
-    def test_all_metrics_original_order(self):
+    def test_all_metrics_ranked_order(self):
         base = _base_cfg()
         scenarios = ScenarioBuilder.make_scenarios(
             base, {"entry_z_threshold": [1.0, 1.5, 2.0, 2.5, 3.0]}
@@ -500,8 +500,13 @@ class TestTopKRerun:
 
         result = SweepExecutor.run_sweep(scenarios, **md, mode="metrics_only", keep_top_k_full=2)
 
+        # all_metrics is now ranked (best-first by default RankingPlan = total_pnl)
         idxs = [m.scenario_idx for m in result.all_metrics]
-        assert idxs == list(range(5))
+        assert len(idxs) == 5
+        assert set(idxs) == set(range(5))
+        # Verify ranked order: total_pnl should be non-increasing
+        pnls = [m.metrics.total_pnl for m in result.all_metrics]
+        assert all(pnls[i] >= pnls[i + 1] for i in range(len(pnls) - 1))
 
 
 class TestProcessBackend:
