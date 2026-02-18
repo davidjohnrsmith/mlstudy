@@ -14,7 +14,7 @@ import numpy as np
 from ..configs.backtest_config import MRBacktestConfig
 from .loop import HAS_NUMBA, mr_loop_jit, _mr_loop_jit_impl
 from .results import MRBacktestResults
-from ..types import VALIDATE_ALL_LEGS, VALIDATE_REF_ONLY
+from .state import VALIDATE_ALL_LEGS, VALIDATE_REF_ONLY
 
 
 def _validate(
@@ -86,6 +86,7 @@ def run_backtest(
     package_yield_bps: np.ndarray,
     hedge_ratios: np.ndarray,
     cfg: Optional[MRBacktestConfig] = None,
+    datetimes: Optional[np.ndarray] = None,
 ) -> MRBacktestResults:
     """Run a mean-reversion backtest.
 
@@ -164,4 +165,4 @@ def run_backtest(
         float(cfg.initial_capital),
         int(VALIDATE_REF_ONLY),
     )
-    return MRBacktestResults.from_loop_output(raw)
+    return MRBacktestResults.from_loop_output(raw, datetimes=datetimes)

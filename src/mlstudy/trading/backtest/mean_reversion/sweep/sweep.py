@@ -63,6 +63,7 @@ class SweepExecutor:
         expected_yield_pnl_bps,
         package_yield_bps,
         hedge_ratios,
+        datetimes=None,
         parallel: bool = False,
         backend: str = "serial",
         n_workers: int | None = None,
@@ -92,6 +93,8 @@ class SweepExecutor:
             package_yield_bps=package_yield_bps,
             hedge_ratios=hedge_ratios,
         )
+        if datetimes is not None:
+            market_data["datetimes"] = datetimes
 
         workers = n_workers or os.cpu_count() or 1
 

@@ -26,7 +26,7 @@ import pytest
 
 from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
 from mlstudy.trading.backtest.mean_reversion.single_backtest.engine import run_backtest
-from mlstudy.trading.backtest.mean_reversion.types import (
+from mlstudy.trading.backtest.mean_reversion.single_backtest.state import (
     ENTRY_IN_COOLDOWN,
     ENTRY_NO_LIQUIDITY,
     ENTRY_NO_SIGNAL,
@@ -534,7 +534,7 @@ class TestMRBacktestMaxHolding:
         # Stay in position (z stays high, no TP/SL trigger)
         zscore[3:] = 2.0
 
-        from mlstudy.trading.backtest.mean_reversion.types import EXIT_TIME_FORCED
+        from mlstudy.trading.backtest.mean_reversion.single_backtest.state import EXIT_TIME_FORCED
 
         cfg = MRBacktestConfig(
             target_notional_ref=100.0,

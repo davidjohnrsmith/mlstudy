@@ -14,7 +14,7 @@ import numpy as np
 from .single_backtest.results import MRBacktestResults
 from .sweep.sweep_results_reader import FullScenario
 from .analysis import to_dataframe
-from .types import (
+from .single_backtest.state import (
     STATE_FLAT,
     STATE_LONG,
     STATE_SHORT,

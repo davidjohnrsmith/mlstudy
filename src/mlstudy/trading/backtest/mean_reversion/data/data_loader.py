@@ -75,6 +75,7 @@ class MarketData:
             "expected_yield_pnl_bps": self.expected_yield_pnl_bps,
             "package_yield_bps": self.package_yield_bps,
             "hedge_ratios": self.hedge_ratios,
+            "datetimes": self.datetimes,
         }
 
 

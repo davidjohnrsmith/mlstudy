@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from .single_backtest.results import MRBacktestResults
-from .types import (
+from .single_backtest.state import (
     CODE_NAMES,
     STATE_FLAT,
     STATE_LONG,
@@ -57,24 +57,14 @@ def to_dataframe(
 
     Columns: equity, pnl, cumulative_pnl, position, state, code, holding.
     If *datetimes* is provided, a ``datetime`` column is added.
-    """
-    T = len(res.equity)
-    # position: scalar state indicator (-1/0/+1)
-    position = res.state.copy().astype(np.float64)
 
-    df = pd.DataFrame(
-        {
-            "equity": res.equity,
-            "pnl": res.pnl,
-            "cumulative_pnl": np.cumsum(res.pnl),
-            "position": position,
-            "state": res.state,
-            "code": res.codes,
-            "holding": res.holding,
-        }
-    )
-    if datetimes is not None:
-        df["datetime"] = datetimes[:T]
+    Delegates to :meth:`MRBacktestResults.to_bar_df`.
+    """
+    df = res.to_bar_df()
+    # If datetimes were passed explicitly but aren't on the results object,
+    # add them to maintain backward compatibility.
+    if datetimes is not None and "datetime" not in df.columns:
+        df.insert(0, "datetime", datetimes[: len(df)])
     return df
 
 

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
-from mlstudy.trading.backtest.mean_reversion.types import (
+from mlstudy.trading.backtest.mean_reversion.single_backtest.state import (
     ENTRY_NO_SIGNAL,
     ENTRY_OK,
     EXIT_SL_OK,

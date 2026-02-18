@@ -13,7 +13,7 @@ from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import (
     FullScenario,
     SweepResultsReader,
 )
-from mlstudy.trading.backtest.mean_reversion.types import (
+from mlstudy.trading.backtest.mean_reversion.single_backtest.state import (
     TRADE_ENTRY,
     TRADE_EXIT_SL,
     TRADE_EXIT_TP,
