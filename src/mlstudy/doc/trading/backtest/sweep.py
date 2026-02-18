@@ -51,6 +51,7 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 
+from mlstudy.trading.backtest.mean_reversion.single_backtest.results import ARRAY_FIELDS
 from ..metrics import BacktestMetrics
 from .analysis import compute_code_distribution, compute_performance_metrics
 from .engine import MRBacktestConfig, run_backtest
@@ -424,33 +425,13 @@ def _dispatch(
 #
 # Note: This list is intentionally explicit rather than dir()/__dict__ iteration
 # so output structure is stable and predictable.
-_ARRAY_FIELDS = [
-    "positions",
-    "cash",
-    "equity",
-    "pnl",
-    "codes",
-    "state",
-    "holding",
-    "tr_bar",
-    "tr_type",
-    "tr_side",
-    "tr_sizes",
-    "tr_risks",
-    "tr_vwaps",
-    "tr_mids",
-    "tr_cost",
-    "tr_code",
-    "tr_pkg_yield",
-]
-
 
 def _save_top_full(results: list[SweepResult], output_dir: str | Path) -> None:
     """Persist top-K full results to disk.
 
     Creates scenario_NNN/ subdirectories under output_dir, each containing:
     - spec.json: scenario name, tags, full config, scalar metrics, scenario_idx
-    - *.npy: arrays in MRBacktestResults listed in _ARRAY_FIELDS
+    - *.npy: arrays in MRBacktestResults listed in ARRAY_FIELDS
 
     This is intentionally minimal (json + numpy only) to avoid adding dependencies.
     """
@@ -475,7 +456,7 @@ def _save_top_full(results: list[SweepResult], output_dir: str | Path) -> None:
             json.dump(spec, f, indent=2, default=str)
 
         # Save array fields as separate .npy files for easy loading.
-        for field_name in _ARRAY_FIELDS:
+        for field_name in ARRAY_FIELDS:
             arr = getattr(sr.results, field_name)
             np.save(scenario_dir / f"{field_name}.npy", arr)
 

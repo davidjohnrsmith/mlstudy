@@ -38,8 +38,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_persist import ARRAY_FIELDS
+from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults, ARRAY_FIELDS
+
+
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,22 @@ class SweepResultsReader:
         # gross_pnl may be absent in old saved runs; fall back to pnl
         gross_pnl = arrays.get("gross_pnl", arrays["pnl"])
 
+        # Optional market data arrays
+        mid_px = None
+        mid_px_path = scenario_dir / "mid_px.npy"
+        if mid_px_path.exists():
+            mid_px = np.load(mid_px_path)
+
+        package_yield_bps = None
+        pkg_yield_path = scenario_dir / "package_yield_bps.npy"
+        if pkg_yield_path.exists():
+            package_yield_bps = np.load(pkg_yield_path)
+
+        zscore = None
+        zscore_path = scenario_dir / "zscore.npy"
+        if zscore_path.exists():
+            zscore = np.load(zscore_path)
+
         results = MRBacktestResults(
             positions=arrays["positions"],
             cash=arrays["cash"],
@@ -151,6 +168,9 @@ class SweepResultsReader:
             tr_code=arrays.get("tr_code", np.array([], dtype=np.int32)),
             tr_pkg_yield=arrays.get("tr_pkg_yield", np.array([], dtype=np.float64)),
             n_trades=n_trades,
+            mid_px=mid_px,
+            package_yield_bps=package_yield_bps,
+            zscore=zscore,
         )
 
         return FullScenario(spec=spec, results=results, directory=scenario_dir)

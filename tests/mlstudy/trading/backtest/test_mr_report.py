@@ -288,42 +288,42 @@ class TestPlots:
         matplotlib.use("Agg")
 
     def test_plot_equity_curve(self, res):
-        from mlstudy.trading.backtest.mean_reversion.plots import plot_equity_curve
+        from mlstudy.trading.backtest.mean_reversion.single_backtest.plots import plot_equity_curve
         import matplotlib.figure
 
         fig = plot_equity_curve(res)
         assert isinstance(fig, matplotlib.figure.Figure)
 
     def test_plot_state_and_codes(self, res):
-        from mlstudy.trading.backtest.mean_reversion.plots import plot_state_and_codes
+        from mlstudy.trading.backtest.mean_reversion.single_backtest.plots import plot_state_and_codes
         import matplotlib.figure
 
         fig = plot_state_and_codes(res)
         assert isinstance(fig, matplotlib.figure.Figure)
 
     def test_plot_trade_pnl(self, round_trips):
-        from mlstudy.trading.backtest.mean_reversion.plots import plot_trade_pnl
+        from mlstudy.trading.backtest.mean_reversion.single_backtest.plots import plot_trade_pnl
         import matplotlib.figure
 
         fig = plot_trade_pnl(round_trips)
         assert isinstance(fig, matplotlib.figure.Figure)
 
     def test_plot_exit_breakdown(self, round_trips):
-        from mlstudy.trading.backtest.mean_reversion.plots import plot_exit_breakdown
+        from mlstudy.trading.backtest.mean_reversion.single_backtest.plots import plot_exit_breakdown
         import matplotlib.figure
 
         fig = plot_exit_breakdown(round_trips)
         assert isinstance(fig, matplotlib.figure.Figure)
 
     def test_plot_holding_distribution(self, round_trips):
-        from mlstudy.trading.backtest.mean_reversion.plots import plot_holding_distribution
+        from mlstudy.trading.backtest.mean_reversion.single_backtest.plots import plot_holding_distribution
         import matplotlib.figure
 
         fig = plot_holding_distribution(round_trips)
         assert isinstance(fig, matplotlib.figure.Figure)
 
     def test_plot_slippage(self, res):
-        from mlstudy.trading.backtest.mean_reversion.plots import plot_slippage
+        from mlstudy.trading.backtest.mean_reversion.single_backtest.plots import plot_slippage
         import matplotlib.figure
 
         fig = plot_slippage(res)

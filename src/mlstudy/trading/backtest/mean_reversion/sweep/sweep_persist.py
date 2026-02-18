@@ -11,30 +11,12 @@ import numpy as np
 import pandas as pd
 
 from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import SweepConfig
+from mlstudy.trading.backtest.mean_reversion.single_backtest.results import ARRAY_FIELDS
+from mlstudy.trading.backtest.mean_reversion.sweep.plots import plot_scenario
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResult, SweepResultLight, SweepSummary
 
 logger = logging.getLogger(__name__)
 
-ARRAY_FIELDS = [
-    "positions",
-    "cash",
-    "equity",
-    "pnl",
-    "gross_pnl",
-    "codes",
-    "state",
-    "holding",
-    "tr_bar",
-    "tr_type",
-    "tr_side",
-    "tr_sizes",
-    "tr_risks",
-    "tr_vwaps",
-    "tr_mids",
-    "tr_cost",
-    "tr_code",
-    "tr_pkg_yield",
-]
 
 
 class SweepPersister:
@@ -155,7 +137,7 @@ class SweepPersister:
     ) -> None:
         """Generate and save scenario dashboard plots."""
         try:
-            from .plots import plot_scenario
+
             from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import FullScenario
         except ImportError:
             logger.debug("matplotlib not available, skipping plot generation")
@@ -176,7 +158,7 @@ class SweepPersister:
 
             save_path = plots_dir / f"scenario_{rank:03d}.png"
             try:
-                fig = plot_scenario(fs, zscore=zscore, save_path=save_path)
+                fig = plot_scenario(fs, save_path=save_path)
                 import matplotlib.pyplot as plt
                 plt.close(fig)
             except Exception:

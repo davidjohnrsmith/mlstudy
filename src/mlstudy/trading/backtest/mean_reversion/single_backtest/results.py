@@ -17,6 +17,26 @@ _EXIT_TYPE_NAMES: dict[int, str] = {
     TradeType.TRADE_EXIT_TIME: "time",
 }
 
+ARRAY_FIELDS = [
+    "positions",
+    "cash",
+    "equity",
+    "pnl",
+    "gross_pnl",
+    "codes",
+    "state",
+    "holding",
+    "tr_bar",
+    "tr_type",
+    "tr_side",
+    "tr_sizes",
+    "tr_risks",
+    "tr_vwaps",
+    "tr_mids",
+    "tr_cost",
+    "tr_code",
+    "tr_pkg_yield",
+]
 
 @dataclass
 class MRBacktestResults:
@@ -71,6 +91,11 @@ class MRBacktestResults:
     n_trades: int
     datetimes: np.ndarray | None = field(default=None, repr=False)
 
+    # Optional market data (stored for plotting)
+    mid_px: np.ndarray | None = field(default=None, repr=False)
+    package_yield_bps: np.ndarray | None = field(default=None, repr=False)
+    zscore: np.ndarray | None = field(default=None, repr=False)
+
     bar_df:pd.DataFrame() =None
     trade_df: pd.DataFrame() = None
 
@@ -83,6 +108,9 @@ class MRBacktestResults:
         out: tuple,
         *,
         datetimes: np.ndarray | None = None,
+        mid_px: np.ndarray | None = None,
+        package_yield_bps: np.ndarray | None = None,
+        zscore: np.ndarray | None = None,
     ) -> "MRBacktestResults":
         """Construct from the raw tuple returned by :func:`mr_loop` / ``mr_loop_jit``."""
         n = int(out[17])
@@ -107,6 +135,9 @@ class MRBacktestResults:
             tr_pkg_yield=out[16][:n],
             n_trades=n,
             datetimes=datetimes,
+            mid_px=mid_px,
+            package_yield_bps=package_yield_bps,
+            zscore=zscore,
         )
 
     # -------------------------------------------------------------------
@@ -153,6 +184,20 @@ class MRBacktestResults:
                 data[f"position_{i}"] = pos[:T, i]
         else:
             raise ValueError(f"positions must be 1D or 2D, got shape {pos.shape}")
+
+        if self.zscore is not None:
+            data["zscore"] = self.zscore[:T]
+
+        if self.package_yield_bps is not None:
+            data["package_yield_bps"] = self.package_yield_bps[:T]
+
+        if self.mid_px is not None:
+            mp = self.mid_px
+            if mp.ndim == 2:
+                for i in range(mp.shape[1]):
+                    data[f"mid_px_{i}"] = mp[:T, i]
+            else:
+                data["mid_px_0"] = mp[:T]
 
         return pd.DataFrame(data)
 

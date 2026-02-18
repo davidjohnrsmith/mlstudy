@@ -20,7 +20,7 @@ mpl = pytest.importorskip("matplotlib")
 mpl.use("Agg")  # non-interactive backend
 
 
-from mlstudy.trading.backtest.mean_reversion.plots import (
+from mlstudy.trading.backtest.mean_reversion.sweep.plots import (
     plot_scenario,
     plot_top_scenarios,
 )
@@ -36,6 +36,10 @@ def _write_scenario(
     N: int = 3,
     n_trades: int = 4,
     scenario_idx: int = 0,
+    *,
+    write_zscore: bool = False,
+    write_mid_px: bool = False,
+    write_pkg_yield: bool = False,
 ) -> None:
     scenario_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(scenario_idx)
@@ -98,6 +102,14 @@ def _write_scenario(
     np.save(scenario_dir / "tr_code.npy", np.full(n_trades, 3, dtype=np.int32))
     np.save(scenario_dir / "tr_pkg_yield.npy", rng.normal(100, 1, n_trades))
 
+    # Optional market data arrays
+    if write_zscore:
+        np.save(scenario_dir / "zscore.npy", rng.normal(0, 1.5, T))
+    if write_mid_px:
+        np.save(scenario_dir / "mid_px.npy", rng.normal(100, 1, (T, N)))
+    if write_pkg_yield:
+        np.save(scenario_dir / "package_yield_bps.npy", rng.normal(50, 5, T))
+
 
 def _load_scenario(tmp_path: Path, **kwargs) -> FullScenario:
     sd = tmp_path / "scenario_000"
@@ -119,21 +131,22 @@ class TestPlotScenario:
         assert isinstance(fig, matplotlib.figure.Figure)
         mpl.pyplot.close(fig)
 
-    def test_with_zscore(self, tmp_path):
+    def test_with_zscore_on_results(self, tmp_path):
         T = 50
         sc = _load_scenario(tmp_path, T=T)
-        zscore = np.random.default_rng(99).normal(0, 1.5, T)
-        fig = plot_scenario(sc, zscore=zscore)
-        # Should have 3 panels (equity, zscore, drawdown)
-        plt.show()
-        assert len(fig.axes) == 3
+        # Set zscore directly on results
+        rng = np.random.default_rng(99)
+        sc.results.zscore = rng.normal(0, 1.5, T)
+        fig = plot_scenario(sc)
+        # Should have panels: equity, zscore, codes, drawdown = 4
+        assert len(fig.axes) == 4
         mpl.pyplot.close(fig)
 
     def test_without_zscore(self, tmp_path):
         sc = _load_scenario(tmp_path)
-        fig = plot_scenario(sc, zscore=None)
-        # Should have 2 panels (equity, drawdown)
-        assert len(fig.axes) == 2
+        fig = plot_scenario(sc)
+        # Should have panels: equity, codes, drawdown = 3
+        assert len(fig.axes) == 3
         mpl.pyplot.close(fig)
 
     def test_save_to_file(self, tmp_path):
@@ -155,8 +168,40 @@ class TestPlotScenario:
         fig = plot_scenario(sc)
         ax_eq = fig.axes[0]
         # Should have scatter collections for trade markers
-        # At minimum we have the line + scatters
         assert len(ax_eq.collections) > 0 or len(ax_eq.lines) > 0
+        mpl.pyplot.close(fig)
+
+    def test_all_panels(self, tmp_path):
+        """All 6 panels when zscore, mid_px, and package_yield_bps are set."""
+        T, N = 50, 3
+        sc = _load_scenario(tmp_path, T=T, N=N)
+        rng = np.random.default_rng(42)
+        sc.results.zscore = rng.normal(0, 1.5, T)
+        sc.results.mid_px = rng.normal(100, 1, (T, N))
+        sc.results.package_yield_bps = rng.normal(50, 5, T)
+        fig = plot_scenario(sc)
+        # equity, zscore, mid_vwap, pkg_yield, codes, drawdown = 6
+        assert len(fig.axes) == 6
+        mpl.pyplot.close(fig)
+
+    def test_mid_vwap_panel_only(self, tmp_path):
+        T, N = 50, 3
+        sc = _load_scenario(tmp_path, T=T, N=N)
+        rng = np.random.default_rng(42)
+        sc.results.mid_px = rng.normal(100, 1, (T, N))
+        fig = plot_scenario(sc)
+        # equity, mid_vwap, codes, drawdown = 4
+        assert len(fig.axes) == 4
+        mpl.pyplot.close(fig)
+
+    def test_package_yield_panel_only(self, tmp_path):
+        T = 50
+        sc = _load_scenario(tmp_path, T=T)
+        rng = np.random.default_rng(42)
+        sc.results.package_yield_bps = rng.normal(50, 5, T)
+        fig = plot_scenario(sc)
+        # equity, pkg_yield, codes, drawdown = 4
+        assert len(fig.axes) == 4
         mpl.pyplot.close(fig)
 
 
@@ -187,17 +232,19 @@ class TestPlotTopScenarios:
         for fig in figs:
             mpl.pyplot.close(fig)
 
-    def test_with_shared_zscore(self, tmp_path):
+    def test_with_zscore_on_results(self, tmp_path):
         T = 50
         scenarios = []
+        rng = np.random.default_rng(99)
         for i in range(2):
             sd = tmp_path / "data" / f"scenario_{i:03d}"
             _write_scenario(sd, scenario_idx=i, T=T)
-            scenarios.append(SweepResultsReader.load_full_scenario(sd))
+            sc = SweepResultsReader.load_full_scenario(sd)
+            sc.results.zscore = rng.normal(0, 1.5, T)
+            scenarios.append(sc)
 
-        zscore = np.random.default_rng(99).normal(0, 1.5, T)
-        figs = plot_top_scenarios(scenarios, zscore=zscore)
-        # Each figure should have 3 panels
+        figs = plot_top_scenarios(scenarios)
+        # Each figure should have 4 panels (equity, zscore, codes, drawdown)
         for fig in figs:
-            assert len(fig.axes) == 3
+            assert len(fig.axes) == 4
             mpl.pyplot.close(fig)

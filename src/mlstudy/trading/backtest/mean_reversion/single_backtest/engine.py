@@ -165,4 +165,10 @@ def run_backtest(
         float(cfg.initial_capital),
         int(ValidateScope.REF_ONLY),
     )
-    return MRBacktestResults.from_loop_output(raw, datetimes=datetimes)
+    return MRBacktestResults.from_loop_output(
+        raw,
+        datetimes=datetimes,
+        mid_px=mid_px,
+        package_yield_bps=package_yield_bps,
+        zscore=zscore,
+    )
