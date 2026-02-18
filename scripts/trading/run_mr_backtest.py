@@ -53,7 +53,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Directory with parquet files.",
     )
-    parser.add_argument("--instruments", type=str, required=True,
+    parser.add_argument("--instruments", type=str, required=False,
                         help="Comma-separated instrument IDs, e.g. UST_2Y,UST_5Y,UST_10Y")
     parser.add_argument(
         "--ref-instrument",
@@ -83,11 +83,12 @@ def main(argv: list[str] | None = None) -> int:
     _print(f"Loading sweep config from {args.config} ...", quiet)
 
     t0 = time.perf_counter()
-    instruments = [s.strip() for s in args.instruments.split(",") if s.strip()]
+    if args.instruments:
+        instruments = [s.strip() for s in args.instruments.split(",") if s.strip()]
     result = SweepRunner.run_sweep_from_config(
         config=args.config,
         data_path=args.data_path,
-        instrument_ids=instruments,
+        # instrument_ids=instruments,
         ref_instrument_id=args.ref_instrument,
         output_dir=args.outdir,
         save=not args.no_save,

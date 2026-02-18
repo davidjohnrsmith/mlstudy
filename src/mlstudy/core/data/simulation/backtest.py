@@ -170,9 +170,12 @@ def generate_parquets(cfg: GenConfig) -> None:
     state = {target: None for target in instruments}
 
     hedge_rows = []
-    for dt in hedge_dts:
+    for dt_idx, dt in enumerate(hedge_dts):
         for target in instruments:
-            hedge_legs = [x for x in instruments if x != target]
+            if dt_idx < len(hedge_dts)/2:
+                hedge_legs = [x for x in instruments if x != target][:2]
+            else:
+                hedge_legs = [x for x in instruments if x != target][1:]
             M = len(hedge_legs)
 
             if state[target] is None:
@@ -209,7 +212,7 @@ def generate_parquets(cfg: GenConfig) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=str, required=True, help="Output directory, e.g. data/sim_20260217")
-    ap.add_argument("--instruments", type=str, default="UST_2Y,UST_5Y,UST_10Y",
+    ap.add_argument("--instruments", type=str, default="UST_2Y,UST_5Y,UST_10Y,UST_30Y",
                     help="Comma-separated instrument_ids in desired order")
     ap.add_argument("--ref", type=str, default="UST_5Y", help="ref_instrument_id for signal")
     ap.add_argument("--start", type=str, default="2026-01-01 09:00:00", help="Start datetime (naive)")

@@ -113,16 +113,18 @@ class BacktestDataLoader:
 
     def load(
         self,
-        instrument_ids: list[str],
-        ref_instrument_id: str,
+        instrument_ids: list[str] | None = None,
+        ref_instrument_id: str = "",
         data_path: str | Path | None = None,
     ) -> MarketData:
         """Read parquets, align, pivot, and return ``MarketData``.
 
         Parameters
         ----------
-        instrument_ids : list[str]
+        instrument_ids : list[str] or None
             Ordered list of instrument IDs — defines N and column order.
+            When *None*, the superset of all instruments appearing in the
+            hedge-ratio parquet (plus the ref instrument) is auto-detected.
         ref_instrument_id : str
             Instrument ID to filter signal by (produces ``(T,)`` arrays).
         data_path : str, Path, or None
@@ -140,7 +142,21 @@ class BacktestDataLoader:
         data_path_dir = Path(resolved)
         dt_col = self.datetime_col
         inst_col = self.instrument_col
-        instruments = instrument_ids
+
+        # Auto-detect instruments from hedge parquet when not provided
+        if instrument_ids is None:
+            hedge_df_pre = pd.read_parquet(
+                data_path_dir / self.hedge_ratio_filename
+            )
+            instruments = _extract_instrument_superset(
+                hedge_df_pre, inst_col, ref_instrument_id,
+            )
+            logger.info(
+                "Auto-detected instruments from hedge ratios: %s", instruments
+            )
+        else:
+            instruments = list(instrument_ids)
+
         n_inst = len(instruments)
 
         # --- 1. Read parquets ---------------------------------------------------
@@ -202,17 +218,28 @@ class BacktestDataLoader:
         if self.fill_method == "ffill":
             for key in sources:
                 sources[key] = sources[key].ffill()
-            # Drop leading rows where any source still has NaN
-            all_valid = pd.concat(
-                [s.notna().all(axis=1) for s in sources.values()], axis=1
+
+            # Drop leading rows where signal + hedge still have NaN
+            # (market data for inactive instruments may legitimately
+            # have no prior value to ffill from).
+            essential_valid = pd.concat(
+                [sources[k].notna().all(axis=1) for k in ("signal", "hedge")],
+                axis=1,
             ).all(axis=1)
-            first_valid = all_valid.idxmax() if all_valid.any() else None
+            first_valid = essential_valid.idxmax() if essential_valid.any() else None
             if first_valid is None:
                 raise ValueError("No rows with complete data after ffill")
             mask = all_dts_idx >= first_valid
             for key in sources:
                 sources[key] = sources[key].loc[mask]
             all_dts_idx = all_dts_idx[mask]
+
+            # Fill remaining NaN in market data for inactive instruments
+            # dv01 → 1.0 (safe non-zero denominator, multiplied by 0 hedge ratio)
+            # mid, book → 0.0
+            sources["dv01"] = sources["dv01"].fillna(1.0)
+            sources["mid"] = sources["mid"].fillna(0.0)
+            sources["book"] = sources["book"].fillna(0.0)
         elif self.fill_method == "drop":
             all_valid = pd.concat(
                 [s.notna().all(axis=1) for s in sources.values()], axis=1
@@ -268,7 +295,7 @@ class BacktestDataLoader:
             package_yield_bps=package_yield_bps,
             hedge_ratios=hedge_ratios,
             datetimes=datetimes,
-            instrument_ids=list(instrument_ids),
+            instrument_ids=instruments,
         )
 
 
@@ -374,6 +401,28 @@ def _reshape_book(
     return bid_px, bid_sz, ask_px, ask_sz
 
 
+def _extract_instrument_superset(
+    hedge_df: pd.DataFrame,
+    inst_col: str,
+    ref_instrument_id: str,
+) -> list[str]:
+    """Return sorted union of all instruments across all hedge-ratio rows.
+
+    Reads the ``hedge_instruments`` list column for ``ref_instrument_id``
+    rows, collects every instrument that appears in any row, adds the
+    ref instrument itself, and returns a deterministic ``sorted()`` list.
+    """
+    ref_rows = hedge_df[hedge_df[inst_col] == ref_instrument_id]
+    if ref_rows.empty:
+        raise ValueError(
+            f"No hedge ratio data for ref_instrument_id={ref_instrument_id!r}"
+        )
+    all_instruments: set[str] = {ref_instrument_id}
+    for hi_list in ref_rows["hedge_instruments"]:
+        all_instruments.update(hi_list)
+    return sorted(all_instruments)
+
+
 def _pivot_hedge_ratios(
     hedge_df: pd.DataFrame,
     inst_col: str,
@@ -422,7 +471,7 @@ def _pivot_hedge_ratios(
                 f"at {row[dt_col]}"
             )
 
-        ratios = np.full(N, np.nan, dtype=np.float64)
+        ratios = np.zeros(N, dtype=np.float64)
 
         # Target instrument gets 1.0
         if ref_idx is not None:
@@ -432,18 +481,6 @@ def _pivot_hedge_ratios(
             j = inst_to_idx.get(hi)
             if j is not None:
                 ratios[j] = hr
-
-        # Check that all backtest instruments are covered
-        missing = [
-            instruments[j] for j in range(N)
-            if np.isnan(ratios[j])
-        ]
-        if missing:
-            raise ValueError(
-                f"Instruments {missing} not found in hedge_instruments "
-                f"for ref {ref_instrument_id!r} at {row[dt_col]}. "
-                f"Available: {hi_list}"
-            )
 
         datetimes.append(row[dt_col])
         ratio_rows.append(ratios)

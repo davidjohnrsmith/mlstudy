@@ -130,9 +130,9 @@ class SweepRunner:
         md = dict(market_data or {})
         md.update(market_data_kwargs)
         if not md and cfg.data_loader is not None:
-            if instrument_ids is None or ref_instrument_id is None:
+            if ref_instrument_id is None:
                 raise ValueError(
-                    "instrument_ids and ref_instrument_id must be provided "
+                    "ref_instrument_id must be provided "
                     "when auto-loading market data from the config data section."
                 )
             logger.info("Loading market data from config data section")
@@ -142,6 +142,19 @@ class SweepRunner:
                 data_path=data_path,
             )
             md = loaded.to_dict()
+
+            # When instruments were auto-detected, update ref_leg_idx
+            # to match the loaded instrument order.
+            if instrument_ids is None:
+                import dataclasses
+                new_ref_idx = loaded.instrument_ids.index(ref_instrument_id)
+                cfg = dataclasses.replace(
+                    cfg,
+                    base_config=dataclasses.replace(
+                        cfg.base_config,
+                        ref_leg_idx=new_ref_idx,
+                    ),
+                )
         if not md:
             raise ValueError(
                 "No market data provided.  Pass market_data=dict(...), "

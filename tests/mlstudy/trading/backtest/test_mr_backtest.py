@@ -558,6 +558,72 @@ class TestMRBacktestMaxHolding:
         assert res.state[7] == State.STATE_FLAT
 
 
+class TestMRBacktestInactiveLegs:
+    """Test that a zero-hedge-ratio leg does not block entry."""
+
+    def test_zero_hedge_ratio_leg_entry_ok(self):
+        """Entry should succeed even when one leg has hedge_ratio=0 and bad dv01."""
+        T = 30
+        N = 3
+        ref_idx = 1
+
+        # Hedge ratios: leg 2 is inactive (0.0)
+        hedge_ratios = np.tile(
+            np.array([-1.0, 1.0, 0.0], dtype=np.float64), (T, 1)
+        )
+
+        # DV01: leg 2 has zero dv01 (would fail if checked)
+        dv01 = np.tile(np.array([0.02, 0.045, 0.0]), (T, 1))
+        mid_px = np.tile(np.array([99.0, 98.0, 0.0]), (T, 1))
+
+        half_sp = np.array([0.01, 0.01, 0.01])
+        l2_off = np.array([0.01, 0.01, 0.01])
+        base_sz = np.full((T, N), 1000.0)
+        bid_px, bid_sz, ask_px, ask_sz = _make_book(mid_px, half_sp, l2_off, base_sz)
+
+        zscore = np.zeros(T)
+        package_yield_bps = np.full(T, 100.0)
+        expected_yield_pnl_bps = np.full(T, 10.0)
+
+        # Bar 2: enter LONG
+        zscore[2] = 3.0
+        zscore[3:] = 2.0
+
+        cfg = MRBacktestConfig(
+            target_notional_ref=100.0,
+            ref_leg_idx=ref_idx,
+            entry_z_threshold=2.0,
+            take_profit_zscore_soft_threshold=0.5,
+            take_profit_yield_change_soft_threshold=1.0,
+            take_profit_yield_change_hard_threshold=3.0,
+            stop_loss_yield_change_hard_threshold=50.0,
+            max_levels_to_cross=2,
+            size_haircut=1.0,
+            validate_scope="ALL_LEGS",
+            use_jit=False,
+        )
+
+        res = run_backtest(
+            bid_px=bid_px, bid_sz=bid_sz,
+            ask_px=ask_px, ask_sz=ask_sz,
+            mid_px=mid_px, dv01=dv01,
+            zscore=zscore,
+            expected_yield_pnl_bps=expected_yield_pnl_bps,
+            package_yield_bps=package_yield_bps,
+            hedge_ratios=hedge_ratios,
+            cfg=cfg,
+        )
+
+        # Entry should succeed despite leg 2 having zero dv01
+        assert res.codes[2] == ActionCode.ENTRY_OK
+        assert res.state[2] == State.STATE_LONG
+        # Leg 2 should have zero position
+        assert abs(res.positions[2, 2]) < 1e-15
+        # Active legs should have nonzero positions
+        assert abs(res.positions[2, 0]) > 1e-10
+        assert abs(res.positions[2, 1]) > 1e-10
+
+
 @pytest.mark.skipif(not HAS_NUMBA, reason="Numba not installed")
 class TestMRBacktestJITParity:
     """Verify Python and JIT loops produce identical output."""

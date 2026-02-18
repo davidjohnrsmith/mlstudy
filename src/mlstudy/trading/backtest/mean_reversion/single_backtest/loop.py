@@ -144,12 +144,13 @@ def _walk_book(px, sz, qty, max_levels, haircut):
 
 
 def _check_market_valid(
-    bid0, ask0, mid, scope, ref_idx, N, is_validate_book_for_ref_only
+    bid0, ask0, mid, scope, ref_idx, N, is_validate_book_for_ref_only,
+    hedge_ratios_row,
 ):
     """Return True if bid0 <= mid <= ask0 (and both positive).
 
     scope == 0 -> check reference leg only.
-    scope != 0 -> check all legs.
+    scope != 0 -> check all legs (skipping inactive legs with zero hedge ratio).
     """
     if scope == is_validate_book_for_ref_only:
         lo = ref_idx
@@ -158,6 +159,9 @@ def _check_market_valid(
         lo = 0
         hi = N
     for i in range(lo, hi):
+        # Skip inactive legs (zero hedge ratio)
+        if abs(hedge_ratios_row[i]) < 1e-15:
+            continue
         if bid0[i] <= 0.0 or ask0[i] <= 0.0:
             return False
         if bid0[i] > mid[i] or mid[i] > ask0[i]:
@@ -569,6 +573,7 @@ def _mr_loop_jit_impl(
                     ref_idx,
                     N,
                     is_validate_book_for_ref_only,
+                    hedge_ratios[t],
                 )
                 if not valid:
                     code = _EXIT_FAILED_TP_INVALID_BOOK
@@ -692,8 +697,13 @@ def _mr_loop_jit_impl(
                     trade_sizes = np.empty(N, dtype=np.float64)
                     trade_risks = np.empty(N, dtype=np.float64)
                     for i in range(N):
+                        if abs(hedge_ratios[t, i]) < 1e-15:
+                            # Inactive leg (zero hedge ratio) → no position.
+                            trade_sizes[i] = 0.0
+                            trade_risks[i] = 0.0
+                            continue
                         if dv01[t, i] < 1e-15:
-                            # Any leg with zero DV01 → cannot compute size.
+                            # Active leg with zero DV01 → cannot compute size.
                             sizes_ok = False
                             break
                         # size_i = side * notional_ref * dv01_ref * hr_i / dv01_i
@@ -736,6 +746,7 @@ def _mr_loop_jit_impl(
                                 ref_idx,
                                 N,
                                 is_validate_book_for_ref_only,
+                                hedge_ratios[t],
                             )
                             if not valid:
                                 code = _ENTRY_FAILED_INVALID_BOOK

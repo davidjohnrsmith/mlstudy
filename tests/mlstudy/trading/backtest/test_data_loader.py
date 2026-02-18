@@ -9,6 +9,7 @@ import pytest
 from mlstudy.trading.backtest.mean_reversion.data.data_loader import (
     BacktestDataLoader,
     _detect_book_levels,
+    _extract_instrument_superset,
 )
 
 
@@ -403,8 +404,8 @@ class TestHedgeRatios:
         with pytest.warns(UserWarning, match="do not sum to zero"):
             _load(loader)
 
-    def test_missing_instrument_raises(self, tmp_path):
-        """If a backtest instrument is not in hedge_instruments, raise."""
+    def test_missing_instrument_gets_zero_ratio(self, tmp_path):
+        """If a backtest instrument is not in hedge_instruments, it gets ratio 0.0."""
         instruments = INSTRUMENTS
         dts = _make_datetimes(5)
         # Hedge file only mentions "A", not "C"
@@ -422,9 +423,9 @@ class TestHedgeRatios:
         _make_dv01_df(dts, instruments).to_parquet(tmp_path / "dv01.parquet", index=False)
         _make_signal_df(dts, instruments, "B").to_parquet(tmp_path / "signal.parquet", index=False)
 
-        loader = _make_loader(tmp_path)
-        with pytest.raises(ValueError, match="not found in hedge_instruments"):
-            _load(loader)
+        md = _load(_make_loader(tmp_path))
+        # C should have ratio 0.0 (inactive), A=-1.0, B=1.0(ref)
+        np.testing.assert_allclose(md.hedge_ratios[0], [-1.0, 1.0, 0.0])
 
     def test_ffill_aligns_hedge(self, tmp_path):
         """Hedge ratios at different frequency get ffilled to common index."""
@@ -455,6 +456,108 @@ class TestHedgeRatios:
         # Bars 3-5: from 09:03 values
         np.testing.assert_allclose(md.hedge_ratios[3], [-0.7, 1.0, -0.3])
         np.testing.assert_allclose(md.hedge_ratios[5], [-0.7, 1.0, -0.3])
+
+
+    def test_auto_detect_instruments(self, tmp_path):
+        """Hedge parquet with changing instruments → superset detection."""
+        dts = _make_datetimes(6)
+        # First 3 bars hedge with A, last 3 bars hedge with C
+        rows = []
+        for i, dt in enumerate(dts):
+            if i < 3:
+                rows.append({
+                    DT_COL: dt, INST_COL: "B",
+                    "hedge_instruments": ["A"],
+                    "hedge_ratios": [-1.0],
+                })
+            else:
+                rows.append({
+                    DT_COL: dt, INST_COL: "B",
+                    "hedge_instruments": ["C"],
+                    "hedge_ratios": [-1.0],
+                })
+        pd.DataFrame(rows).to_parquet(tmp_path / "hedge_ratios.parquet", index=False)
+
+        # Write market data for all 3 instruments
+        instruments = ["A", "B", "C"]
+        _make_book_df(dts, instruments).to_parquet(tmp_path / "book.parquet", index=False)
+        _make_mid_df(dts, instruments).to_parquet(tmp_path / "mid.parquet", index=False)
+        _make_dv01_df(dts, instruments).to_parquet(tmp_path / "dv01.parquet", index=False)
+        _make_signal_df(dts, instruments, "B").to_parquet(tmp_path / "signal.parquet", index=False)
+
+        loader = _make_loader(tmp_path)
+        # instrument_ids=None triggers auto-detection
+        md = loader.load(ref_instrument_id="B")
+        assert md.instrument_ids == ["A", "B", "C"]
+
+    def test_inactive_instrument_zero_ratio(self, tmp_path):
+        """Verify 0.0 for inactive periods, correct values for active."""
+        dts = _make_datetimes(6)
+        rows = []
+        for i, dt in enumerate(dts):
+            if i < 3:
+                rows.append({
+                    DT_COL: dt, INST_COL: "B",
+                    "hedge_instruments": ["A"],
+                    "hedge_ratios": [-1.0],
+                })
+            else:
+                rows.append({
+                    DT_COL: dt, INST_COL: "B",
+                    "hedge_instruments": ["C"],
+                    "hedge_ratios": [-1.0],
+                })
+        pd.DataFrame(rows).to_parquet(tmp_path / "hedge_ratios.parquet", index=False)
+
+        instruments = ["A", "B", "C"]
+        _make_book_df(dts, instruments).to_parquet(tmp_path / "book.parquet", index=False)
+        _make_mid_df(dts, instruments).to_parquet(tmp_path / "mid.parquet", index=False)
+        _make_dv01_df(dts, instruments).to_parquet(tmp_path / "dv01.parquet", index=False)
+        _make_signal_df(dts, instruments, "B").to_parquet(tmp_path / "signal.parquet", index=False)
+
+        md = _load(_make_loader(tmp_path), instrument_ids=["A", "B", "C"])
+        # First 3 bars: A=-1.0, B=1.0, C=0.0 (inactive)
+        np.testing.assert_allclose(md.hedge_ratios[0], [-1.0, 1.0, 0.0])
+        np.testing.assert_allclose(md.hedge_ratios[2], [-1.0, 1.0, 0.0])
+        # Last 3 bars: A=0.0 (inactive), B=1.0, C=-1.0
+        np.testing.assert_allclose(md.hedge_ratios[3], [0.0, 1.0, -1.0])
+        np.testing.assert_allclose(md.hedge_ratios[5], [0.0, 1.0, -1.0])
+
+    def test_inactive_instrument_market_data_filled(self, tmp_path):
+        """Verify dv01=1.0 fill for instruments with no market data."""
+        dts = _make_datetimes(4)
+        # Hedge mentions A and C, but market data only has A and B
+        rows = []
+        for dt in dts:
+            rows.append({
+                DT_COL: dt, INST_COL: "B",
+                "hedge_instruments": ["A", "C"],
+                "hedge_ratios": [-0.5, -0.5],
+            })
+        pd.DataFrame(rows).to_parquet(tmp_path / "hedge_ratios.parquet", index=False)
+
+        # Only write market data for A and B (not C)
+        instruments_market = ["A", "B"]
+        _make_book_df(dts, instruments_market).to_parquet(tmp_path / "book.parquet", index=False)
+        _make_mid_df(dts, instruments_market).to_parquet(tmp_path / "mid.parquet", index=False)
+        _make_dv01_df(dts, instruments_market).to_parquet(tmp_path / "dv01.parquet", index=False)
+        _make_signal_df(dts, ["A", "B"], "B").to_parquet(tmp_path / "signal.parquet", index=False)
+
+        loader = _make_loader(tmp_path)
+        md = loader.load(instrument_ids=["A", "B", "C"], ref_instrument_id="B")
+        # C has no market data; dv01 should be filled with 1.0
+        np.testing.assert_allclose(md.dv01[:, 2], 1.0)
+        # C mid should be filled with 0.0
+        np.testing.assert_allclose(md.mid_px[:, 2], 0.0)
+
+    def test_backward_compat_explicit_ids(self, tmp_path):
+        """Explicit instrument_ids still works as before."""
+        T = 5
+        _write_all_parquets(tmp_path, datetimes=_make_datetimes(T))
+        md = _load(_make_loader(tmp_path))
+        assert md.instrument_ids == INSTRUMENTS
+        assert md.hedge_ratios.shape == (T, 3)
+        np.testing.assert_allclose(md.hedge_ratios[0], [-0.5, 1.0, -0.5])
 
 
 class TestMarketDataToDict:
