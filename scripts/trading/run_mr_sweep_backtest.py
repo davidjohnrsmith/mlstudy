@@ -9,13 +9,13 @@ and different instrument sets.
 
 Usage::
 
-    python scripts/trading/run_mr_backtest.py \\
+    python scripts/trading/run_mr_sweep_backtest.py \\
         --config configs/mr_grid_v1.yaml \\
         --data-path /mnt/data/20240101 \\
         --instruments UST_2Y UST_5Y UST_10Y \\
         --ref-instrument UST_5Y
 
-    python scripts/trading/run_mr_backtest.py \\
+    python scripts/trading/run_mr_sweep_backtest.py \\
         --config configs/mr_grid_v1.yaml \\
         --data-path D:\\data\\20240101 \\
         --instruments UST_2Y UST_5Y UST_10Y \\

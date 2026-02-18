@@ -40,7 +40,7 @@ class SweepConfig:
     grid: dict[str, Sequence]
     sweep_kwargs: dict[str, Any]
     ranking_plan: RankingPlan | None
-    data_loader: Any | None = None  # BacktestDataLoader, if ``data`` section present
+    data_loader: BacktestDataLoader | None = None  # BacktestDataLoader, if ``data`` section present
 
 
 # ---------------------------------------------------------------------------
