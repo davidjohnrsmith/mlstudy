@@ -144,12 +144,13 @@ def _walk_book(px, sz, qty, max_levels, haircut):
 
 
 def _check_market_valid(
-    bid0, ask0, mid, scope, ref_idx, N, is_validate_book_for_ref_only
+    bid0, ask0, mid, scope, ref_idx, N, is_validate_book_for_ref_only,
+    hedge_ratios_row,
 ):
     """Return True if bid0 <= mid <= ask0 (and both positive).
 
     scope == 0 -> check reference leg only.
-    scope != 0 -> check all legs.
+    scope != 0 -> check all legs (skipping inactive legs with zero hedge ratio).
     """
     if scope == is_validate_book_for_ref_only:
         lo = ref_idx
@@ -158,6 +159,9 @@ def _check_market_valid(
         lo = 0
         hi = N
     for i in range(lo, hi):
+        # Skip inactive legs (zero hedge ratio)
+        if abs(hedge_ratios_row[i]) < 1e-15:
+            continue
         if bid0[i] <= 0.0 or ask0[i] <= 0.0:
             return False
         if bid0[i] > mid[i] or mid[i] > ask0[i]:
@@ -354,13 +358,13 @@ def _mr_loop_jit_impl(
 
     Returns
     -------
-    tuple of 18 elements
+    tuple of 19 elements
         Per-bar arrays (length *T*):
 
         0. ``out_pos``     — (T, N) float64, leg positions at end of bar.
         1. ``out_cash``    — (T,) float64, cash balance.
         2. ``out_equity``  — (T,) float64, total equity (cash + MTM).
-        3. ``out_pnl``     — (T,) float64, bar-over-bar P&L.
+        3. ``out_pnl``     — (T,) float64, net bar-over-bar P&L (after costs).
         4. ``out_codes``   — (T,) int32, attempt/outcome code (see ``types.py``).
         5. ``out_state``   — (T,) int32, state at end of bar (0/+1/−1).
         6. ``out_holding`` — (T,) int32, bars held in current position.
@@ -381,6 +385,10 @@ def _mr_loop_jit_impl(
         Scalar:
 
         17. ``n_trades`` — number of valid rows in the trade arrays.
+
+        Additional per-bar arrays:
+
+        18. ``out_gross_pnl`` — (T,) float64, gross bar-over-bar P&L (before costs).
     """
     T = bid_px.shape[0]  # number of bars
     N = bid_px.shape[1]  # number of instruments (legs)
@@ -390,6 +398,7 @@ def _mr_loop_jit_impl(
     out_cash = np.zeros(T, dtype=np.float64)
     out_equity = np.zeros(T, dtype=np.float64)
     out_pnl = np.zeros(T, dtype=np.float64)
+    out_gross_pnl = np.zeros(T, dtype=np.float64)
     out_codes = np.zeros(T, dtype=np.int32)
     out_state = np.zeros(T, dtype=np.int32)
     out_holding = np.zeros(T, dtype=np.int32)
@@ -420,6 +429,7 @@ def _mr_loop_jit_impl(
 
     for t in range(T):
         code = _NO_ACTION
+        bar_cost = 0.0  # execution cost incurred this bar (for gross/net split)
 
         # ==================================================================
         # BRANCH A: IN POSITION (state != 0)
@@ -516,6 +526,7 @@ def _mr_loop_jit_impl(
                         tr_vwaps[n_trades, i] = exit_vwaps[i]
                         tr_mids[n_trades, i] = mid_px[t, i]
                     tr_cost[n_trades] = bcost
+                    bar_cost = bcost
                     tr_code[n_trades] = (
                         _EXIT_SL_OK
                         if is_sl
@@ -562,6 +573,7 @@ def _mr_loop_jit_impl(
                     ref_idx,
                     N,
                     is_validate_book_for_ref_only,
+                    hedge_ratios[t],
                 )
                 if not valid:
                     code = _EXIT_FAILED_TP_INVALID_BOOK
@@ -632,6 +644,7 @@ def _mr_loop_jit_impl(
                                 tr_vwaps[n_trades, i] = exit_vwaps[i]
                                 tr_mids[n_trades, i] = mid_px[t, i]
                             tr_cost[n_trades] = bcost
+                            bar_cost = bcost
                             tr_code[n_trades] = _EXIT_TP_OK
                             tr_pkg_yield[n_trades] = package_yield_bps[t]
                             n_trades += 1
@@ -684,8 +697,13 @@ def _mr_loop_jit_impl(
                     trade_sizes = np.empty(N, dtype=np.float64)
                     trade_risks = np.empty(N, dtype=np.float64)
                     for i in range(N):
+                        if abs(hedge_ratios[t, i]) < 1e-15:
+                            # Inactive leg (zero hedge ratio) → no position.
+                            trade_sizes[i] = 0.0
+                            trade_risks[i] = 0.0
+                            continue
                         if dv01[t, i] < 1e-15:
-                            # Any leg with zero DV01 → cannot compute size.
+                            # Active leg with zero DV01 → cannot compute size.
                             sizes_ok = False
                             break
                         # size_i = side * notional_ref * dv01_ref * hr_i / dv01_i
@@ -728,6 +746,7 @@ def _mr_loop_jit_impl(
                                 ref_idx,
                                 N,
                                 is_validate_book_for_ref_only,
+                                hedge_ratios[t],
                             )
                             if not valid:
                                 code = _ENTRY_FAILED_INVALID_BOOK
@@ -796,6 +815,7 @@ def _mr_loop_jit_impl(
                                             tr_vwaps[n_trades, i] = fill_vwaps[i]
                                             tr_mids[n_trades, i] = mid_px[t, i]
                                         tr_cost[n_trades] = bcost
+                                        bar_cost = bcost
                                         tr_code[n_trades] = _ENTRY_OK
                                         tr_pkg_yield[n_trades] = package_yield_bps[t]
                                         n_trades += 1
@@ -819,7 +839,9 @@ def _mr_loop_jit_impl(
             equity_t += pos[i] * mid_px[t, i]
 
         # Bar PnL = change in equity from the previous bar.
+        # net_pnl includes execution costs; gross_pnl adds them back.
         pnl_t = equity_t - prev_equity
+        gross_pnl_t = pnl_t + bar_cost
         prev_equity = equity_t
 
         # Write this bar's snapshot to the output arrays.
@@ -828,6 +850,7 @@ def _mr_loop_jit_impl(
         out_cash[t] = cash
         out_equity[t] = equity_t
         out_pnl[t] = pnl_t
+        out_gross_pnl[t] = gross_pnl_t
         out_codes[t] = code
         out_state[t] = state
         out_holding[t] = holding
@@ -851,6 +874,7 @@ def _mr_loop_jit_impl(
         tr_code,
         tr_pkg_yield,
         n_trades,
+        out_gross_pnl,
     )
 
 

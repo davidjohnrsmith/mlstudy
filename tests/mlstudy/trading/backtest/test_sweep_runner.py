@@ -10,20 +10,21 @@ import pandas as pd
 import pytest
 import yaml
 
-from mlstudy.trading.backtest.mean_reversion import MRBacktestConfig
-from mlstudy.trading.backtest.mean_reversion.sweep_config import (
-    SweepConfig,
-    load_config_map,
+from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
+from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import (
+
     load_sweep_config,
-    load_sweep_config_by_name,
+
 )
-from mlstudy.trading.backtest.mean_reversion.sweep_runner import (
+from mlstudy.trading.backtest.mean_reversion.configs.utils import load_sweep_config_by_name, load_config_map
+
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import RankingPlan
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import (
     SweepRunResult,
-    run_sweep_from_config,
+    SweepRunner,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep_rank import RankingPlan
-from mlstudy.trading.backtest.mean_reversion.sweep_types import (
-    MetricsOnlyResult,
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import (
+    SweepResultLight,
     SweepResult,
     SweepSummary,
 )
@@ -289,13 +290,13 @@ class TestConfigMap:
 
 class TestRunSweepFromConfigFull:
     def test_returns_sweep_run_result(self, full_mode_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert isinstance(result, SweepRunResult)
 
     def test_raw_contains_sweep_results(self, full_mode_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert len(result.raw) == 3
@@ -303,7 +304,7 @@ class TestRunSweepFromConfigFull:
             assert isinstance(r, SweepResult)
 
     def test_table_is_dataframe(self, full_mode_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert isinstance(result.table, pd.DataFrame)
@@ -312,7 +313,7 @@ class TestRunSweepFromConfigFull:
         assert "total_pnl" in result.table.columns
 
     def test_top_full_property(self, full_mode_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         # In full mode, top_full returns the raw list
@@ -322,13 +323,13 @@ class TestRunSweepFromConfigFull:
     def test_all_metrics_property_none_in_full(
         self, full_mode_yaml, market_data, tmp_path
     ):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert result.all_metrics is None
 
     def test_config_preserved(self, full_mode_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert result.config.grid_name == "test_full"
@@ -344,22 +345,22 @@ class TestRunSweepFromConfigMetricsOnly:
     def test_raw_contains_metrics_only_results(
         self, metrics_only_yaml, market_data, tmp_path
     ):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             metrics_only_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert len(result.raw) == 3
         for r in result.raw:
-            assert isinstance(r, MetricsOnlyResult)
+            assert isinstance(r, SweepResultLight)
 
     def test_all_metrics_property(self, metrics_only_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             metrics_only_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert result.all_metrics is not None
         assert len(result.all_metrics) == 3
 
     def test_top_full_property_none(self, metrics_only_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             metrics_only_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert result.top_full is None
@@ -372,25 +373,25 @@ class TestRunSweepFromConfigMetricsOnly:
 
 class TestRunSweepFromConfigTopK:
     def test_returns_sweep_summary(self, top_k_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             top_k_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert isinstance(result.raw, SweepSummary)
 
     def test_all_metrics_count(self, top_k_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             top_k_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert len(result.all_metrics) == 5
 
     def test_top_full_count(self, top_k_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             top_k_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert len(result.top_full) == 2
 
     def test_top_full_are_sweep_results(self, top_k_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             top_k_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         for sr in result.top_full:
@@ -398,7 +399,7 @@ class TestRunSweepFromConfigTopK:
             assert sr.results is not None
 
     def test_table_from_all_metrics(self, top_k_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             top_k_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert len(result.table) == 5
@@ -412,19 +413,19 @@ class TestRunSweepFromConfigTopK:
 class TestConfigResolution:
     def test_accepts_sweep_config_object(self, full_mode_yaml, market_data, tmp_path):
         cfg = load_sweep_config(full_mode_yaml)
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             cfg, market_data=market_data, output_dir=tmp_path / "out"
         )
         assert result.config is cfg
 
     def test_accepts_yaml_path_as_string(self, full_mode_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             str(full_mode_yaml), market_data=market_data, output_dir=tmp_path / "out"
         )
         assert result.config.grid_name == "test_full"
 
     def test_accepts_yaml_path_as_path(self, full_mode_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             Path(full_mode_yaml), market_data=market_data, output_dir=tmp_path / "out"
         )
         assert result.config.grid_name == "test_full"
@@ -434,7 +435,7 @@ class TestConfigResolution:
         map_data = {"my_run": "my.yaml"}
         map_path = _write_yaml(tmp_path / "map.yaml", map_data)
 
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             "my_run",
             market_data=market_data,
             output_dir=tmp_path / "out",
@@ -451,19 +452,19 @@ class TestConfigResolution:
 class TestMarketDataValidation:
     def test_no_market_data_raises(self, full_mode_yaml, tmp_path):
         with pytest.raises(ValueError, match="No market data"):
-            run_sweep_from_config(
+            SweepRunner.run_sweep_from_config(
                 full_mode_yaml, output_dir=tmp_path / "out"
             )
 
     def test_missing_key_raises(self, full_mode_yaml, tmp_path, market_data):
         del market_data["zscore"]
         with pytest.raises(ValueError, match="Missing market data"):
-            run_sweep_from_config(
+            SweepRunner.run_sweep_from_config(
                 full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
             )
 
     def test_market_data_kwargs(self, full_mode_yaml, tmp_path, market_data):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, output_dir=tmp_path / "out", **market_data
         )
         assert len(result.raw) == 3
@@ -471,7 +472,7 @@ class TestMarketDataValidation:
     def test_kwargs_override_dict(self, full_mode_yaml, tmp_path, market_data):
         # Pass all via dict, then override one via kwargs — should not error
         override_zscore = market_data["zscore"].copy()
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml,
             market_data=market_data,
             output_dir=tmp_path / "out",
@@ -488,14 +489,14 @@ class TestMarketDataValidation:
 class TestRunnerPersistence:
     def test_creates_output_dir(self, full_mode_yaml, market_data, tmp_path):
         out = tmp_path / "output"
-        run_sweep_from_config(
+        SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=out
         )
         assert out.exists()
 
     def test_saves_config_snapshot(self, full_mode_yaml, market_data, tmp_path):
         out = tmp_path / "output"
-        run_sweep_from_config(
+        SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=out
         )
         snapshot_path = out / "config_snapshot.yaml"
@@ -509,7 +510,7 @@ class TestRunnerPersistence:
 
     def test_saves_run_metadata(self, full_mode_yaml, market_data, tmp_path):
         out = tmp_path / "output"
-        run_sweep_from_config(
+        SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=out
         )
         meta_path = out / "run_meta.json"
@@ -524,7 +525,7 @@ class TestRunnerPersistence:
 
     def test_saves_summary_csv(self, full_mode_yaml, market_data, tmp_path):
         out = tmp_path / "output"
-        run_sweep_from_config(
+        SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=out
         )
         csv_path = out / "summary.csv"
@@ -535,7 +536,7 @@ class TestRunnerPersistence:
 
     def test_saves_all_metrics_csv(self, metrics_only_yaml, market_data, tmp_path):
         out = tmp_path / "output"
-        run_sweep_from_config(
+        SweepRunner.run_sweep_from_config(
             metrics_only_yaml, market_data=market_data, output_dir=out
         )
         csv_path = out / "all_metrics.csv"
@@ -547,7 +548,7 @@ class TestRunnerPersistence:
 
     def test_saves_full_results_npy(self, full_mode_yaml, market_data, tmp_path):
         out = tmp_path / "output"
-        run_sweep_from_config(
+        SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=out
         )
         full_dir = out / "full"
@@ -563,7 +564,7 @@ class TestRunnerPersistence:
 
     def test_saves_top_k_structure(self, top_k_yaml, market_data, tmp_path):
         out = tmp_path / "output"
-        run_sweep_from_config(
+        SweepRunner.run_sweep_from_config(
             top_k_yaml, market_data=market_data, output_dir=out
         )
         # Should have all_metrics.csv + top_full/
@@ -574,7 +575,7 @@ class TestRunnerPersistence:
         assert len(scenario_dirs) == 2
 
     def test_save_false_no_output(self, full_mode_yaml, market_data, tmp_path):
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, save=False
         )
         assert result.output_dir is None
@@ -583,7 +584,7 @@ class TestRunnerPersistence:
 
     def test_output_dir_returned(self, full_mode_yaml, market_data, tmp_path):
         out = tmp_path / "output"
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=out
         )
         assert result.output_dir == out
@@ -593,7 +594,7 @@ class TestRunnerPersistence:
     ):
         # Run from tmp_path so runs/ is created there
         monkeypatch.chdir(tmp_path)
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data
         )
         assert result.output_dir is not None
@@ -608,14 +609,14 @@ class TestRunnerPersistence:
 
 class TestConsistencyWithDirectSweep:
     def test_full_mode_pnl_matches(self, full_mode_yaml, market_data, tmp_path):
-        from mlstudy.trading.backtest.mean_reversion.sweep import run_sweep
-        from mlstudy.trading.backtest.mean_reversion.sweep_build import make_scenarios
+        from mlstudy.trading.backtest.mean_reversion.sweep.sweep import SweepExecutor
+        from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import ScenarioBuilder
 
         cfg = load_sweep_config(full_mode_yaml)
-        scenarios = make_scenarios(cfg.base_config, cfg.grid, name_prefix=cfg.grid_name)
-        direct = run_sweep(scenarios, **market_data, **cfg.sweep_kwargs)
+        scenarios = ScenarioBuilder.make_scenarios(cfg.base_config, cfg.grid, name_prefix=cfg.grid_name)
+        direct = SweepExecutor.run_sweep(scenarios, **market_data, **cfg.sweep_kwargs)
 
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
 
@@ -627,17 +628,17 @@ class TestConsistencyWithDirectSweep:
     def test_metrics_only_pnl_matches(
         self, metrics_only_yaml, market_data, tmp_path
     ):
-        from mlstudy.trading.backtest.mean_reversion.sweep import run_sweep
-        from mlstudy.trading.backtest.mean_reversion.sweep_build import make_scenarios
+        from mlstudy.trading.backtest.mean_reversion.sweep.sweep import SweepExecutor
+        from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import ScenarioBuilder
 
         cfg = load_sweep_config(metrics_only_yaml)
-        scenarios = make_scenarios(cfg.base_config, cfg.grid, name_prefix=cfg.grid_name)
-        direct = run_sweep(scenarios, **market_data, **cfg.sweep_kwargs)
+        scenarios = ScenarioBuilder.make_scenarios(cfg.base_config, cfg.grid, name_prefix=cfg.grid_name)
+        direct = SweepExecutor.run_sweep(scenarios, **market_data, **cfg.sweep_kwargs)
 
-        result = run_sweep_from_config(
+        result = SweepRunner.run_sweep_from_config(
             metrics_only_yaml, market_data=market_data, output_dir=tmp_path / "out"
         )
 
         assert len(result.raw) == len(direct)
         for r, d in zip(result.raw, direct):
-            assert r.total_pnl == pytest.approx(d.total_pnl)
+            assert r.metrics.total_pnl == pytest.approx(d.metrics.total_pnl)

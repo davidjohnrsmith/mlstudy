@@ -5,5 +5,5 @@
 #   from .sweep_config import load_sweep_config_by_name
 #   cfg = load_sweep_config_by_name("mr_grid_v1")
 
-mr_grid_v1: "config.yaml"
-mr_grid_debug: "config_debug.yaml"
+mr_grid_v1: "mean_reversion.yaml"
+mr_grid_debug: "mean_reversion_debug.yaml"

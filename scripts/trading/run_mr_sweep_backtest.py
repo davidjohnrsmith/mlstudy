@@ -9,13 +9,13 @@ and different instrument sets.
 
 Usage::
 
-    python scripts/trading/run_mr_backtest.py \\
+    python scripts/trading/run_mr_sweep_backtest.py \\
         --config configs/mr_grid_v1.yaml \\
         --data-path /mnt/data/20240101 \\
         --instruments UST_2Y UST_5Y UST_10Y \\
         --ref-instrument UST_5Y
 
-    python scripts/trading/run_mr_backtest.py \\
+    python scripts/trading/run_mr_sweep_backtest.py \\
         --config configs/mr_grid_v1.yaml \\
         --data-path D:\\data\\20240101 \\
         --instruments UST_2Y UST_5Y UST_10Y \\
@@ -31,6 +31,8 @@ import time
 from pathlib import Path
 
 import pandas as pd
+
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import SweepRunner
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -51,7 +53,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Directory with parquet files.",
     )
-    parser.add_argument("--instruments", type=str, required=True,
+    parser.add_argument("--instruments", type=str, required=False,
                         help="Comma-separated instrument IDs, e.g. UST_2Y,UST_5Y,UST_10Y")
     parser.add_argument(
         "--ref-instrument",
@@ -77,16 +79,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     quiet = args.quiet
 
-    from mlstudy.trading.backtest.mean_reversion import run_sweep_from_config
 
     _print(f"Loading sweep config from {args.config} ...", quiet)
 
     t0 = time.perf_counter()
-    instruments = [s.strip() for s in args.instruments.split(",") if s.strip()]
-    result = run_sweep_from_config(
+    if args.instruments:
+        instruments = [s.strip() for s in args.instruments.split(",") if s.strip()]
+    result = SweepRunner.run_sweep_from_config(
         config=args.config,
         data_path=args.data_path,
-        instrument_ids=instruments,
+        # instrument_ids=instruments,
         ref_instrument_id=args.ref_instrument,
         output_dir=args.outdir,
         save=not args.no_save,

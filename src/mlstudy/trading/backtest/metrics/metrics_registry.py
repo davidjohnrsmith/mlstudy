@@ -16,7 +16,6 @@ class MetricPreferenceRegistry:
 
     _DIRECTIONS: dict[str, int] = {
         **{m.key: m.direction for m in Metric},
-        "final_equity": +1,  # MetricsOnlyResult-specific, not in BacktestMetrics
     }
 
     @classmethod

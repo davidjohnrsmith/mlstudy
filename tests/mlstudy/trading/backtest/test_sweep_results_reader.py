@@ -10,13 +10,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from mlstudy.trading.backtest.mean_reversion.sweep_results_reader import (
-    FullScenario,
-    SweepRunData,
-    load_sweep_run,
-    _load_full_scenario,
-)
-
+from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import SweepResultsReader
 
 # ---------------------------------------------------------------------------
 # Helpers — write synthetic run directories
@@ -144,14 +138,14 @@ def _write_minimal_run(run_dir: Path, with_metrics: bool = True, with_full: bool
 class TestLoadSweepRunBasic:
     def test_loads_meta(self, tmp_path):
         _write_minimal_run(tmp_path)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert run.meta["grid_name"] == "test_grid"
         assert run.meta["n_scenarios"] == 4
         assert run.meta["elapsed_seconds"] == 3.14
 
     def test_properties(self, tmp_path):
         _write_minimal_run(tmp_path)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert run.grid_name == "test_grid"
         assert run.n_scenarios == 4
         assert run.elapsed_seconds == 3.14
@@ -159,48 +153,48 @@ class TestLoadSweepRunBasic:
 
     def test_loads_config_snapshot(self, tmp_path):
         _write_minimal_run(tmp_path)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert run.config_snapshot["grid_name"] == "test_grid"
         assert "base_config" in run.config_snapshot
 
     def test_loads_summary(self, tmp_path):
         _write_minimal_run(tmp_path)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert isinstance(run.summary, pd.DataFrame)
         assert len(run.summary) == 4
         assert "total_pnl" in run.summary.columns
 
     def test_loads_all_metrics(self, tmp_path):
         _write_minimal_run(tmp_path, with_metrics=True)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert run.all_metrics is not None
         assert len(run.all_metrics) == 4
         assert "scenario_idx" in run.all_metrics.columns
 
     def test_no_metrics_file(self, tmp_path):
         _write_minimal_run(tmp_path, with_metrics=False)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert run.all_metrics is None
 
     def test_no_full_scenarios(self, tmp_path):
         _write_minimal_run(tmp_path, with_full=False)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert run.full_scenarios == []
 
     def test_nonexistent_dir_raises(self):
         with pytest.raises(FileNotFoundError):
-            load_sweep_run("/nonexistent/path")
+            SweepResultsReader.load_sweep_run("/nonexistent/path")
 
 
 class TestLoadSweepRunWithFull:
     def test_loads_full_scenarios(self, tmp_path):
         _write_minimal_run(tmp_path, with_full=True)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert len(run.full_scenarios) == 3
 
     def test_scenario_spec(self, tmp_path):
         _write_minimal_run(tmp_path, with_full=True)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         sc = run.full_scenarios[0]
         assert sc.name == "scenario_0"
         assert sc.scenario_idx == 0
@@ -211,7 +205,7 @@ class TestLoadSweepRunWithFull:
     def test_scenario_arrays(self, tmp_path):
         T, N, n_trades = 10, 3, 2
         _write_minimal_run(tmp_path, with_full=True)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         sc = run.full_scenarios[0]
 
         assert sc.results.positions.shape == (T, N)
@@ -223,7 +217,7 @@ class TestLoadSweepRunWithFull:
 
     def test_convenience_accessors(self, tmp_path):
         _write_minimal_run(tmp_path, with_full=True)
-        sc = load_sweep_run(tmp_path).full_scenarios[0]
+        sc = SweepResultsReader.load_sweep_run(tmp_path).full_scenarios[0]
         # Shorthand accessors should return same arrays
         np.testing.assert_array_equal(sc.equity, sc.results.equity)
         np.testing.assert_array_equal(sc.pnl, sc.results.pnl)
@@ -232,7 +226,7 @@ class TestLoadSweepRunWithFull:
 
     def test_scenarios_sorted_by_dir_name(self, tmp_path):
         _write_minimal_run(tmp_path, with_full=True)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         idxs = [sc.scenario_idx for sc in run.full_scenarios]
         assert idxs == [0, 1, 2]
 
@@ -241,7 +235,7 @@ class TestLoadSweepRunWithFull:
         _write_minimal_run(tmp_path, with_full=False)
         for i in range(2):
             _write_full_scenario(tmp_path / "full" / f"scenario_{i:03d}", scenario_idx=i)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert len(run.full_scenarios) == 2
 
 
@@ -249,7 +243,7 @@ class TestLoadFullScenario:
     def test_single_scenario(self, tmp_path):
         sd = tmp_path / "scenario_000"
         _write_full_scenario(sd, T=20, N=2, n_trades=3, scenario_idx=5)
-        sc = _load_full_scenario(sd)
+        sc = SweepResultsReader.load_full_scenario(sd)
 
         assert sc.name == "scenario_5"
         assert sc.scenario_idx == 5
@@ -266,7 +260,7 @@ class TestMissingFiles:
         tmp_path.mkdir(exist_ok=True)
         _write_summary_csv(tmp_path)
         _write_config_snapshot(tmp_path)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert run.meta == {}
         assert run.grid_name == ""
         assert run.elapsed_seconds is None
@@ -275,11 +269,11 @@ class TestMissingFiles:
         tmp_path.mkdir(exist_ok=True)
         _write_run_meta(tmp_path)
         _write_summary_csv(tmp_path)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert run.config_snapshot == {}
 
     def test_missing_summary(self, tmp_path):
         tmp_path.mkdir(exist_ok=True)
         _write_run_meta(tmp_path)
-        run = load_sweep_run(tmp_path)
+        run = SweepResultsReader.load_sweep_run(tmp_path)
         assert run.summary.empty

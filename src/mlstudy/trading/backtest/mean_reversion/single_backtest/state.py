@@ -55,3 +55,22 @@ NO_POSITION_STATES = (
     State.STATE_SL_COOLDOWN.value,
     State.STATE_TIME_COOLDOWN.value,
 )
+
+
+# ---------------------------------------------------------------------------
+# Validate-scope constants
+# ---------------------------------------------------------------------------
+
+
+class ValidateScope(IntEnum):
+    """Which legs to check for ``bid <= mid <= ask`` before trading."""
+
+    REF_ONLY = 0
+    ALL_LEGS = 1
+
+
+# ---------------------------------------------------------------------------
+# Name lookup (debugging only – not used in hot loop)
+# ---------------------------------------------------------------------------
+
+CODE_NAMES = {member.value: member.name for member in ActionCode}

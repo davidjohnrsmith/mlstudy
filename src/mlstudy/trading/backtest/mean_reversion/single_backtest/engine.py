@@ -11,10 +11,10 @@ from typing import Optional
 
 import numpy as np
 
-from .config import MRBacktestConfig
+from ..configs.backtest_config import MRBacktestConfig
 from .loop import HAS_NUMBA, mr_loop_jit, _mr_loop_jit_impl
 from .results import MRBacktestResults
-from .types import VALIDATE_ALL_LEGS, VALIDATE_REF_ONLY
+from .state import ValidateScope
 
 
 def _validate(
@@ -86,6 +86,7 @@ def run_backtest(
     package_yield_bps: np.ndarray,
     hedge_ratios: np.ndarray,
     cfg: Optional[MRBacktestConfig] = None,
+    datetimes: Optional[np.ndarray] = None,
 ) -> MRBacktestResults:
     """Run a mean-reversion backtest.
 
@@ -128,7 +129,7 @@ def run_backtest(
         cfg,
     )
 
-    scope = VALIDATE_ALL_LEGS if cfg.validate_scope == "ALL_LEGS" else VALIDATE_REF_ONLY
+    scope = ValidateScope.ALL_LEGS if cfg.validate_scope == "ALL_LEGS" else ValidateScope.REF_ONLY
 
     loop_fn = mr_loop_jit if (cfg.use_jit and HAS_NUMBA) else _mr_loop_jit_impl
 
@@ -162,6 +163,12 @@ def run_backtest(
         float(cfg.size_haircut),
         int(scope),
         float(cfg.initial_capital),
-        int(VALIDATE_REF_ONLY),
+        int(ValidateScope.REF_ONLY),
     )
-    return MRBacktestResults.from_loop_output(raw)
+    return MRBacktestResults.from_loop_output(
+        raw,
+        datetimes=datetimes,
+        mid_px=mid_px,
+        package_yield_bps=package_yield_bps,
+        zscore=zscore,
+    )

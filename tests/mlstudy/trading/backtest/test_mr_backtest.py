@@ -2,12 +2,12 @@
 End-to-end tests for the mean-reversion backtester.
 
 Covers:
-  1. Successful LONG entry  (ENTRY_OK)
-  2. Successful take-profit  (EXIT_TP_OK)
-  3. Forced stop-loss exit   (EXIT_SL_FORCED)
-  4. Failed entry – no liquidity (ENTRY_NO_LIQUIDITY)
-  5. Failed entry – too wide  (ENTRY_TOO_WIDE)
-  6. Quarantine / cooldown    (ENTRY_IN_COOLDOWN)
+  1. Successful LONG entry  (ActionCode.ENTRY_OK)
+  2. Successful take-profit  (ActionCode.EXIT_TP_OK)
+  3. Forced stop-loss exit   (ActionCode.EXIT_SL_OK)
+  4. Failed entry – no liquidity (ActionCode.ENTRY_FAILED_NO_LIQUIDITY)
+  5. Failed entry – too wide  (ActionCode.ENTRY_FAILED_TOO_WIDE)
+  6. Quarantine / cooldown    (ActionCode.ENTRY_FAILED_IN_COOLDOWN)
   7. Python vs JIT output parity (if Numba is available)
 
 Synthetic data
@@ -24,27 +24,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mlstudy.trading.backtest.mean_reversion import (
-    ENTRY_IN_COOLDOWN,
-    ENTRY_NO_LIQUIDITY,
-    ENTRY_NO_SIGNAL,
-    ENTRY_OK,
-    ENTRY_TOO_WIDE,
-    EXIT_SL_FORCED,
-    EXIT_TP_OK,
-    NO_ACTION,
-    STATE_FLAT,
-    STATE_LONG,
-    STATE_SHORT,
-    STATE_SL_COOLDOWN,
-    STATE_TP_COOLDOWN,
-    TRADE_ENTRY,
-    TRADE_EXIT_SL,
-    TRADE_EXIT_TP,
-    MRBacktestConfig,
-    run_backtest,
+from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
+from mlstudy.trading.backtest.mean_reversion.single_backtest.engine import run_backtest
+from mlstudy.trading.backtest.mean_reversion.single_backtest.state import (
+    ActionCode, State, TradeType,
 )
-from mlstudy.trading.backtest.mean_reversion.loop import HAS_NUMBA
+from mlstudy.trading.backtest.mean_reversion.single_backtest.loop import HAS_NUMBA
 
 
 # =========================================================================
@@ -252,26 +237,26 @@ class TestMRBacktestEndToEnd:
     def test_entry_ok(self):
         res, d = self._run()
         eb = d["entry_bar"]
-        assert res.codes[eb] == ENTRY_OK
-        assert res.state[eb] == STATE_LONG
+        assert res.codes[eb] == ActionCode.ENTRY_OK
+        assert res.state[eb] == State.STATE_LONG
         # Position should be nonzero after entry
         assert np.any(np.abs(res.positions[eb]) > 1e-10)
 
     def test_tp_ok(self):
         res, d = self._run()
         tb = d["tp_bar"]
-        assert res.codes[tb] == EXIT_TP_OK
+        assert res.codes[tb] == ActionCode.EXIT_TP_OK
         # tp_quarantine_bars=2 > 0 → enters TP_COOLDOWN state
-        assert res.state[tb] == STATE_TP_COOLDOWN
+        assert res.state[tb] == State.STATE_TP_COOLDOWN
         # Position should be flat after TP
         assert np.all(np.abs(res.positions[tb]) < 1e-10)
 
     def test_sl_forced(self):
         res, d = self._run()
         sb = d["sl_bar"]
-        assert res.codes[sb] == EXIT_SL_FORCED
+        assert res.codes[sb] == ActionCode.EXIT_SL_OK
         # sl_quarantine_bars=3 > 0 → enters SL_COOLDOWN state
-        assert res.state[sb] == STATE_SL_COOLDOWN
+        assert res.state[sb] == State.STATE_SL_COOLDOWN
 
     def test_cooldown_after_tp(self):
         """After TP at bar tp_bar, next 2 bars should be in cooldown."""
@@ -282,12 +267,12 @@ class TestMRBacktestEndToEnd:
         # Bar tp_bar+2: cooldown continues (value=1, decremented to 0)
         # Bar tp_bar+3: cooldown expired, can enter again
 
-        # Check that entry signals during cooldown produce ENTRY_IN_COOLDOWN
+        # Check that entry signals during cooldown produce ActionCode.ENTRY_FAILED_IN_COOLDOWN
         # Our scripted data has zscore=0 during cooldown, so we expect NO_ACTION
         # rather than IN_COOLDOWN (no signal to trigger entry).
         # Verify state is TP_COOLDOWN during cooldown:
-        assert res.state[tb + 1] == STATE_TP_COOLDOWN
-        assert res.state[tb + 2] == STATE_TP_COOLDOWN
+        assert res.state[tb + 1] == State.STATE_TP_COOLDOWN
+        assert res.state[tb + 2] == State.STATE_TP_COOLDOWN
 
     def test_cooldown_after_sl(self):
         """After SL, sl_quarantine_bars=3 bars should block entry."""
@@ -295,20 +280,20 @@ class TestMRBacktestEndToEnd:
         sb = d["sl_bar"]
         for offset in range(1, 4):
             if sb + offset < d["T"]:
-                assert res.state[sb + offset] == STATE_SL_COOLDOWN
+                assert res.state[sb + offset] == State.STATE_SL_COOLDOWN
 
     def test_re_entry_after_cooldown(self):
         """After TP cooldown, re-entry should happen."""
         res, d = self._run()
         reb = d["re_entry_bar"]
-        assert res.codes[reb] == ENTRY_OK
-        assert res.state[reb] == STATE_LONG
+        assert res.codes[reb] == ActionCode.ENTRY_OK
+        assert res.state[reb] == State.STATE_LONG
 
     def test_no_signal_before_entry(self):
-        """Before the first entry, bars with z=0 should be ENTRY_NO_SIGNAL."""
+        """Before the first entry, bars with z=0 should be ActionCode.NO_ACTION_NO_SIGNAL."""
         res, d = self._run()
         for t in range(d["entry_bar"]):
-            assert res.codes[t] == ENTRY_NO_SIGNAL
+            assert res.codes[t] == ActionCode.NO_ACTION_NO_SIGNAL
 
     def test_equity_finite(self):
         res, _ = self._run()
@@ -326,14 +311,14 @@ class TestMRBacktestEndToEnd:
         assert res.n_trades >= 4
 
         # First trade should be entry
-        assert res.tr_type[0] == TRADE_ENTRY
-        assert res.tr_code[0] == ENTRY_OK
+        assert res.tr_type[0] == TradeType.TRADE_ENTRY
+        assert res.tr_code[0] == ActionCode.ENTRY_OK
         assert res.tr_bar[0] == d["entry_bar"]
         assert res.tr_side[0] == 1  # LONG
 
         # Second trade should be TP exit
-        assert res.tr_type[1] == TRADE_EXIT_TP
-        assert res.tr_code[1] == EXIT_TP_OK
+        assert res.tr_type[1] == TradeType.TRADE_EXIT_TP
+        assert res.tr_code[1] == ActionCode.EXIT_TP_OK
         assert res.tr_bar[1] == d["tp_bar"]
 
     def test_basket_sizing_dv01_consistent(self):
@@ -363,7 +348,7 @@ class TestMRBacktestEndToEnd:
 
 
 class TestMRBacktestNoLiquidity:
-    """Test ENTRY_NO_LIQUIDITY when book has zero depth."""
+    """Test ActionCode.ENTRY_FAILED_NO_LIQUIDITY when book has zero depth."""
 
     def test_no_liquidity_blocks_entry(self):
         d = _make_scripted_inputs(zero_liquidity_bar=5)
@@ -395,12 +380,12 @@ class TestMRBacktestNoLiquidity:
         )
         # Bar 5 should have entry attempt blocked by liquidity
         # (zero book sizes -> walk returns 0 filled)
-        assert res.codes[5] == ENTRY_NO_LIQUIDITY
-        assert res.state[5] == STATE_FLAT
+        assert res.codes[5] == ActionCode.ENTRY_FAILED_NO_LIQUIDITY
+        assert res.state[5] == State.STATE_FLAT
 
 
 class TestMRBacktestTooWide:
-    """Test ENTRY_TOO_WIDE when execution cost exceeds budget."""
+    """Test ActionCode.ENTRY_FAILED_TOO_WIDE when execution cost exceeds budget."""
 
     def test_too_wide_blocks_entry(self):
         d = _make_scripted_inputs()
@@ -434,12 +419,12 @@ class TestMRBacktestTooWide:
             cfg=cfg,
         )
         # Bar 5 has z > threshold but cost budget is negative -> TOO_WIDE
-        assert res.codes[d["entry_bar"]] == ENTRY_TOO_WIDE
-        assert res.state[d["entry_bar"]] == STATE_FLAT
+        assert res.codes[d["entry_bar"]] == ActionCode.ENTRY_FAILED_TOO_WIDE
+        assert res.state[d["entry_bar"]] == State.STATE_FLAT
 
 
 class TestMRBacktestCooldownWithSignal:
-    """Test ENTRY_IN_COOLDOWN when signal is present during cooldown."""
+    """Test ActionCode.ENTRY_FAILED_IN_COOLDOWN when signal is present during cooldown."""
 
     def test_in_cooldown_code(self):
         """Craft data so z > threshold during cooldown bars after SL."""
@@ -500,14 +485,14 @@ class TestMRBacktestCooldownWithSignal:
             cfg=cfg,
         )
 
-        assert res.codes[2] == ENTRY_OK
-        assert res.codes[5] == EXIT_SL_FORCED
-        # Bars 6, 7, 8: cooldown with signal present -> ENTRY_IN_COOLDOWN
-        assert res.codes[6] == ENTRY_IN_COOLDOWN
-        assert res.codes[7] == ENTRY_IN_COOLDOWN
-        assert res.codes[8] == ENTRY_IN_COOLDOWN
+        assert res.codes[2] == ActionCode.ENTRY_OK
+        assert res.codes[5] == ActionCode.EXIT_SL_OK
+        # Bars 6, 7, 8: cooldown with signal present -> ActionCode.ENTRY_FAILED_IN_COOLDOWN
+        assert res.codes[6] == ActionCode.ENTRY_FAILED_IN_COOLDOWN
+        assert res.codes[7] == ActionCode.ENTRY_FAILED_IN_COOLDOWN
+        assert res.codes[8] == ActionCode.ENTRY_FAILED_IN_COOLDOWN
         # Bar 9: cooldown expired -> can enter
-        assert res.codes[9] == ENTRY_OK
+        assert res.codes[9] == ActionCode.ENTRY_OK
 
 
 class TestMRBacktestMaxHolding:
@@ -537,7 +522,6 @@ class TestMRBacktestMaxHolding:
         # Stay in position (z stays high, no TP/SL trigger)
         zscore[3:] = 2.0
 
-        from mlstudy.trading.backtest.mean_reversion.types import EXIT_TIME_FORCED
 
         cfg = MRBacktestConfig(
             target_notional_ref=100.0,
@@ -565,13 +549,79 @@ class TestMRBacktestMaxHolding:
             cfg=cfg,
         )
 
-        assert res.codes[2] == ENTRY_OK
+        assert res.codes[2] == ActionCode.ENTRY_OK
         # Holding starts at 0 on entry bar, increments each bar.
         # max_holding_bars=5: exit when holding >= 5
         # Bar 2: entry, holding=0
         # Bar 3: holding=1, Bar 4: holding=2, ..., Bar 7: holding=5 -> exit
-        assert res.codes[7] == EXIT_TIME_FORCED
-        assert res.state[7] == STATE_FLAT
+        assert res.codes[7] == ActionCode.EXIT_TIME_OK
+        assert res.state[7] == State.STATE_FLAT
+
+
+class TestMRBacktestInactiveLegs:
+    """Test that a zero-hedge-ratio leg does not block entry."""
+
+    def test_zero_hedge_ratio_leg_entry_ok(self):
+        """Entry should succeed even when one leg has hedge_ratio=0 and bad dv01."""
+        T = 30
+        N = 3
+        ref_idx = 1
+
+        # Hedge ratios: leg 2 is inactive (0.0)
+        hedge_ratios = np.tile(
+            np.array([-1.0, 1.0, 0.0], dtype=np.float64), (T, 1)
+        )
+
+        # DV01: leg 2 has zero dv01 (would fail if checked)
+        dv01 = np.tile(np.array([0.02, 0.045, 0.0]), (T, 1))
+        mid_px = np.tile(np.array([99.0, 98.0, 0.0]), (T, 1))
+
+        half_sp = np.array([0.01, 0.01, 0.01])
+        l2_off = np.array([0.01, 0.01, 0.01])
+        base_sz = np.full((T, N), 1000.0)
+        bid_px, bid_sz, ask_px, ask_sz = _make_book(mid_px, half_sp, l2_off, base_sz)
+
+        zscore = np.zeros(T)
+        package_yield_bps = np.full(T, 100.0)
+        expected_yield_pnl_bps = np.full(T, 10.0)
+
+        # Bar 2: enter LONG
+        zscore[2] = 3.0
+        zscore[3:] = 2.0
+
+        cfg = MRBacktestConfig(
+            target_notional_ref=100.0,
+            ref_leg_idx=ref_idx,
+            entry_z_threshold=2.0,
+            take_profit_zscore_soft_threshold=0.5,
+            take_profit_yield_change_soft_threshold=1.0,
+            take_profit_yield_change_hard_threshold=3.0,
+            stop_loss_yield_change_hard_threshold=50.0,
+            max_levels_to_cross=2,
+            size_haircut=1.0,
+            validate_scope="ALL_LEGS",
+            use_jit=False,
+        )
+
+        res = run_backtest(
+            bid_px=bid_px, bid_sz=bid_sz,
+            ask_px=ask_px, ask_sz=ask_sz,
+            mid_px=mid_px, dv01=dv01,
+            zscore=zscore,
+            expected_yield_pnl_bps=expected_yield_pnl_bps,
+            package_yield_bps=package_yield_bps,
+            hedge_ratios=hedge_ratios,
+            cfg=cfg,
+        )
+
+        # Entry should succeed despite leg 2 having zero dv01
+        assert res.codes[2] == ActionCode.ENTRY_OK
+        assert res.state[2] == State.STATE_LONG
+        # Leg 2 should have zero position
+        assert abs(res.positions[2, 2]) < 1e-15
+        # Active legs should have nonzero positions
+        assert abs(res.positions[2, 0]) > 1e-10
+        assert abs(res.positions[2, 1]) > 1e-10
 
 
 @pytest.mark.skipif(not HAS_NUMBA, reason="Numba not installed")
