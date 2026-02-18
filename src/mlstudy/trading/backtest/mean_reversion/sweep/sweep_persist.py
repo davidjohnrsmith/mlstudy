@@ -20,6 +20,7 @@ ARRAY_FIELDS = [
     "cash",
     "equity",
     "pnl",
+    "gross_pnl",
     "codes",
     "state",
     "holding",

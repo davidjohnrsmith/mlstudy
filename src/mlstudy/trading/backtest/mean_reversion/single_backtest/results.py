@@ -7,14 +7,14 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .state import TRADE_ENTRY, TRADE_EXIT_TP, TRADE_EXIT_SL, TRADE_EXIT_TIME
+from .state import TradeType
 
 
 # Maps tr_type int to human-readable exit type string
 _EXIT_TYPE_NAMES: dict[int, str] = {
-    TRADE_EXIT_TP: "tp",
-    TRADE_EXIT_SL: "sl",
-    TRADE_EXIT_TIME: "time",
+    TradeType.TRADE_EXIT_TP: "tp",
+    TradeType.TRADE_EXIT_SL: "sl",
+    TradeType.TRADE_EXIT_TIME: "time",
 }
 
 
@@ -27,7 +27,8 @@ class MRBacktestResults:
     positions : (T, N)  leg positions at end of each bar.
     cash      : (T,)    cash balance.
     equity    : (T,)    total equity (cash + MTM).
-    pnl       : (T,)    step PnL (equity[t] - equity[t-1]).
+    pnl       : (T,)    net step PnL (equity[t] - equity[t-1], after costs).
+    gross_pnl : (T,)    gross step PnL (before execution costs).
     codes     : (T,)    int32 attempt/outcome code per bar.
     state     : (T,)    int32 state at end of bar (0 flat, +1 long, -1 short, 2-4 cooldown).
     holding   : (T,)    int32 bars held in current position (0 when flat).
@@ -51,6 +52,7 @@ class MRBacktestResults:
     cash: np.ndarray
     equity: np.ndarray
     pnl: np.ndarray
+    gross_pnl: np.ndarray
     codes: np.ndarray
     state: np.ndarray
     holding: np.ndarray
@@ -89,6 +91,7 @@ class MRBacktestResults:
             cash=out[1],
             equity=out[2],
             pnl=out[3],
+            gross_pnl=out[18],
             codes=out[4],
             state=out[5],
             holding=out[6],
@@ -111,26 +114,46 @@ class MRBacktestResults:
     # -------------------------------------------------------------------
 
     def to_bar_df(self) -> pd.DataFrame:
-        """Per-bar DataFrame with equity, pnl, cumulative_pnl, position, state, code, holding.
+        """Per-bar DataFrame with equity/pnl + per-leg positions + state/codes.
 
-        Index is bar number.  If *datetimes* is available, a ``datetime``
-        column is included.
+        - pnl is net (after execution costs); gross_pnl is before costs.
+        - Index is bar number. If datetimes is available, include a datetime column.
+        - If positions is (T, N), we output position_0..position_{N-1}.
         """
         T = len(self.equity)
         data: dict[str, np.ndarray] = {}
+
         if self.datetimes is not None:
             data["datetime"] = self.datetimes[:T]
+
         data.update(
             {
-                "equity": self.equity,
-                "pnl": self.pnl,
-                "cumulative_pnl": np.cumsum(self.pnl),
-                "position": self.state.copy().astype(np.float64),
-                "state": self.state,
-                "code": self.codes,
-                "holding": self.holding,
+                "equity": self.equity[:T],
+                'cash': self.cash[:T],
+                "pnl": self.pnl[:T],
+                "gross_pnl": self.gross_pnl[:T],
+                "cumulative_pnl": np.cumsum(self.pnl[:T]),
+                "cumulative_gross_pnl": np.cumsum(self.gross_pnl[:T]),
+                "state": self.state[:T],
+                "code": self.codes[:T],
+                "holding": self.holding[:T],
             }
         )
+
+        pos = self.positions
+        if pos is None:
+            pass
+        elif pos.ndim == 1:
+            # backward-compatible single position series
+            data["position"] = pos[:T]
+        elif pos.ndim == 2:
+            # per-leg positions
+            N = pos.shape[1]
+            for i in range(N):
+                data[f"position_{i}"] = pos[:T, i]
+        else:
+            raise ValueError(f"positions must be 1D or 2D, got shape {pos.shape}")
+
         return pd.DataFrame(data)
 
     def to_trade_df(self) -> pd.DataFrame:
@@ -149,7 +172,7 @@ class MRBacktestResults:
 
         for i in range(self.n_trades):
             ttype = int(self.tr_type[i])
-            if ttype == TRADE_ENTRY:
+            if ttype == TradeType.TRADE_ENTRY:
                 pending_entry = {
                     "idx": i,
                     "bar": int(self.tr_bar[i]),
@@ -178,6 +201,8 @@ class MRBacktestResults:
                 if has_dt:
                     row["entry_datetime"] = self.datetimes[entry_bar]
                     row["exit_datetime"] = self.datetimes[exit_bar]
+                    row["holding_days"] = (row["exit_datetime"]-row["entry_datetime"])/np.timedelta64(1, "D")
+
                 row.update(
                     {
                         "entry_bar": entry_bar,

@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 
-from mlstudy.trading.backtest.mean_reversion.analysis import compute_performance_metrics
+from mlstudy.trading.backtest.metrics.metrics_calculator import MetricsCalculator
 from mlstudy.trading.backtest.mean_reversion.single_backtest.engine import run_backtest
 from .sweep_persist import SweepPersister
 from .sweep_rank import RankingPlan, SweepRanker
@@ -156,7 +156,7 @@ class SweepExecutor:
     ) -> SweepResultLight | SweepResult:
         try:
             res = run_backtest(cfg=scenario.cfg, **market_data)
-            metrics = compute_performance_metrics(res)
+            metrics = MetricsCalculator(res.bar_df, res.trade_df).compute_all()
 
             if mode == "metrics_only":
                 return SweepResultLight(

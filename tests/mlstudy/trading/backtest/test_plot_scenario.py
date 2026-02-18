@@ -13,11 +13,7 @@ from mlstudy.trading.backtest.mean_reversion.sweep.sweep_results_reader import (
     FullScenario,
     SweepResultsReader,
 )
-from mlstudy.trading.backtest.mean_reversion.single_backtest.state import (
-    TRADE_ENTRY,
-    TRADE_EXIT_SL,
-    TRADE_EXIT_TP,
-)
+from mlstudy.trading.backtest.mean_reversion.single_backtest.state import TradeType
 
 # Skip all tests if matplotlib is not installed
 mpl = pytest.importorskip("matplotlib")
@@ -89,7 +85,7 @@ def _write_scenario(
     np.save(scenario_dir / "holding.npy", np.zeros(T, dtype=np.int32))
 
     # Trades: entry, TP, entry, SL
-    tr_types = np.array([TRADE_ENTRY, TRADE_EXIT_TP, TRADE_ENTRY, TRADE_EXIT_SL], dtype=np.int32)
+    tr_types = np.array([TradeType.TRADE_ENTRY, TradeType.TRADE_EXIT_TP, TradeType.TRADE_ENTRY, TradeType.TRADE_EXIT_SL], dtype=np.int32)
     tr_bars = np.array([5, 14, 25, 34], dtype=np.int64)
     np.save(scenario_dir / "tr_bar.npy", tr_bars[:n_trades])
     np.save(scenario_dir / "tr_type.npy", tr_types[:n_trades])

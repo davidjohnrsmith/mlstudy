@@ -11,15 +11,7 @@ import pytest
 
 from mlstudy.trading.backtest.mean_reversion.single_backtest.results import MRBacktestResults
 from mlstudy.trading.backtest.mean_reversion.single_backtest.state import (
-    ENTRY_NO_SIGNAL,
-    ENTRY_OK,
-    EXIT_SL_OK,
-    EXIT_TP_OK,
-    NO_ACTION,
-    STATE_LONG,
-    TRADE_ENTRY,
-    TRADE_EXIT_SL,
-    TRADE_EXIT_TP,
+    ActionCode, State, TradeType,
 )
 from mlstudy.trading.backtest.mean_reversion.analysis import (
     compute_code_distribution,
@@ -42,40 +34,40 @@ def _make_synthetic_results() -> MRBacktestResults:
     """Build a small, deterministic MRBacktestResults.
 
     Timeline (T=30, N=3):
-      bars 0-4:   flat, NO_ACTION
-      bar  5:     ENTRY_OK (long entry)
-      bars 6-14:  in position (long), ENTRY_NO_SIGNAL
-      bar  15:    EXIT_TP_OK
-      bars 16-19: flat, NO_ACTION
-      bar  20:    ENTRY_OK (long entry)
-      bars 21-24: in position (long), ENTRY_NO_SIGNAL
-      bar  25:    EXIT_SL_OK
-      bars 26-29: flat, NO_ACTION
+      bars 0-4:   flat, ActionCode.NO_ACTION
+      bar  5:     ActionCode.ENTRY_OK (long entry)
+      bars 6-14:  in position (long), ActionCode.NO_ACTION_NO_SIGNAL
+      bar  15:    ActionCode.EXIT_TP_OK
+      bars 16-19: flat, ActionCode.NO_ACTION
+      bar  20:    ActionCode.ENTRY_OK (long entry)
+      bars 21-24: in position (long), ActionCode.NO_ACTION_NO_SIGNAL
+      bar  25:    ActionCode.EXIT_SL_OK
+      bars 26-29: flat, ActionCode.NO_ACTION
     """
     T, N = 30, 3
     rng = np.random.default_rng(123)
 
     # Per-bar arrays
     state = np.zeros(T, dtype=np.int32)
-    codes = np.full(T, NO_ACTION, dtype=np.int32)
+    codes = np.full(T, ActionCode.NO_ACTION, dtype=np.int32)
     holding = np.zeros(T, dtype=np.int32)
     positions = np.zeros((T, N), dtype=np.float64)
 
     # Trade 1: entry at bar 5, exit TP at bar 15
-    state[5:16] = STATE_LONG
-    codes[5] = ENTRY_OK
-    codes[6:15] = ENTRY_NO_SIGNAL
-    codes[15] = EXIT_TP_OK
+    state[5:16] = State.STATE_LONG
+    codes[5] = ActionCode.ENTRY_OK
+    codes[6:15] = ActionCode.NO_ACTION_NO_SIGNAL
+    codes[15] = ActionCode.EXIT_TP_OK
     holding[5] = 1
     for t in range(6, 16):
         holding[t] = t - 5 + 1
     positions[5:16] = [10.0, -5.0, -5.0]
 
     # Trade 2: entry at bar 20, exit SL at bar 25
-    state[20:26] = STATE_LONG
-    codes[20] = ENTRY_OK
-    codes[21:25] = ENTRY_NO_SIGNAL
-    codes[25] = EXIT_SL_OK
+    state[20:26] = State.STATE_LONG
+    codes[20] = ActionCode.ENTRY_OK
+    codes[21:25] = ActionCode.NO_ACTION_NO_SIGNAL
+    codes[25] = ActionCode.EXIT_SL_OK
     holding[20] = 1
     for t in range(21, 26):
         holding[t] = t - 20 + 1
@@ -95,7 +87,7 @@ def _make_synthetic_results() -> MRBacktestResults:
     # Per-trade arrays (4 trades: entry, exit_tp, entry, exit_sl)
     n_trades = 4
     tr_bar = np.array([5, 15, 20, 25], dtype=np.int64)
-    tr_type = np.array([TRADE_ENTRY, TRADE_EXIT_TP, TRADE_ENTRY, TRADE_EXIT_SL], dtype=np.int32)
+    tr_type = np.array([TradeType.TRADE_ENTRY, TradeType.TRADE_EXIT_TP, TradeType.TRADE_ENTRY, TradeType.TRADE_EXIT_SL], dtype=np.int32)
     tr_side = np.array([1, 1, 1, 1], dtype=np.int32)
     tr_sizes = np.array(
         [
@@ -123,14 +115,22 @@ def _make_synthetic_results() -> MRBacktestResults:
     vwaps[3] += np.array([-0.01, 0.01, 0.01])
 
     tr_cost = np.array([0.05, 0.04, 0.05, 0.06], dtype=np.float64)
-    tr_code = np.array([ENTRY_OK, EXIT_TP_OK, ENTRY_OK, EXIT_SL_OK], dtype=np.int32)
+    tr_code = np.array([ActionCode.ENTRY_OK, ActionCode.EXIT_TP_OK, ActionCode.ENTRY_OK, ActionCode.EXIT_SL_OK], dtype=np.int32)
     tr_pkg_yield = np.array([100.0, 94.0, 100.0, 106.0], dtype=np.float64)
+
+    # gross_pnl: same as pnl but with execution costs added back on trade bars
+    gross_pnl = pnl.copy()
+    gross_pnl[5] += tr_cost[0]    # entry cost bar 5
+    gross_pnl[15] += tr_cost[1]   # exit cost bar 15
+    gross_pnl[20] += tr_cost[2]   # entry cost bar 20
+    gross_pnl[25] += tr_cost[3]   # exit cost bar 25
 
     return MRBacktestResults(
         positions=positions,
         cash=cash,
         equity=equity,
         pnl=pnl,
+        gross_pnl=gross_pnl,
         codes=codes,
         state=state,
         holding=holding,
@@ -167,7 +167,7 @@ class TestToDataframe:
     def test_shape(self, res):
         df = to_dataframe(res)
         assert len(df) == 30
-        expected_cols = {"equity", "pnl", "cumulative_pnl", "position", "state", "code", "holding"}
+        expected_cols = {"equity", "pnl", "gross_pnl", "cumulative_pnl", "state", "code", "holding"}
         assert expected_cols.issubset(set(df.columns))
 
     def test_with_datetimes(self, res):
@@ -346,32 +346,43 @@ from mlstudy.trading.backtest.metrics.metrics_calculator import MetricsCalculato
 from mlstudy.trading.backtest.metrics.metrics_enum import Metric
 
 
-def _make_pnl_df() -> pd.DataFrame:
-    """Build a small pnl DataFrame suitable for MetricsCalculator."""
+def _make_bar_and_trade_dfs() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build small bar_df and trade_df suitable for MetricsCalculator."""
     rng = np.random.default_rng(99)
     n = 60
-    returns = rng.normal(0.001, 0.01, n)
-    position = np.zeros(n, dtype=float)
-    position[5:20] = 1.0
-    position[30:45] = -1.0
-    cumulative_pnl = np.cumsum(returns)
-    traded_notional = np.abs(np.diff(position, prepend=0)) * 100.0
-    gross_notional = np.abs(position) * 100.0
-    return pd.DataFrame({
-        "net_return": returns,
-        "position": position,
+    pnl = rng.normal(0.001, 0.01, n)
+    state = np.zeros(n, dtype=float)
+    state[5:20] = 1.0
+    state[30:45] = -1.0
+    cumulative_pnl = np.cumsum(pnl)
+    position_0 = state * 10.0
+
+    bar_df = pd.DataFrame({
+        "pnl": pnl,
         "cumulative_pnl": cumulative_pnl,
-        "traded_notional": traded_notional,
-        "gross_notional": gross_notional,
+        "state": state,
+        "position_0": position_0,
     })
+
+    trade_df = pd.DataFrame({
+        "entry_bar": [5, 30],
+        "exit_bar": [19, 44],
+        "side": [1, -1],
+        "holding_bars": [14, 14],
+        "exit_type": ["tp", "sl"],
+        "total_cost": [0.05, 0.05],
+        "pnl": [float(np.sum(pnl[5:20])), float(np.sum(pnl[30:45]))],
+    })
+
+    return bar_df, trade_df
 
 
 class TestMetricEnum:
     def test_metric_enum_has_all_fields(self):
         """Every BacktestMetrics field has a corresponding Metric member."""
         field_names = {f.name for f in dataclasses.fields(BacktestMetrics)}
-        enum_names = {m.name for m in Metric}
-        assert field_names == enum_names
+        enum_keys = {m.key for m in Metric}
+        assert field_names == enum_keys
 
     def test_metric_categories(self):
         equity_names = {
@@ -386,12 +397,12 @@ class TestMetricEnum:
             "n_trades", "pct_time_in_market",
         }
         for m in Metric:
-            if m.name in equity_names:
-                assert m.category == MetricCategory.EQUITY, m.name
-            elif m.name in trade_names:
-                assert m.category == MetricCategory.TRADE, m.name
+            if m.key in equity_names:
+                assert m.category == MetricCategory.EQUITY, m.key
+            elif m.key in trade_names:
+                assert m.category == MetricCategory.TRADE, m.key
             else:
-                raise AssertionError(f"Unexpected metric {m.name}")
+                raise AssertionError(f"Unexpected metric {m.key}")
 
     def test_metric_from_name(self):
         m = Metric.from_key("sharpe_ratio")
@@ -405,18 +416,18 @@ class TestMetricEnum:
 
 class TestMetricsCalculator:
     def test_calculator_compute_all(self):
-        """MetricsCalculator.compute_all() matches old compute_metrics()."""
-        pnl_df = _make_pnl_df()
-        old = compute_metrics(pnl_df)
-        new = MetricsCalculator(pnl_df).compute_all()
+        """MetricsCalculator.compute_all() matches compute_metrics()."""
+        bar_df, trade_df = _make_bar_and_trade_dfs()
+        old = compute_metrics(bar_df, trade_df)
+        new = MetricsCalculator(bar_df, trade_df).compute_all()
         for field in dataclasses.fields(BacktestMetrics):
             assert getattr(old, field.name) == pytest.approx(
                 getattr(new, field.name)
             ), field.name
 
     def test_calculator_compute_equity(self):
-        pnl_df = _make_pnl_df()
-        result = MetricsCalculator(pnl_df).compute_equity()
+        bar_df, trade_df = _make_bar_and_trade_dfs()
+        result = MetricsCalculator(bar_df, trade_df).compute_equity()
         # Equity fields should be non-default
         assert result.sharpe_ratio != 0.0 or result.total_pnl != 0.0
         # Trade fields should be zero
@@ -427,8 +438,8 @@ class TestMetricsCalculator:
         assert result.pct_time_in_market == 0.0
 
     def test_calculator_compute_trades(self):
-        pnl_df = _make_pnl_df()
-        result = MetricsCalculator(pnl_df).compute_trades()
+        bar_df, trade_df = _make_bar_and_trade_dfs()
+        result = MetricsCalculator(bar_df, trade_df).compute_trades()
         # Trade fields should be non-default
         assert result.n_trades > 0
         assert result.pct_time_in_market > 0.0
@@ -439,9 +450,9 @@ class TestMetricsCalculator:
         assert result.max_drawdown_duration == 0
 
     def test_backward_compat_compute_metrics(self):
-        """compute_metrics() still works unchanged as a thin wrapper."""
-        pnl_df = _make_pnl_df()
-        result = compute_metrics(pnl_df)
+        """compute_metrics() works as a thin wrapper."""
+        bar_df, trade_df = _make_bar_and_trade_dfs()
+        result = compute_metrics(bar_df, trade_df)
         assert isinstance(result, BacktestMetrics)
         assert result.n_trades > 0
         assert result.total_pnl != 0.0

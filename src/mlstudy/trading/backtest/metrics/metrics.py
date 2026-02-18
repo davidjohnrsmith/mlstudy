@@ -11,8 +11,6 @@ from enum import Enum
 
 import pandas as pd
 
-from mlstudy.trading.backtest.metrics.metrics_calculator import MetricsCalculator
-
 
 class MetricCategory(str, Enum):
     EQUITY = "equity"
@@ -97,31 +95,30 @@ class BacktestMetrics:
 
 
 def compute_metrics(
-    pnl_df: pd.DataFrame,
-    return_col: str = "net_return",
-    position_col: str = "position",
-    traded_notional_col: str = "traded_notional",
-    gross_notional_col: str = "gross_notional",
-    cumulative_col: str = "cumulative_pnl",
+    bar_df: pd.DataFrame,
+    trade_df: pd.DataFrame | None = None,
+    *,
+    annualization_factor: int = 252,
 ) -> BacktestMetrics:
-    """Compute all backtest metrics from pnl_df.
+    """Compute all backtest metrics from bar_df and trade_df.
 
-    Args:
-        pnl_df: DataFrame from backtest_fly with required columns.
-        return_col: Column with net returns.
-        position_col: Column with position.
-        traded_notional_col: Column with traded notional.
-        gross_notional_col: Column with gross notional.
-        cumulative_col: Column with cumulative P&L.
+    Parameters
+    ----------
+    bar_df : pd.DataFrame
+        Per-bar DataFrame with columns ``pnl``, ``cumulative_pnl``, ``state``.
+    trade_df : pd.DataFrame, optional
+        Round-trip trade DataFrame with columns ``pnl``, ``holding_bars``.
+    annualization_factor : int
+        Bars per year for annualizing ratios (default 252).
 
-    Returns:
-        BacktestMetrics with all computed metrics.
+    Returns
+    -------
+    BacktestMetrics
     """
+    from mlstudy.trading.backtest.metrics.metrics_calculator import MetricsCalculator
+
     return MetricsCalculator(
-        pnl_df,
-        return_col=return_col,
-        position_col=position_col,
-        traded_notional_col=traded_notional_col,
-        gross_notional_col=gross_notional_col,
-        cumulative_col=cumulative_col,
+        bar_df,
+        trade_df,
+        annualization_factor=annualization_factor,
     ).compute_all()

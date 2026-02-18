@@ -14,15 +14,7 @@ import numpy as np
 from .single_backtest.results import MRBacktestResults
 from .sweep.sweep_results_reader import FullScenario
 from .analysis import to_dataframe
-from .single_backtest.state import (
-    STATE_FLAT,
-    STATE_LONG,
-    STATE_SHORT,
-    TRADE_ENTRY,
-    TRADE_EXIT_SL,
-    TRADE_EXIT_TIME,
-    TRADE_EXIT_TP,
-)
+from .single_backtest.state import State, TradeType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -86,7 +78,7 @@ def plot_state_and_codes(res: MRBacktestResults) -> "matplotlib.figure.Figure":
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
 
     # Equity colored by state
-    state_colors = {STATE_FLAT: "gray", STATE_LONG: "green", STATE_SHORT: "red"}
+    state_colors = {State.STATE_FLAT: "gray", State.STATE_LONG: "green", State.STATE_SHORT: "red"}
     for state_val, color in state_colors.items():
         mask = res.state == state_val
         ax1.scatter(
@@ -94,7 +86,7 @@ def plot_state_and_codes(res: MRBacktestResults) -> "matplotlib.figure.Figure":
             res.equity[mask],
             c=color,
             s=2,
-            label={STATE_FLAT: "flat", STATE_LONG: "long", STATE_SHORT: "short"}[
+            label={State.STATE_FLAT: "flat", State.STATE_LONG: "long", State.STATE_SHORT: "short"}[
                 state_val
             ],
         )
@@ -270,10 +262,10 @@ def plot_slippage(res: MRBacktestResults) -> "matplotlib.figure.Figure":
 # ---------------------------------------------------------------------------
 
 _TRADE_STYLE = {
-    TRADE_ENTRY: {"marker": "^", "color": "blue", "label": "Entry"},
-    TRADE_EXIT_TP: {"marker": "v", "color": "green", "label": "Exit TP"},
-    TRADE_EXIT_SL: {"marker": "X", "color": "red", "label": "Exit SL"},
-    TRADE_EXIT_TIME: {"marker": "s", "color": "orange", "label": "Exit Time"},
+    TradeType.TRADE_ENTRY: {"marker": "^", "color": "blue", "label": "Entry"},
+    TradeType.TRADE_EXIT_TP: {"marker": "v", "color": "green", "label": "Exit TP"},
+    TradeType.TRADE_EXIT_SL: {"marker": "X", "color": "red", "label": "Exit SL"},
+    TradeType.TRADE_EXIT_TIME: {"marker": "s", "color": "orange", "label": "Exit Time"},
 }
 
 
@@ -326,9 +318,9 @@ def plot_scenario(
 
     # Shade position periods
     for t in range(T):
-        if res.state[t] == STATE_LONG:
+        if res.state[t] == State.STATE_LONG:
             ax_eq.axvspan(t - 0.5, t + 0.5, alpha=0.05, color="green", linewidth=0)
-        elif res.state[t] == STATE_SHORT:
+        elif res.state[t] == State.STATE_SHORT:
             ax_eq.axvspan(t - 0.5, t + 0.5, alpha=0.05, color="red", linewidth=0)
 
     # Trade markers on equity curve

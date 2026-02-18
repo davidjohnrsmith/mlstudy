@@ -57,12 +57,13 @@ sweep:
 #   tie_params       — final tie-break on parameters
 rank:
   primary_metrics:
-    - ["total_pnl", 1.0]
+    - ["total_pnl", 0.5]
+    - ["sharpe_ratio", 0.5]
   tie_metrics:
     - ["max_drawdown", 1.0]
-    - ["sharpe_ratio", 0.5]
-#  primary_params:
-#    - [ "total_pnl", 1.0 ]
-#  tie_params:
-#    - [ "max_drawdown", 1.0 ]
-#    - [ "sharpe_ratio", 0.5 ]
+
+  primary_params:
+    - [ "entry_z_threshold", 1.0 ]
+  tie_params:
+    - [ "take_profit_zscore_soft_threshold", 1.0 ]
+    - [ "take_profit_yield_change_soft_threshold", 0.5 ]

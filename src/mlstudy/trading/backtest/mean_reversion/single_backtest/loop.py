@@ -354,13 +354,13 @@ def _mr_loop_jit_impl(
 
     Returns
     -------
-    tuple of 18 elements
+    tuple of 19 elements
         Per-bar arrays (length *T*):
 
         0. ``out_pos``     — (T, N) float64, leg positions at end of bar.
         1. ``out_cash``    — (T,) float64, cash balance.
         2. ``out_equity``  — (T,) float64, total equity (cash + MTM).
-        3. ``out_pnl``     — (T,) float64, bar-over-bar P&L.
+        3. ``out_pnl``     — (T,) float64, net bar-over-bar P&L (after costs).
         4. ``out_codes``   — (T,) int32, attempt/outcome code (see ``types.py``).
         5. ``out_state``   — (T,) int32, state at end of bar (0/+1/−1).
         6. ``out_holding`` — (T,) int32, bars held in current position.
@@ -381,6 +381,10 @@ def _mr_loop_jit_impl(
         Scalar:
 
         17. ``n_trades`` — number of valid rows in the trade arrays.
+
+        Additional per-bar arrays:
+
+        18. ``out_gross_pnl`` — (T,) float64, gross bar-over-bar P&L (before costs).
     """
     T = bid_px.shape[0]  # number of bars
     N = bid_px.shape[1]  # number of instruments (legs)
@@ -390,6 +394,7 @@ def _mr_loop_jit_impl(
     out_cash = np.zeros(T, dtype=np.float64)
     out_equity = np.zeros(T, dtype=np.float64)
     out_pnl = np.zeros(T, dtype=np.float64)
+    out_gross_pnl = np.zeros(T, dtype=np.float64)
     out_codes = np.zeros(T, dtype=np.int32)
     out_state = np.zeros(T, dtype=np.int32)
     out_holding = np.zeros(T, dtype=np.int32)
@@ -420,6 +425,7 @@ def _mr_loop_jit_impl(
 
     for t in range(T):
         code = _NO_ACTION
+        bar_cost = 0.0  # execution cost incurred this bar (for gross/net split)
 
         # ==================================================================
         # BRANCH A: IN POSITION (state != 0)
@@ -516,6 +522,7 @@ def _mr_loop_jit_impl(
                         tr_vwaps[n_trades, i] = exit_vwaps[i]
                         tr_mids[n_trades, i] = mid_px[t, i]
                     tr_cost[n_trades] = bcost
+                    bar_cost = bcost
                     tr_code[n_trades] = (
                         _EXIT_SL_OK
                         if is_sl
@@ -632,6 +639,7 @@ def _mr_loop_jit_impl(
                                 tr_vwaps[n_trades, i] = exit_vwaps[i]
                                 tr_mids[n_trades, i] = mid_px[t, i]
                             tr_cost[n_trades] = bcost
+                            bar_cost = bcost
                             tr_code[n_trades] = _EXIT_TP_OK
                             tr_pkg_yield[n_trades] = package_yield_bps[t]
                             n_trades += 1
@@ -796,6 +804,7 @@ def _mr_loop_jit_impl(
                                             tr_vwaps[n_trades, i] = fill_vwaps[i]
                                             tr_mids[n_trades, i] = mid_px[t, i]
                                         tr_cost[n_trades] = bcost
+                                        bar_cost = bcost
                                         tr_code[n_trades] = _ENTRY_OK
                                         tr_pkg_yield[n_trades] = package_yield_bps[t]
                                         n_trades += 1
@@ -819,7 +828,9 @@ def _mr_loop_jit_impl(
             equity_t += pos[i] * mid_px[t, i]
 
         # Bar PnL = change in equity from the previous bar.
+        # net_pnl includes execution costs; gross_pnl adds them back.
         pnl_t = equity_t - prev_equity
+        gross_pnl_t = pnl_t + bar_cost
         prev_equity = equity_t
 
         # Write this bar's snapshot to the output arrays.
@@ -828,6 +839,7 @@ def _mr_loop_jit_impl(
         out_cash[t] = cash
         out_equity[t] = equity_t
         out_pnl[t] = pnl_t
+        out_gross_pnl[t] = gross_pnl_t
         out_codes[t] = code
         out_state[t] = state
         out_holding[t] = holding
@@ -851,6 +863,7 @@ def _mr_loop_jit_impl(
         tr_code,
         tr_pkg_yield,
         n_trades,
+        out_gross_pnl,
     )
 
 

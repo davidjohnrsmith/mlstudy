@@ -128,11 +128,15 @@ class SweepResultsReader:
         # n_trades: infer from trade arrays (they are already trimmed on save)
         n_trades = len(arrays.get("tr_bar", []))
 
+        # gross_pnl may be absent in old saved runs; fall back to pnl
+        gross_pnl = arrays.get("gross_pnl", arrays["pnl"])
+
         results = MRBacktestResults(
             positions=arrays["positions"],
             cash=arrays["cash"],
             equity=arrays["equity"],
             pnl=arrays["pnl"],
+            gross_pnl=gross_pnl,
             codes=arrays["codes"],
             state=arrays["state"],
             holding=arrays["holding"],
