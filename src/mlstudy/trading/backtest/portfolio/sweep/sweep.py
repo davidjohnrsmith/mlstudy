@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-from mlstudy.trading.backtest.metrics.metrics_calculator import MetricsCalculator
+from mlstudy.trading.backtest.metrics.portfolio_metrics_calculator import PortfolioMetricsCalculator
 from mlstudy.trading.backtest.portfolio.single_backtest.engine import run_backtest
 from mlstudy.trading.backtest.common.sweep.sweep_dispatch import dispatch
 from mlstudy.trading.backtest.common.sweep.sweep_persist import summary_table
@@ -39,10 +39,8 @@ def _run_one_portfolio(
 ) -> SweepResultLight | SweepResult:
     try:
         res = run_backtest(cfg=scenario.cfg, **market_data)
-        # Portfolio trade_df uses per-fill format (not round-trip), so we
-        # pass None to skip trade-level metrics and compute equity-only.
         bar_df = res.close_bar_df if res.close_bar_df is not None else res.bar_df
-        metrics = MetricsCalculator(bar_df, None).compute_equity()
+        metrics = PortfolioMetricsCalculator(bar_df, res.trade_df).compute_all()
 
         if mode == "metrics_only":
             return SweepResultLight(
