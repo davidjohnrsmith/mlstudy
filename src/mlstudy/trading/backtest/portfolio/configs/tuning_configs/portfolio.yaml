@@ -1,0 +1,48 @@
+grid_name: "portfolio_grid_v1"
+
+base_config:
+  gross_dv01_cap: 100.0
+  top_k: 10
+  max_levels: 3
+  haircut: 1.0
+  qty_step: 0.0
+  min_qty_trade: 0.0
+  min_fill_ratio: 0.0
+  initial_capital: 1000000.0
+
+grid:
+  z_inc: [1.5, 2.0, 2.5]
+  p_inc: [0.05]
+  z_dec: [0.5, 1.0]
+  p_dec: [0.10]
+  alpha_thr_inc: [0.5, 1.0, 2.0]
+  alpha_thr_dec: [0.25, 0.5]
+  gross_dv01_cap: [50.0, 100.0, 200.0]
+  cooldown_bars: [0, 3, 5]
+  cooldown_mode: [0]
+  max_levels: [1, 2, 3]
+  haircut: [0.8, 1.0]
+  top_k: [5, 10, 20]
+
+data:
+  book_filename: "book.parquet"
+  mid_filename: "mid.parquet"
+  dv01_filename: "dv01.parquet"
+  signal_filename: "signal.parquet"
+  meta_filename: "meta.parquet"
+  hedge_ratio_filename: "hedge_ratios.parquet"
+
+sweep:
+  backend: "process"
+  n_workers: 6
+  chunk_size: 50
+  mode: "metrics_only"
+  keep_top_k_full: 20
+  save_top_full_dir: "runs/portfolio_grid_v1/top_full"
+
+rank:
+  primary_metrics:
+    - ["total_pnl", 1.0]
+  tie_metrics:
+    - ["max_drawdown", 1.0]
+    - ["sharpe_ratio", 0.5]

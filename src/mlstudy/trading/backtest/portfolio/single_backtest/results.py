@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .state import PortfolioActionCode, TradeCode, FairType
-
 
 @dataclass
 class PortfolioBacktestResults:
@@ -16,20 +14,20 @@ class PortfolioBacktestResults:
 
     Per-bar arrays
     --------------
-    positions     : (T, B)  bond positions at end of each bar.
+    positions     : (T, B)  instrument positions at end of each bar.
     cash          : (T,)    cash balance.
-    equity        : (T,)    total equity (cash + bond MTM + hedge MTM).
+    equity        : (T,)    total equity (cash + instrument MTM + hedge MTM).
     pnl           : (T,)    net step PnL (after execution costs).
     gross_pnl     : (T,)    gross step PnL (before execution costs).
     codes         : (T,)    int32 bar-level outcome code.
-    n_trades_bar  : (T,)    number of bond trades executed per bar.
+    n_trades_bar  : (T,)    number of instrument trades executed per bar.
     cooldown      : (T,)    remaining cooldown bars.
     hedge_positions : (T, H)  hedge instrument positions at end of each bar.
 
     Per-trade arrays (length *n_trades*)
     ------------------------------------
     tr_bar        : bar index.
-    tr_bond       : bond index.
+    tr_instrument : instrument index.
     tr_side       : +1 buy / -1 sell.
     tr_qty_req    : requested notional quantity.
     tr_qty_fill   : filled notional quantity.
@@ -39,7 +37,7 @@ class PortfolioBacktestResults:
     tr_fair_type  : 0=dec, 1=inc.
     tr_vwap       : fill VWAP.
     tr_mid        : mid price at fill time.
-    tr_cost       : bond execution cost.
+    tr_cost       : execution cost.
     tr_code       : per-trade fill code.
     tr_hedge_sizes : (n_trades, H) requested hedge qty per instrument.
     tr_hedge_vwaps : (n_trades, H) hedge fill VWAPs.
@@ -60,7 +58,7 @@ class PortfolioBacktestResults:
 
     # per-trade
     tr_bar: np.ndarray
-    tr_bond: np.ndarray
+    tr_instrument: np.ndarray
     tr_side: np.ndarray
     tr_qty_req: np.ndarray
     tr_qty_fill: np.ndarray
@@ -111,7 +109,7 @@ class PortfolioBacktestResults:
             cooldown=out[7],
             hedge_positions=out[8],
             tr_bar=out[9][:n],
-            tr_bond=out[10][:n],
+            tr_instrument=out[10][:n],
             tr_side=out[11][:n],
             tr_qty_req=out[12][:n],
             tr_qty_fill=out[13][:n],
@@ -138,7 +136,7 @@ class PortfolioBacktestResults:
     # -------------------------------------------------------------------
 
     def to_bar_df(self) -> pd.DataFrame:
-        """Per-bar DataFrame with equity/pnl + per-bond positions + hedge positions."""
+        """Per-bar DataFrame with equity/pnl + per-instrument positions + hedge positions."""
         T = len(self.equity)
         data: dict[str, np.ndarray] = {}
 
@@ -154,12 +152,13 @@ class PortfolioBacktestResults:
                 "cumulative_pnl": np.cumsum(self.pnl[:T]),
                 "cumulative_gross_pnl": np.cumsum(self.gross_pnl[:T]),
                 "code": self.codes[:T],
+                "state": self.codes[:T],
                 "n_trades": self.n_trades_bar[:T],
                 "cooldown": self.cooldown[:T],
             }
         )
 
-        # Bond positions
+        # Instrument positions
         pos = self.positions
         if pos.ndim == 2:
             for b in range(pos.shape[1]):
@@ -192,7 +191,7 @@ class PortfolioBacktestResults:
             row.update(
                 {
                     "bar": bar,
-                    "bond": int(self.tr_bond[i]),
+                    "instrument": int(self.tr_instrument[i]),
                     "side": int(self.tr_side[i]),
                     "qty_req": float(self.tr_qty_req[i]),
                     "qty_fill": float(self.tr_qty_fill[i]),

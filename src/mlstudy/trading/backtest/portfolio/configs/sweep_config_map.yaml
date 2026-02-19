@@ -1,0 +1,9 @@
+# Config map — maps short names to YAML config file paths.
+# Paths are relative to the tuning_configs/ subdirectory.
+#
+# Usage:
+#   from .utils import load_sweep_config_by_name
+#   cfg = load_sweep_config_by_name("portfolio_grid_v1")
+
+portfolio_grid_v1: "portfolio.yaml"
+portfolio_grid_debug: "portfolio_debug.yaml"

@@ -23,12 +23,12 @@ from mlstudy.trading.backtest.mean_reversion.sweep.multi_ref_results_reader impo
     MultiRefResultsReader,
     MultiRefRunData,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import (
+from mlstudy.trading.backtest.common.sweep.sweep_rank import (
     RankingPlan,
     SweepRanker,
 )
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import SweepRunResult
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResultLight, SweepScenario
+from mlstudy.trading.backtest.common.sweep.sweep_types import SweepResultLight, SweepScenario
 from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 
 

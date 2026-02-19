@@ -10,10 +10,10 @@ from typing import Optional
 
 import numpy as np
 
-from ..common.engine import ensure_f64, validate_l2_shapes
-from .config import PortfolioBacktestConfig
-from .loop import lp_portfolio_loop
-from .results import PortfolioBacktestResults
+from mlstudy.trading.backtest.common.single_backtest.engine import ensure_f64, validate_l2_shapes
+from mlstudy.trading.backtest.portfolio.configs.backtest_config import PortfolioBacktestConfig
+from mlstudy.trading.backtest.portfolio.single_backtest.loop import lp_portfolio_loop
+from mlstudy.trading.backtest.portfolio.single_backtest.results import PortfolioBacktestResults
 
 
 def _validate(
@@ -75,7 +75,7 @@ def _validate(
         )
         if T_h != T:
             raise ValueError(
-                f"hedge T={T_h} != bond T={T}"
+                f"hedge T={T_h} != instrument T={T}"
             )
         if hedge_dv01.shape != (T, H):
             raise ValueError(
@@ -130,25 +130,25 @@ def run_backtest(
     Parameters
     ----------
     bid_px, bid_sz, ask_px, ask_sz : (T, B, L)
-        L2 order book for the bond universe.
+        L2 order book for the instrument universe.
     mid_px : (T, B)
-        Bond mid prices.
+        Instrument mid prices.
     dv01 : (T, B)
         DV01 per unit par notional.
     fair_price : (T, B)
-        Model fair price per bond.
+        Model fair price per instrument.
     zscore : (T, B)
-        Z-score signal per bond.
+        Z-score signal per instrument.
     adf_p_value : (T, B)
-        ADF test p-value per bond.
+        ADF test p-value per instrument.
     tradable : (B,)
         Boolean/int tradable mask.
     pos_limits_long, pos_limits_short : (B,)
-        Position limits per bond.
+        Position limits per instrument.
     maturity : (B,) or None
-        Years to maturity per bond.
+        Years to maturity per instrument.
     issuer_bucket, maturity_bucket : (B,) or None
-        Bucket labels per bond.
+        Bucket labels per instrument.
     issuer_dv01_caps : (n_issuers,) or None
     mat_bucket_dv01_caps : (n_buckets,) or None
     hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz : (T, H, L) or None

@@ -8,16 +8,16 @@ import warnings
 import numpy as np
 import pytest
 
+from mlstudy.trading.backtest.common.sweep.sweep_build import ScenarioBuilder
 from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import (
+from mlstudy.trading.backtest.common.sweep.sweep_types import (
     SweepResultLight,
     SweepResult,
     SweepScenario,
     SweepSummary,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import ScenarioBuilder
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep import SweepExecutor
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import (
+from mlstudy.trading.backtest.common.sweep.sweep_rank import (
     RankingPlan,
     SweepRanker,
 )

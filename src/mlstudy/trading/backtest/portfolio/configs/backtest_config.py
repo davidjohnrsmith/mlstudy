@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .state import CooldownMode
+from mlstudy.trading.backtest.portfolio.single_backtest.state import CooldownMode
 
 
 @dataclass(frozen=True)

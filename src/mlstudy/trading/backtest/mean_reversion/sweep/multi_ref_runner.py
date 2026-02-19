@@ -31,7 +31,7 @@ import pandas as pd
 
 from ..configs.sweep_config import SweepConfig
 from ..configs.utils import _resolve_config
-from .sweep_rank import RankingPlan, SweepRanker
+from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan, SweepRanker
 from .sweep_runner import SweepRunResult, SweepRunner
 from ...metrics.metrics import BacktestMetrics
 

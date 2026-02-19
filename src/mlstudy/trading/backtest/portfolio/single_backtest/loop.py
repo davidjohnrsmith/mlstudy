@@ -1,20 +1,20 @@
 """
 LP-based portfolio backtest core loop.
 
-Implements a bar-by-bar backtest for a multi-bond portfolio strategy where
+Implements a bar-by-bar backtest for a multi-instrument portfolio strategy where
 trade candidates are generated from two signal-gated fair prices (risk-
 increasing vs. risk-decreasing) and an LP maximises executable alpha subject
 to DV01 / position / bucket constraints.
 
 Sign conventions
 ----------------
-- pos > 0 → long; pos < 0 → short  (per bond, in par notional units)
+- pos > 0 → long; pos < 0 → short  (per instrument, in par notional units)
 - side +1 = BUY, -1 = SELL
 - alpha_bps > 0 → profitable trade opportunity
 
 Fair price gating
 -----------------
-Two fair prices per bond:
+Two fair prices per instrument:
 
   fair_inc  active when |zscore| > z_inc AND adf_p_value < p_inc  (stricter)
   fair_dec  active when |zscore| > z_dec AND adf_p_value < p_dec  (looser)
@@ -34,7 +34,7 @@ LP formulation
 Maximise Σ alpha_i · dv01_trade_i  subject to:
   - 0 ≤ dv01_trade_i ≤ dv01_liq_cap_i   (per candidate)
   - Σ dv01_trade_i ≤ gross_dv01_cap       (total)
-  - per-bond position bounds               (long / short limits)
+  - per-instrument position bounds          (long / short limits)
   - optional issuer / maturity bucket caps
 
 L2 book execution
@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .state import (
+from mlstudy.trading.backtest.portfolio.single_backtest.state import (
     PortfolioActionCode,
     TradeCode,
     CooldownMode,
@@ -138,8 +138,8 @@ def _walk_book(px, sz, qty, max_levels, haircut):
     return filled, vwap
 
 
-def _check_bond_market_valid(bid0, ask0, mid):
-    """Return True if bid0 <= mid <= ask0 and all positive for one bond."""
+def _check_market_valid(bid0, ask0, mid):
+    """Return True if bid0 <= mid <= ask0 and all positive for one instrument."""
     if bid0 <= 0.0 or ask0 <= 0.0 or mid <= 0.0:
         return False
     if bid0 > mid or mid > ask0:
@@ -166,10 +166,10 @@ def _solve_lp(
     dv01_liq_caps,    # (K,) max dv01 fillable per candidate
     gross_dv01_cap,   # scalar: total dv01 budget
     pos_headroom,     # (K,) max dv01 increase allowed per candidate (position limits)
-    bond_indices,     # (K,) int bond index for each candidate
+    inst_indices,     # (K,) int bond index for each candidate
     sides,            # (K,) +1 buy / -1 sell
-    issuer_bucket,    # (B,) or None — issuer bucket per bond
-    maturity_bucket,  # (B,) or None — maturity bucket per bond
+    issuer_bucket,    # (B,) or None — issuer bucket per instrument
+    maturity_bucket,  # (B,) or None — maturity bucket per instrument
     issuer_dv01_caps, # (n_issuers,) or None
     mat_bucket_dv01_caps,  # (n_buckets,) or None
     current_issuer_dv01,   # (n_issuers,) current signed dv01 per issuer
@@ -211,7 +211,7 @@ def _solve_lp(
             for iss in range(n_issuers):
                 row = np.zeros(K, dtype=np.float64)
                 for k in range(K):
-                    b_idx = bond_indices[k]
+                    b_idx = inst_indices[k]
                     if issuer_bucket[b_idx] == iss:
                         row[k] = sides[k]  # signed: buy adds, sell subtracts
                 cap = issuer_dv01_caps[iss]
@@ -229,7 +229,7 @@ def _solve_lp(
             for bkt in range(n_buckets):
                 row = np.zeros(K, dtype=np.float64)
                 for k in range(K):
-                    b_idx = bond_indices[k]
+                    b_idx = inst_indices[k]
                     if maturity_bucket[b_idx] == bkt:
                         row[k] = sides[k]
                 cap = mat_bucket_dv01_caps[bkt]
@@ -282,12 +282,12 @@ def lp_portfolio_loop(
     dv01,               # (T, B)    dv01 per unit notional
     # -- Signals --
     fair_price,         # (T, B)    predicted fair mid
-    zscore,             # (T, B)    z-score per bond
-    adf_p_value,        # (T, B)    ADF p-value per bond
+    zscore,             # (T, B)    z-score per instrument
+    adf_p_value,        # (T, B)    ADF p-value per instrument
     # -- Static meta --
     tradable,           # (B,)      bool/int tradable mask
-    pos_limits_long,    # (B,)      max long notional per bond
-    pos_limits_short,   # (B,)      max short notional per bond (negative)
+    pos_limits_long,    # (B,)      max long notional per instrument
+    pos_limits_short,   # (B,)      max short notional per instrument (negative)
     # -- Optional meta (can be None) --
     maturity,           # (B,) or None  years to maturity
     issuer_bucket,      # (B,) or None  int issuer label
@@ -334,7 +334,7 @@ def lp_portfolio_loop(
     Iterates bar-by-bar through *T* timesteps.  At each bar:
 
     1. Gate fair prices by (zscore, adf_p_value) thresholds.
-    2. Classify each bond's trade direction as risk-increasing or -decreasing.
+    2. Classify each instrument's trade direction as risk-increasing or -decreasing.
     3. Compute executable alpha; filter by thresholds and eligibility.
     4. Rank by alpha, keep top K candidates.
     5. Solve LP (or greedy fallback) for optimal DV01 allocation.
@@ -348,25 +348,25 @@ def lp_portfolio_loop(
     mid_px : (T, B)
         Mid prices for MTM and cost calculation.
     dv01 : (T, B)
-        DV01 per unit par notional per bond.
+        DV01 per unit par notional per instrument.
     fair_price : (T, B)
-        Model fair price per bond.
+        Model fair price per instrument.
     zscore : (T, B)
-        Z-score signal per bond.
+        Z-score signal per instrument.
     adf_p_value : (T, B)
-        ADF test p-value per bond.
+        ADF test p-value per instrument.
     tradable : (B,)
         Boolean/int mask; 1 = tradable.
     pos_limits_long : (B,)
-        Maximum long notional per bond (positive).
+        Maximum long notional per instrument (positive).
     pos_limits_short : (B,)
-        Maximum short notional per bond (negative number).
+        Maximum short notional per instrument (negative number).
     maturity : (B,) or None
-        Years to maturity per bond.
+        Years to maturity per instrument.
     issuer_bucket : (B,) or None
-        Integer issuer label per bond.
+        Integer issuer label per instrument.
     maturity_bucket : (B,) or None
-        Integer maturity bucket label per bond.
+        Integer maturity bucket label per instrument.
     gross_dv01_cap : float
         Maximum total DV01 tradeable per bar.
     issuer_dv01_caps : (n_issuers,) or None
@@ -427,7 +427,7 @@ def lp_portfolio_loop(
     # Upper bound: at most top_k trades per bar.
     max_trades = T * min(B, max(top_k, 1))
     tr_bar = np.full(max_trades, -1, dtype=np.int64)
-    tr_bond = np.full(max_trades, -1, dtype=np.int32)
+    tr_instrument = np.full(max_trades, -1, dtype=np.int32)
     tr_side = np.zeros(max_trades, dtype=np.int32)
     tr_qty_req = np.zeros(max_trades, dtype=np.float64)
     tr_qty_fill = np.zeros(max_trades, dtype=np.float64)
@@ -450,7 +450,7 @@ def lp_portfolio_loop(
     out_hedge_pos = np.zeros((T, max(H, 1)), dtype=np.float64)
 
     # -- Mutable state --
-    pos = np.zeros(B, dtype=np.float64)     # current notional position per bond
+    pos = np.zeros(B, dtype=np.float64)     # current notional position per instrument
     hedge_pos = np.zeros(max(H, 1), dtype=np.float64)  # current hedge positions
     cash = float(initial_capital)
     cooldown_remaining = 0
@@ -507,7 +507,7 @@ def lp_portfolio_loop(
             # Step 2-5: Build candidates
             # ==========================================================
             # Candidate arrays (pre-allocate to B, trim later)
-            cand_bond = np.empty(B, dtype=np.int32)
+            cand_inst = np.empty(B, dtype=np.int32)
             cand_side = np.empty(B, dtype=np.int32)
             cand_alpha = np.empty(B, dtype=np.float64)
             cand_fair_type = np.empty(B, dtype=np.int32)
@@ -529,7 +529,7 @@ def lp_portfolio_loop(
                 bid0 = bid_px[t, b, 0]
                 ask0 = ask_px[t, b, 0]
                 mid_b = mid_px[t, b]
-                if not _check_bond_market_valid(bid0, ask0, mid_b):
+                if not _check_market_valid(bid0, ask0, mid_b):
                     continue
 
                 fair_b = fair_price[t, b]
@@ -537,7 +537,7 @@ def lp_portfolio_loop(
                     continue
 
                 # -- Determine candidate directions --
-                # Check both BUY and SELL opportunities for this bond
+                # Check both BUY and SELL opportunities for this instrument
                 for side in (1, -1):
                     # Risk classification
                     if side == 1:  # BUY
@@ -614,7 +614,7 @@ def lp_portfolio_loop(
                     dv01_liq = total_avail * dv01_b
 
                     # Store candidate
-                    cand_bond[n_cand] = b
+                    cand_inst[n_cand] = b
                     cand_side[n_cand] = side
                     cand_alpha[n_cand] = alpha_bps
                     cand_fair_type[n_cand] = fair_tp
@@ -629,7 +629,7 @@ def lp_portfolio_loop(
                 code = _NO_CANDIDATES if not in_cooldown else code
             else:
                 # Trim to actual candidate count
-                c_bond = cand_bond[:n_cand]
+                c_inst = cand_inst[:n_cand]
                 c_side = cand_side[:n_cand]
                 c_alpha = cand_alpha[:n_cand]
                 c_fair_type = cand_fair_type[:n_cand]
@@ -639,7 +639,7 @@ def lp_portfolio_loop(
                 if n_cand > top_k:
                     # Keep top_k by descending alpha
                     top_idx = np.argsort(-c_alpha)[:top_k]
-                    c_bond = c_bond[top_idx]
+                    c_inst = c_inst[top_idx]
                     c_side = c_side[top_idx]
                     c_alpha = c_alpha[top_idx]
                     c_fair_type = c_fair_type[top_idx]
@@ -672,7 +672,7 @@ def lp_portfolio_loop(
                     c_dv01_liq,
                     gross_dv01_cap,
                     c_pos_hr,
-                    c_bond,
+                    c_inst,
                     c_side,
                     issuer_bucket,
                     maturity_bucket,
@@ -689,7 +689,7 @@ def lp_portfolio_loop(
                 any_partial = False
                 any_failed = False
 
-                # Accumulate target hedge position across all bond fills
+                # Accumulate target hedge position across all instrument fills
                 if has_hedge:
                     hedge_target = hedge_pos.copy()
 
@@ -698,7 +698,7 @@ def lp_portfolio_loop(
                     if raw_dv01 < 1e-15:
                         continue
 
-                    b_idx = int(c_bond[k])
+                    b_idx = int(c_inst[k])
                     side_k = int(c_side[k])
                     dv01_b = dv01[t, b_idx]
 
@@ -748,7 +748,7 @@ def lp_portfolio_loop(
                         exec_cost = abs(vwap - mid_b) * filled if filled > 1e-15 else 0.0
 
                         tr_bar[n_trades_total] = t
-                        tr_bond[n_trades_total] = b_idx
+                        tr_instrument[n_trades_total] = b_idx
                         tr_side[n_trades_total] = side_k
                         tr_qty_req[n_trades_total] = qty_req
                         tr_qty_fill[n_trades_total] = filled
@@ -879,7 +879,7 @@ def lp_portfolio_loop(
         out_hedge_pos,      # 8: (T, H)
         # Per-trade arrays (17)
         tr_bar,             # 9:  (max_trades,)
-        tr_bond,            # 10: (max_trades,)
+        tr_instrument,            # 10: (max_trades,)
         tr_side,            # 11: (max_trades,)
         tr_qty_req,         # 12: (max_trades,)
         tr_qty_fill,        # 13: (max_trades,)

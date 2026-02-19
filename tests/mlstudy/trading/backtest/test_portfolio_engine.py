@@ -5,13 +5,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mlstudy.trading.backtest.common.engine import (
+from mlstudy.trading.backtest.common.single_backtest.engine import (
     ensure_f64,
     validate_l2_shapes,
 )
-from mlstudy.trading.backtest.portfolio.config import PortfolioBacktestConfig
-from mlstudy.trading.backtest.portfolio.engine import run_backtest, _validate
-from mlstudy.trading.backtest.portfolio.results import PortfolioBacktestResults
+from mlstudy.trading.backtest.portfolio.configs.backtest_config import PortfolioBacktestConfig
+from mlstudy.trading.backtest.portfolio.single_backtest.engine import run_backtest, _validate
+from mlstudy.trading.backtest.portfolio.single_backtest.results import PortfolioBacktestResults
 
 
 # =========================================================================
@@ -276,7 +276,7 @@ class TestResults:
         df = res.trade_df
         assert len(df) == res.n_trades
         assert "bar" in df.columns
-        assert "bond" in df.columns
+        assert "instrument" in df.columns
         assert "side" in df.columns
         assert "vwap" in df.columns
 

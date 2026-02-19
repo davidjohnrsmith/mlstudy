@@ -1,3 +1,8 @@
+"""Strategy-agnostic sweep ranking.
+
+Provides multi-stage weighted-rank scoring for sweep results.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -36,7 +41,7 @@ class SweepRanker:
             j = i
             while j < n and values[indexed[j]] == values[indexed[i]]:
                 j += 1
-            avg_rank = (i + 1 + j) / 2.0  # 1-based average
+            avg_rank = (i + 1 + j) / 2.0
             for k in range(i, j):
                 ranks[indexed[k]] = avg_rank
             i = j
@@ -81,7 +86,7 @@ class SweepRanker:
         return scores
 
     @staticmethod
-    def  rank_scenarios(
+    def rank_scenarios(
         results: list[SweepResultLight],
         plan: RankingPlan | None = None,
     ) -> list[SweepResultLight]:
@@ -156,8 +161,6 @@ class SweepRanker:
         """Rank DataFrame rows using the multi-stage weighted-rank plan.
 
         Returns a copy sorted best-first with a ``rank`` column (1-based).
-        Expects metric columns and param columns to be present in *df*.
-        Silently skips features whose columns are missing from *df*.
         """
         if df.empty:
             out = df.copy()

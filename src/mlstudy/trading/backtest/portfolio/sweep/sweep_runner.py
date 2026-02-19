@@ -2,16 +2,18 @@
 
 Usage from a script or notebook::
 
-    from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import SweepRunner
+    from mlstudy.trading.backtest.portfolio.sweep.sweep_runner import PortfolioSweepRunner
 
     # Option A: by YAML path
-    summary = SweepRunner.run_sweep_from_config("configs/mr_grid_v1.yaml")
+    summary = PortfolioSweepRunner.run_sweep_from_config("configs/portfolio_grid_v1.yaml")
 
     # Option B: by config-map name
-    summary = SweepRunner.run_sweep_from_config("mr_grid_v1")
+    summary = PortfolioSweepRunner.run_sweep_from_config("portfolio_grid_v1")
 
     # Option C: with market data already loaded
-    summary = SweepRunner.run_sweep_from_config("mr_grid_v1", market_data=my_market_data)
+    summary = PortfolioSweepRunner.run_sweep_from_config(
+        "portfolio_grid_v1", market_data=my_market_data
+    )
 
 The function returns a ``SweepRunResult`` that bundles:
 - the parsed config
@@ -23,29 +25,41 @@ The function returns a ``SweepRunResult`` that bundles:
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
+from ..configs.sweep_config import PortfolioSweepConfig
 from ..configs.utils import _resolve_config
-from .sweep_persist import SweepPersister
+from .sweep import PortfolioSweepExecutor
+from .sweep_persist import PortfolioSweepPersister
 from ...common.sweep.sweep_build import ScenarioBuilder
+from mlstudy.trading.backtest.common.sweep.sweep_types import (
+    SweepResult,
+    SweepResultLight,
+    SweepSummary,
+)
 
 logger = logging.getLogger(__name__)
 
-import pandas as pd
-
-from .sweep import SweepExecutor
-from ..configs.sweep_config import SweepConfig
-from mlstudy.trading.backtest.common.sweep.sweep_types import SweepResultLight, SweepResult, SweepSummary
+_REQUIRED_KEYS = {
+    "bid_px", "bid_sz", "ask_px", "ask_sz", "mid_px",
+    "dv01", "fair_price", "zscore", "adf_p_value",
+    "tradable", "pos_limits_long", "pos_limits_short",
+    "hedge_bid_px", "hedge_bid_sz", "hedge_ask_px", "hedge_ask_sz",
+    "hedge_mid_px", "hedge_dv01", "hedge_ratios",
+}
 
 
 @dataclass
 class SweepRunResult:
-    """Everything produced by a single sweep run."""
+    """Everything produced by a single portfolio sweep run."""
 
-    config: SweepConfig
+    config: PortfolioSweepConfig
     raw: list[SweepResult] | list[SweepResultLight] | SweepSummary
     table: pd.DataFrame
     output_dir: Path | None
@@ -67,15 +81,15 @@ class SweepRunResult:
         return None
 
 
-class SweepRunner:
+class PortfolioSweepRunner:
     @staticmethod
     def run_sweep_from_config(
-        config: str | Path | SweepConfig,
+        config: str | Path | PortfolioSweepConfig,
         *,
         market_data: dict[str, Any] | None = None,
         data_path: str | Path | None = None,
         instrument_ids: list[str] | None = None,
-        ref_instrument_id: str | None = None,
+        hedge_ids: list[str] | None = None,
         output_dir: str | Path | None = None,
         save: bool = True,
         config_map_path: str | Path | None = None,
@@ -85,28 +99,25 @@ class SweepRunner:
 
         Parameters
         ----------
-        config : str, Path, or SweepConfig
+        config : str, Path, or PortfolioSweepConfig
             One of:
-            - A ``SweepConfig`` object (already loaded).
+            - A ``PortfolioSweepConfig`` object (already loaded).
             - A path to a YAML config file (contains ``/`` or ends with ``.yaml``).
             - A config-map name (looked up via ``sweep_config_map.yaml``).
         market_data : dict, optional
             Pre-loaded market data arrays.  Keys must match ``run_sweep``
-            signature: ``bid_px``, ``bid_sz``, ``ask_px``, ``ask_sz``,
-            ``mid_px``, ``dv01``, ``zscore``, ``expected_yield_pnl_bps``,
-            ``package_yield_bps``, ``hedge_ratios``.
-            If *None*, you must pass them as ``**market_data_kwargs``.
+            signature.  If *None*, auto-loaded from the config ``data``
+            section.
         data_path : str or Path, optional
             Directory containing parquet files.  Passed to
-            ``BacktestDataLoader.load()`` when the config has a ``data``
-            section.  Use this to keep the YAML config platform-independent
-            and supply the data directory at runtime.
+            ``PortfolioDataLoader.load()`` when the config has a ``data``
+            section.
         instrument_ids : list[str], optional
-            Ordered list of instrument IDs.  Passed to
-            ``BacktestDataLoader.load()`` when auto-loading market data.
-        ref_instrument_id : str, optional
-            Reference instrument ID for signal filtering.  Passed to
-            ``BacktestDataLoader.load()`` when auto-loading market data.
+            Ordered list of trading instrument IDs.  Passed to
+            ``PortfolioDataLoader.load()`` when auto-loading market data.
+        hedge_ids : list[str], optional
+            Ordered list of hedge instrument IDs.  Passed to
+            ``PortfolioDataLoader.load()`` when auto-loading market data.
         output_dir : str or Path, optional
             Directory to save results.  Defaults to ``runs/<grid_name>/``.
         save : bool
@@ -121,8 +132,6 @@ class SweepRunner:
         -------
         SweepRunResult
         """
-        import time
-
         # --- 1. Load config -------------------------------------------------------
         cfg = _resolve_config(config, config_map_path)
 
@@ -130,31 +139,13 @@ class SweepRunner:
         md = dict(market_data or {})
         md.update(market_data_kwargs)
         if not md and cfg.data_loader is not None:
-            if ref_instrument_id is None:
-                raise ValueError(
-                    "ref_instrument_id must be provided "
-                    "when auto-loading market data from the config data section."
-                )
             logger.info("Loading market data from config data section")
             loaded = cfg.data_loader.load(
                 instrument_ids=instrument_ids,
-                ref_instrument_id=ref_instrument_id,
+                hedge_ids=hedge_ids,
                 data_path=data_path,
             )
             md = loaded.to_dict()
-
-            # When instruments were auto-detected, update ref_leg_idx
-            # to match the loaded instrument order.
-            if instrument_ids is None:
-                import dataclasses
-                new_ref_idx = loaded.instrument_ids.index(ref_instrument_id)
-                cfg = dataclasses.replace(
-                    cfg,
-                    base_config=dataclasses.replace(
-                        cfg.base_config,
-                        ref_leg_idx=new_ref_idx,
-                    ),
-                )
         if not md:
             raise ValueError(
                 "No market data provided.  Pass market_data=dict(...), "
@@ -162,11 +153,6 @@ class SweepRunner:
                 "section to the YAML config."
             )
 
-        _REQUIRED_KEYS = {
-            "bid_px", "bid_sz", "ask_px", "ask_sz", "mid_px",
-            "dv01", "zscore", "expected_yield_pnl_bps",
-            "package_yield_bps", "hedge_ratios",
-        }
         missing = _REQUIRED_KEYS - set(md)
         if missing:
             raise ValueError(f"Missing market data keys: {sorted(missing)}")
@@ -180,22 +166,23 @@ class SweepRunner:
 
         # --- 4. Run sweep ---------------------------------------------------------
         t0 = time.perf_counter()
-        raw = SweepExecutor.run_sweep(scenarios, **md, **cfg.sweep_kwargs)
+        raw = PortfolioSweepExecutor.run_sweep(scenarios, **md, **cfg.sweep_kwargs)
         elapsed = time.perf_counter() - t0
 
         # --- 5. Build summary table -----------------------------------------------
         if isinstance(raw, SweepSummary):
-            table = SweepExecutor.summary_table(raw.all_metrics)
+            table = PortfolioSweepExecutor.summary_table(raw.all_metrics)
         else:
-            table = SweepExecutor.summary_table(raw)
+            table = PortfolioSweepExecutor.summary_table(raw)
 
         # --- 6. Persist results ---------------------------------------------------
         resolved_output_dir = None
         if save:
-            resolved_output_dir = SweepRunner.resolve_output_dir(output_dir, cfg)
-            SweepPersister.persist(
+            resolved_output_dir = PortfolioSweepRunner.resolve_output_dir(
+                output_dir, cfg,
+            )
+            PortfolioSweepPersister.persist(
                 resolved_output_dir, cfg, raw, table, len(scenarios), elapsed,
-                zscore=md.get("zscore"),
             )
 
         return SweepRunResult(
@@ -208,7 +195,7 @@ class SweepRunner:
     @staticmethod
     def resolve_output_dir(
         output_dir: str | Path | None,
-        cfg: SweepConfig,
+        cfg: PortfolioSweepConfig,
     ) -> Path:
         if output_dir is not None:
             d = Path(output_dir)

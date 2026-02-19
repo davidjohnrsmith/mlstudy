@@ -1,21 +1,19 @@
-"""Load sweep configuration from YAML files.
+"""Load sweep configuration from YAML files for portfolio backtests.
 
-A YAML config fully specifies everything needed to call ``run_sweep``:
+A YAML config fully specifies everything needed to call a portfolio sweep:
 base config, parameter grid, sweep execution options, and ranking plan.
 
 Multiple named configs are supported via a config map — a YAML file that
-maps short names to YAML file paths.  This lets you keep one map and
-switch between tuning runs by name.
+maps short names to YAML file paths.
 
 Typical usage::
 
-    cfg = load_sweep_config("configs/mr_grid_v1.yaml")
-    scenarios = make_scenarios(cfg.base_config, cfg.grid, name_prefix=cfg.grid_name)
-    results = run_sweep(scenarios, **market_data, **cfg.sweep_kwargs)
+    cfg = load_sweep_config("configs/portfolio_grid_v1.yaml")
+    # use cfg.base_config, cfg.grid, cfg.sweep_kwargs, etc.
 
 Or with the config map::
 
-    cfg = load_sweep_config_by_name("mr_grid_v1")
+    cfg = load_sweep_config_by_name("portfolio_grid_v1")
 """
 
 from __future__ import annotations
@@ -26,30 +24,30 @@ from typing import Any, Sequence
 
 import yaml
 
-from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
-from mlstudy.trading.backtest.mean_reversion.data.data_loader import BacktestDataLoader
-from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan
+from .backtest_config import PortfolioBacktestConfig
+from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan  # noqa: F401
+from mlstudy.trading.backtest.portfolio.data.data_loader import PortfolioDataLoader
 
 
 @dataclass(frozen=True)
-class SweepConfig:
+class PortfolioSweepConfig:
     """Parsed sweep configuration from a YAML file."""
 
     grid_name: str
-    base_config: MRBacktestConfig
+    base_config: PortfolioBacktestConfig
     grid: dict[str, Sequence]
     sweep_kwargs: dict[str, Any]
-    ranking_plan: RankingPlan | None
-    data_loader: BacktestDataLoader | None = None  # BacktestDataLoader, if ``data`` section present
+    ranking_plan: RankingPlan | None = None
+    data_loader: PortfolioDataLoader | None = None
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _build_base_config(raw: dict[str, Any]) -> MRBacktestConfig:
-    """Construct ``MRBacktestConfig`` from the ``base_config`` YAML section."""
-    return MRBacktestConfig(**raw)
+def _build_base_config(raw: dict[str, Any]) -> PortfolioBacktestConfig:
+    """Construct ``PortfolioBacktestConfig`` from the ``base_config`` YAML section."""
+    return PortfolioBacktestConfig(**raw)
 
 
 def _build_grid(raw: dict[str, list]) -> dict[str, Sequence]:
@@ -65,13 +63,11 @@ def _build_ranking_plan(raw: dict[str, Any] | None) -> RankingPlan | None:
 
     Supports two styles:
 
-    1. Explicit weights (recommended)::
+    1. Explicit weights::
 
         rank:
           primary_metrics:
             - ["total_pnl", 1.0]
-          tie_metrics:
-            - ["max_drawdown", 0.5]
 
     2. Simple list (weight defaults to 1.0)::
 
@@ -109,7 +105,7 @@ def _build_sweep_kwargs(
     raw: dict[str, Any] | None,
     ranking_plan: RankingPlan | None,
 ) -> dict[str, Any]:
-    """Build keyword arguments for ``run_sweep`` from the ``sweep`` YAML section."""
+    """Build keyword arguments for sweep from the ``sweep`` YAML section."""
     kwargs: dict[str, Any] = {}
     if raw is None:
         return kwargs
@@ -132,24 +128,21 @@ def _build_sweep_kwargs(
     return kwargs
 
 
-def _build_data_loader(raw: dict[str, Any] | None) -> Any | None:
-    """Construct ``BacktestDataLoader`` from the ``data`` YAML section.
+def _build_data_loader(raw: dict[str, Any] | None) -> PortfolioDataLoader | None:
+    """Construct ``PortfolioDataLoader`` from the ``data`` YAML section.
 
     Returns *None* when no ``data`` section is present.
     """
     if raw is None:
         return None
-
-
-
-    return BacktestDataLoader(**raw)
+    return PortfolioDataLoader(**raw)
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def load_sweep_config(path: str | Path) -> SweepConfig:
+def load_sweep_config(path: str | Path) -> PortfolioSweepConfig:
     """Load a sweep configuration from a YAML file.
 
     Parameters
@@ -159,8 +152,7 @@ def load_sweep_config(path: str | Path) -> SweepConfig:
 
     Returns
     -------
-    SweepConfig
-        Parsed configuration ready for use with ``make_scenarios`` and ``run_sweep``.
+    PortfolioSweepConfig
     """
     path = Path(path)
     with open(path, "r") as f:
@@ -174,10 +166,9 @@ def load_sweep_config(path: str | Path) -> SweepConfig:
     grid = _build_grid(raw.get("grid", {}))
     ranking_plan = _build_ranking_plan(raw.get("rank"))
     sweep_kwargs = _build_sweep_kwargs(raw.get("sweep"), ranking_plan)
-
     data_loader = _build_data_loader(raw.get("data"))
 
-    return SweepConfig(
+    return PortfolioSweepConfig(
         grid_name=grid_name,
         base_config=base_config,
         grid=grid,
@@ -185,9 +176,3 @@ def load_sweep_config(path: str | Path) -> SweepConfig:
         ranking_plan=ranking_plan,
         data_loader=data_loader,
     )
-
-
-
-
-
-

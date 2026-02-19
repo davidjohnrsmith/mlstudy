@@ -132,11 +132,17 @@ def generate_parquets(cfg: GenConfig) -> None:
     book_df.to_parquet(cfg.out_dir / "book.parquet", index=False)
 
     # ---- Signal (for ALL instruments) --------------------------------------------
-    # If your loader currently filters to one ref instrument, it can still do so;
-    # but this dataset now supports switching ref instruments without regenerating.
 
     signal_frames = []
+
+    # horizon in bars for "1 day ahead" forecast.
+    # If your bar is 5min, 1 day ≈ 288; if unknown, pick something stable.
+    horizon = getattr(cfg, "fair_horizon_bars", None)
+    if horizon is None:
+        horizon = min(288, max(1, T // 5))
+
     for j, inst in enumerate(instruments):
+        # --- z-score AR-ish process ---
         z = rng.normal(0, 1.0, size=T)
         for t in range(1, T):
             z[t] = 0.92 * z[t - 1] + 0.35 * z[t]
@@ -147,6 +153,34 @@ def generate_parquets(cfg: GenConfig) -> None:
         expected_yield_pnl_bps = (-0.8 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
         package_yield_bps = (0.5 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
 
+        # --- NEW: simulate a mid price and a 1-day ahead fair_price forecast ---
+        # mid price random walk around a level; make instruments differ slightly
+        mid0 = 100.0 + 2.0 * j + rng.normal(0, 1.0)
+        mid = np.empty(T, dtype=np.float64)
+        mid[0] = mid0
+        for t in range(1, T):
+            mid[t] = mid[t - 1] + rng.normal(0, 0.03)  # small drift/vol
+
+        # create fair = future mid (shifted) + forecast noise
+        fair_price = np.empty(T, dtype=np.float64)
+        if horizon < T:
+            fair_price[:-horizon] = mid[horizon:]
+            fair_price[-horizon:] = mid[-1]  # last part: hold flat
+        else:
+            fair_price[:] = mid[-1]
+
+        # Add model noise (prediction error)
+        fair_price += rng.normal(0, 0.05, size=T)
+
+        # --- NEW: adf p-value regime simulation ---
+        # 70% mean-reverting regime (small p), 30% non-stationary (large p)
+        stable = rng.random(T) < 0.7
+        adf_p_value = np.where(
+            stable,
+            rng.uniform(0.001, 0.08, size=T),  # "passes" typical p-threshold
+            rng.uniform(0.12, 0.90, size=T),  # "fails" ADF gate
+        ).astype(np.float64)
+
         signal_frames.append(
             pd.DataFrame(
                 {
@@ -155,6 +189,9 @@ def generate_parquets(cfg: GenConfig) -> None:
                     "zscore": z.astype(np.float64),
                     "expected_yield_pnl_bps": expected_yield_pnl_bps,
                     "package_yield_bps": package_yield_bps,
+                    # NEW columns
+                    "fair_price": fair_price,
+                    "adf_p_value": adf_p_value,
                 }
             )
         )

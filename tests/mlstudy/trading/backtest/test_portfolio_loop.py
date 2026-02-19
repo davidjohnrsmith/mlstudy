@@ -5,19 +5,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mlstudy.trading.backtest.portfolio.loop import (
+from mlstudy.trading.backtest.portfolio.single_backtest.loop import (
     lp_portfolio_loop,
     _walk_book,
-    _check_bond_market_valid,
+    _check_market_valid,
     _round_qty_trade,
     _solve_lp,
-    HAS_SCIPY,
 )
-from mlstudy.trading.backtest.portfolio.state import (
+from mlstudy.trading.backtest.portfolio.single_backtest.state import (
     PortfolioActionCode,
-    TradeCode,
     CooldownMode,
-    FairType,
 )
 
 
@@ -105,15 +102,15 @@ class TestWalkBook:
         assert vwap == pytest.approx(0.0)
 
 
-class TestCheckBondMarketValid:
+class TestCheckMarketValid:
     def test_valid(self):
-        assert _check_bond_market_valid(99.0, 101.0, 100.0) is True
+        assert _check_market_valid(99.0, 101.0, 100.0) is True
 
     def test_crossed(self):
-        assert _check_bond_market_valid(101.0, 99.0, 100.0) is False
+        assert _check_market_valid(101.0, 99.0, 100.0) is False
 
     def test_zero_price(self):
-        assert _check_bond_market_valid(0.0, 101.0, 100.0) is False
+        assert _check_market_valid(0.0, 101.0, 100.0) is False
 
 
 class TestRoundDv01Trade:
@@ -410,14 +407,14 @@ class TestPositionLimits:
 
 class TestNonTradable:
     def test_non_tradable_skipped(self):
-        """Non-tradable bonds should never appear in trades."""
+        """Non-tradable instruments should never appear in trades."""
         T, B = 3, 3
         bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, spread_bps=5.0)
         dv01 = np.full((T, B), 0.01)
         fair = mid_px + 1.0
         zscore = np.full((T, B), 3.0)
         adf_p = np.full((T, B), 0.01)
-        tradable = np.array([1, 0, 1], dtype=np.int32)  # bond 1 not tradable
+        tradable = np.array([1, 0, 1], dtype=np.int32)  # instrument 1 not tradable
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
         params = _default_params()
@@ -430,9 +427,9 @@ class TestNonTradable:
             **params,
         )
         n_trades = result[26]
-        tr_bond = result[10]
+        tr_instrument = result[10]
         for i in range(n_trades):
-            assert tr_bond[i] != 1  # bond 1 should never be traded
+            assert tr_instrument[i] != 1  # instrument 1 should never be traded
 
 
 class TestBookkeeping:
@@ -521,7 +518,7 @@ def _make_hedge_market(T, H, L=3, mid_base=100.0, spread_bps=10.0):
 
 
 class TestHedgeExecution:
-    """Bond buy triggers opposite hedge trades."""
+    """Instrument buy triggers opposite hedge trades."""
 
     def test_buy_triggers_hedge_sell(self):
         T, B, H = 3, 1, 1
@@ -556,7 +553,7 @@ class TestHedgeExecution:
         n_trades = result[26]
         assert n_trades > 0
         out_hedge_pos = result[8]
-        # Bond buy with negative hedge_ratio → hedge sells → hedge_pos < 0
+        # Instrument buy with negative hedge_ratio → hedge sells → hedge_pos < 0
         assert out_hedge_pos[0, 0] < -1e-15
 
 
@@ -612,7 +609,7 @@ class TestHedgeCostInEquity:
 
 
 class TestHedgeMtmInEquity:
-    """Equity includes hedge_pos * hedge_mid_px."""
+    """Equity includes instrument_pos * mid_px + hedge_pos * hedge_mid_px."""
 
     def test_hedge_mtm_affects_equity(self):
         T, B, H = 1, 1, 1
@@ -645,13 +642,13 @@ class TestHedgeMtmInEquity:
         )
         equity = result[2][0]
         cash = result[1][0]
-        bond_pos = result[0][0]
+        inst_pos = result[0][0]
         hedge_pos_out = result[8][0]
 
-        # Verify equity = cash + bond_mtm + hedge_mtm
+        # Verify equity = cash + instrument_mtm + hedge_mtm
         expected_equity = cash
         for b in range(B):
-            expected_equity += bond_pos[b] * mid_px[0, b]
+            expected_equity += inst_pos[b] * mid_px[0, b]
         for h in range(H):
             expected_equity += hedge_pos_out[h] * h_mid[0, h]
         assert equity == pytest.approx(expected_equity, abs=1e-6)
@@ -761,6 +758,6 @@ class TestHedgePartialFill:
         assert n_trades > 0
         tr_hedge_fills = result[24]
         # Hedge should be partially filled (limited by book size)
-        # Bond fill was large but hedge book only had 3.0 total
+        # Instrument fill was large but hedge book only had 3.0 total
         assert abs(tr_hedge_fills[0, 0]) > 0  # some fill
         assert abs(tr_hedge_fills[0, 0]) <= 3.0 + 1e-10  # capped by book

@@ -1,24 +1,22 @@
-"""Mean-reversion sweep executor.
+"""Portfolio sweep executor.
 
 Uses ``common.sweep.sweep_dispatch`` for parallel execution and
-``common.sweep.sweep_persist`` (via ``SweepPersister``) for saving.
+``common.sweep.sweep_persist`` (via ``PortfolioSweepPersister``) for saving.
 """
 
 from __future__ import annotations
 
-import warnings
 import os
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from mlstudy.trading.backtest.metrics.metrics_calculator import MetricsCalculator
-from mlstudy.trading.backtest.mean_reversion.single_backtest.engine import run_backtest
+from mlstudy.trading.backtest.portfolio.single_backtest.engine import run_backtest
 from mlstudy.trading.backtest.common.sweep.sweep_dispatch import dispatch
 from mlstudy.trading.backtest.common.sweep.sweep_persist import summary_table
-from .sweep_persist import SweepPersister
+from .sweep_persist import PortfolioSweepPersister
 from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan, SweepRanker
 from mlstudy.trading.backtest.common.sweep.sweep_types import (
     SweepResultLight,
@@ -33,7 +31,7 @@ from mlstudy.trading.backtest.common.sweep.sweep_types import (
 # run-one callback for dispatch
 # ---------------------------------------------------------------------------
 
-def _run_one_mr(
+def _run_one_portfolio(
     scenario_idx: int,
     scenario: SweepScenario,
     market_data: dict,
@@ -41,7 +39,9 @@ def _run_one_mr(
 ) -> SweepResultLight | SweepResult:
     try:
         res = run_backtest(cfg=scenario.cfg, **market_data)
-        metrics = MetricsCalculator(res.bar_df, res.trade_df).compute_all()
+        # Portfolio trade_df uses per-fill format (not round-trip), so we
+        # pass None to skip trade-level metrics and compute equity-only.
+        metrics = MetricsCalculator(res.bar_df, None).compute_equity()
 
         if mode == "metrics_only":
             return SweepResultLight(
@@ -61,27 +61,49 @@ def _run_one_mr(
 
 
 # ---------------------------------------------------------------------------
-# SweepExecutor
+# PortfolioSweepExecutor
 # ---------------------------------------------------------------------------
 
 
-class SweepExecutor:
+class PortfolioSweepExecutor:
     @staticmethod
     def run_sweep(
         scenarios: list[SweepScenario],
         *,
+        # Instrument market L2
         bid_px,
         bid_sz,
         ask_px,
         ask_sz,
         mid_px,
+        # Risk
         dv01,
+        # Signals
+        fair_price,
         zscore,
-        expected_yield_pnl_bps,
-        package_yield_bps,
-        hedge_ratios,
+        adf_p_value,
+        # Static meta
+        tradable,
+        pos_limits_long,
+        pos_limits_short,
+        # Optional meta
+        maturity=None,
+        issuer_bucket=None,
+        maturity_bucket=None,
+        # Optional bucket caps
+        issuer_dv01_caps=None,
+        mat_bucket_dv01_caps=None,
+        # Hedge arrays (all-or-nothing)
+        hedge_bid_px=None,
+        hedge_bid_sz=None,
+        hedge_ask_px=None,
+        hedge_ask_sz=None,
+        hedge_mid_px=None,
+        hedge_dv01=None,
+        hedge_ratios=None,
+        # Optional context
         datetimes=None,
-        parallel: bool = False,
+        # Sweep control
         backend: str = "serial",
         n_workers: int | None = None,
         chunk_size: int | None = None,
@@ -90,28 +112,64 @@ class SweepExecutor:
         save_top_full_dir: str | Path | None = None,
         ranking_plan: RankingPlan | None = None,
     ) -> list[SweepResult] | list[SweepResultLight] | SweepSummary:
-        if parallel and backend == "serial":
-            warnings.warn(
-                "parallel=True is deprecated; use backend='thread'",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            backend = "thread"
+        """Run a parameter sweep over portfolio backtest scenarios.
 
-        market_data = dict(
+        Parameters
+        ----------
+        scenarios : list[SweepScenario]
+            Scenarios built via ``ScenarioBuilder.make_scenarios``.
+        bid_px, bid_sz, ask_px, ask_sz : (T, B, L)
+            Instrument L2 order book.
+        mid_px : (T, B)
+        dv01 : (T, B)
+        fair_price : (T, B)
+        zscore : (T, B)
+        adf_p_value : (T, B)
+        tradable : (B,)
+        pos_limits_long, pos_limits_short : (B,)
+        hedge_* : optional hedge arrays
+        backend : "serial" | "thread" | "process"
+        mode : "full" | "metrics_only"
+        keep_top_k_full : int
+            If > 0 and mode="metrics_only", re-run top-k in full mode.
+        ranking_plan : RankingPlan, optional
+
+        Returns
+        -------
+        list[SweepResult] | list[SweepResultLight] | SweepSummary
+        """
+        market_data: dict[str, Any] = dict(
             bid_px=bid_px,
             bid_sz=bid_sz,
             ask_px=ask_px,
             ask_sz=ask_sz,
             mid_px=mid_px,
             dv01=dv01,
+            fair_price=fair_price,
             zscore=zscore,
-            expected_yield_pnl_bps=expected_yield_pnl_bps,
-            package_yield_bps=package_yield_bps,
-            hedge_ratios=hedge_ratios,
+            adf_p_value=adf_p_value,
+            tradable=tradable,
+            pos_limits_long=pos_limits_long,
+            pos_limits_short=pos_limits_short,
         )
-        if datetimes is not None:
-            market_data["datetimes"] = datetimes
+        # Optional arrays
+        for name, val in [
+            ("maturity", maturity),
+            ("issuer_bucket", issuer_bucket),
+            ("maturity_bucket", maturity_bucket),
+            ("issuer_dv01_caps", issuer_dv01_caps),
+            ("mat_bucket_dv01_caps", mat_bucket_dv01_caps),
+            ("hedge_bid_px", hedge_bid_px),
+            ("hedge_bid_sz", hedge_bid_sz),
+            ("hedge_ask_px", hedge_ask_px),
+            ("hedge_ask_sz", hedge_ask_sz),
+            ("hedge_mid_px", hedge_mid_px),
+            ("hedge_dv01", hedge_dv01),
+            ("hedge_ratios", hedge_ratios),
+            ("datetimes", datetimes),
+        ]:
+            if val is not None:
+                market_data[name] = val
 
         workers = n_workers or os.cpu_count() or 1
 
@@ -122,12 +180,12 @@ class SweepExecutor:
         indexed = list(enumerate(scenarios))
 
         if mode == "full":
-            return dispatch(indexed, market_data, _run_one_mr, backend, workers, csize, "full")
+            return dispatch(indexed, market_data, _run_one_portfolio, backend, workers, csize, "full")
 
         if mode != "metrics_only":
             raise ValueError(f"Unknown mode {mode!r}; choose from 'full', 'metrics_only'")
 
-        metrics_results = dispatch(indexed, market_data, _run_one_mr, backend, workers, csize, "metrics_only")
+        metrics_results = dispatch(indexed, market_data, _run_one_portfolio, backend, workers, csize, "metrics_only")
 
         if keep_top_k_full <= 0:
             return metrics_results
@@ -136,14 +194,13 @@ class SweepExecutor:
         top_k = ranked[:keep_top_k_full]
 
         top_indexed = [(r.scenario_idx, r.scenario) for r in top_k]
-
-        top_full_results = dispatch(top_indexed, market_data, _run_one_mr, backend, workers, csize, "full")
+        top_full_results = dispatch(top_indexed, market_data, _run_one_portfolio, backend, workers, csize, "full")
 
         rank_order = {r.scenario_idx: i for i, r in enumerate(top_k)}
         top_full_results.sort(key=lambda r: rank_order[r.scenario_idx])
 
         if save_top_full_dir is not None:
-            SweepPersister.save_top_full(top_full_results, save_top_full_dir)
+            PortfolioSweepPersister.save_top_full(top_full_results, save_top_full_dir)
 
         ranked_all = SweepRanker.rank_scenarios(metrics_results, ranking_plan)
         return SweepSummary(all_metrics=ranked_all, top_full=top_full_results)
