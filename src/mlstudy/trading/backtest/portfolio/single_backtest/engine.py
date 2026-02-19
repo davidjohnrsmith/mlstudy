@@ -121,7 +121,7 @@ def run_backtest(
     hedge_dv01: Optional[np.ndarray] = None,
     hedge_ratios: Optional[np.ndarray] = None,
     # -- Config --
-    cfg: Optional[PortfolioBacktestConfig] = None,
+    cfg: PortfolioBacktestConfig = None,
     # -- Optional context --
     datetimes: Optional[np.ndarray] = None,
 ) -> PortfolioBacktestResults:
@@ -156,8 +156,8 @@ def run_backtest(
     hedge_mid_px : (T, H) or None
     hedge_dv01 : (T, H) or None
     hedge_ratios : (T, B, H) or None
-    cfg : PortfolioBacktestConfig, optional
-        Scalar parameters.  Defaults are used if *None*.
+    cfg : PortfolioBacktestConfig
+        Scalar parameters.
     datetimes : (T,) or None
         Bar timestamps for DataFrame output.
 
@@ -166,7 +166,7 @@ def run_backtest(
     PortfolioBacktestResults
     """
     if cfg is None:
-        cfg = PortfolioBacktestConfig()
+        raise ValueError("cfg is required — pass a PortfolioBacktestConfig explicitly")
 
     _validate(
         bid_px, bid_sz, ask_px, ask_sz, mid_px,

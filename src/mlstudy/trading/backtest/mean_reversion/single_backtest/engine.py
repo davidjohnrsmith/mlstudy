@@ -85,7 +85,7 @@ def run_backtest(
     expected_yield_pnl_bps: np.ndarray,
     package_yield_bps: np.ndarray,
     hedge_ratios: np.ndarray,
-    cfg: Optional[MRBacktestConfig] = None,
+    cfg: MRBacktestConfig = None,
     datetimes: Optional[np.ndarray] = None,
 ) -> MRBacktestResults:
     """Run a mean-reversion backtest.
@@ -107,13 +107,15 @@ def run_backtest(
     hedge_ratios : (T, N)
         Yield-space hedge ratios per bar.  ``hedge_ratios[:, ref] == 1``,
         ``sum(axis=1) == 0``.
-    cfg : MRBacktestConfig, optional
-        If *None*, defaults are used.
+    cfg : MRBacktestConfig
+        Scalar parameters.
 
     Returns
     -------
     MRBacktestResults
     """
+    if cfg is None:
+        raise ValueError("cfg is required — pass an MRBacktestConfig explicitly")
 
     _validate(
         bid_px,

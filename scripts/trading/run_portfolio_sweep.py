@@ -76,6 +76,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     out.add_argument("--outdir", type=str, default=None, help="Output directory.")
     out.add_argument("--no-save", action="store_true", help="Do not persist results to disk.")
     out.add_argument("--quiet", action="store_true", help="Suppress progress output.")
+    out.add_argument("--top-n", type=int, default=10, help="Number of top scenarios to display.")
+    out.add_argument("--plot", action="store_true", help="Generate dashboard plots for top scenarios.")
 
     return parser.parse_args(argv)
 
@@ -121,11 +123,12 @@ def main(argv: list[str] | None = None) -> int:
         _print(f"  Output    : {result.output_dir}", quiet)
 
     # Print top results
+    top_n = args.top_n
     if not table.empty:
         sort_col = "total_pnl" if "total_pnl" in table.columns else table.columns[0]
-        top = table.sort_values(sort_col, ascending=False).head(10)
+        top = table.sort_values(sort_col, ascending=False).head(top_n)
         print(f"\n{'=' * 70}")
-        print(f"TOP 10 SCENARIOS BY {sort_col.upper()}")
+        print(f"TOP {top_n} SCENARIOS BY {sort_col.upper()}")
         print(f"{'=' * 70}")
         display_cols = [c for c in [
             "name", "total_pnl", "sharpe_ratio", "max_drawdown",
@@ -133,6 +136,39 @@ def main(argv: list[str] | None = None) -> int:
         ] if c in top.columns]
         with pd.option_context("display.max_columns", 20, "display.width", 120):
             print(top[display_cols].to_string(index=False))
+
+    # Generate plots for top scenarios
+    if args.plot and result.output_dir and result.top_full:
+        try:
+            from mlstudy.trading.backtest.portfolio.sweep.plots import plot_top_scenarios
+            from mlstudy.trading.backtest.portfolio.sweep.sweep_results_reader import (
+                PortfolioFullScenario,
+            )
+            from dataclasses import asdict
+
+            scenarios_to_plot = result.top_full[:top_n]
+            full_scenarios = []
+            for sr in scenarios_to_plot:
+                sc = PortfolioFullScenario(
+                    spec={
+                        "name": sr.scenario.name,
+                        "tags": sr.scenario.tags,
+                        "config": asdict(sr.scenario.cfg),
+                        "metrics": asdict(sr.metrics),
+                        "scenario_idx": sr.scenario_idx,
+                    },
+                    results=sr.results,
+                    directory=result.output_dir,
+                )
+                full_scenarios.append(sc)
+
+            plots_dir = result.output_dir / "plots"
+            plot_top_scenarios(full_scenarios, save_dir=plots_dir)
+            import matplotlib.pyplot as plt
+            plt.close("all")
+            _print(f"  Plots     : {plots_dir}", quiet)
+        except ImportError:
+            _print("  (matplotlib not available — skipping plots)", quiet)
 
     return 0
 

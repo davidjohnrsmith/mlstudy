@@ -190,6 +190,9 @@ class PortfolioSweepExecutor:
         if keep_top_k_full <= 0:
             return metrics_results
 
+        if ranking_plan is None:
+            ranking_plan = RankingPlan()
+
         ranked = SweepRanker.rank_scenarios(metrics_results, ranking_plan)
         top_k = ranked[:keep_top_k_full]
 

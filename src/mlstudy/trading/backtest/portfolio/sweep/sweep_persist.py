@@ -119,3 +119,49 @@ class PortfolioSweepPersister:
         elif raw and isinstance(raw[0], SweepResult):
             full_dir = output_dir / "full"
             PortfolioSweepPersister.save_top_full(raw, full_dir)
+
+        # Generate plots for full scenarios if matplotlib available
+        full_results = None
+        if isinstance(raw, SweepSummary) and raw.top_full:
+            full_results = raw.top_full
+        elif raw and isinstance(raw[0], SweepResult):
+            full_results = raw
+
+        if full_results:
+            _save_scenario_plots(full_results, output_dir / "plots")
+
+
+def _save_scenario_plots(
+    results: list[SweepResult], plots_dir: Path,
+) -> None:
+    """Generate dashboard PNGs for full scenarios, if matplotlib is available."""
+    try:
+        from mlstudy.trading.backtest.portfolio.sweep.plots import plot_scenario
+        from mlstudy.trading.backtest.portfolio.sweep.sweep_results_reader import (
+            PortfolioFullScenario,
+        )
+    except ImportError:
+        logger.debug("matplotlib not available; skipping plot generation")
+        return
+
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    for rank, sr in enumerate(results):
+        try:
+            sc = PortfolioFullScenario(
+                spec={
+                    "name": sr.scenario.name,
+                    "tags": sr.scenario.tags,
+                    "config": asdict(sr.scenario.cfg),
+                    "metrics": asdict(sr.metrics),
+                    "scenario_idx": sr.scenario_idx,
+                },
+                results=sr.results,
+                directory=plots_dir,
+            )
+            save_path = plots_dir / f"scenario_{rank:03d}.png"
+            fig = plot_scenario(sc, save_path=save_path)
+            import matplotlib.pyplot as plt
+            plt.close(fig)
+        except Exception:
+            logger.debug("Failed to plot scenario %d", rank, exc_info=True)

@@ -100,7 +100,7 @@ class SweepRanker:
     @staticmethod
     def rank_scenarios(
         results: list[SweepResultLight],
-        plan: RankingPlan | None = None,
+        plan: RankingPlan,
     ) -> list[SweepResultLight]:
         """Rank scenarios according to a multi-stage weighted-rank plan.
 
@@ -172,7 +172,7 @@ class SweepRanker:
     @staticmethod
     def rank_dataframe(
         df: pd.DataFrame,
-        plan: RankingPlan | None = None,
+        plan: RankingPlan,
     ) -> pd.DataFrame:
         """Rank DataFrame rows using the multi-stage weighted-rank plan.
 
@@ -182,7 +182,6 @@ class SweepRanker:
             out = df.copy()
             out.insert(0, "rank", pd.Series(dtype=int))
             return out
-
 
         reg = plan.param_registry
         s1 = SweepRanker._df_stage_scores(df, plan.primary_metrics, "metric", reg)

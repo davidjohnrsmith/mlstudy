@@ -48,6 +48,19 @@ def _make_hedge_market(T, H, L=3, mid_base=100.0, spread_bps=10.0):
     return bid_px, bid_sz, ask_px, ask_sz, mid_px
 
 
+def _cfg(**overrides):
+    """Build a PortfolioBacktestConfig with test defaults."""
+    defaults = dict(
+        gross_dv01_cap=100.0, top_k=10, z_inc=2.0, p_inc=0.05,
+        z_dec=1.0, p_dec=0.10, alpha_thr_inc=1.0, alpha_thr_dec=0.5,
+        max_levels=3, haircut=1.0, qty_step=0.0, min_qty_trade=0.0,
+        min_fill_ratio=0.0, cooldown_bars=0, cooldown_mode=0,
+        min_maturity_inc=0.0, initial_capital=1_000_000.0,
+    )
+    defaults.update(overrides)
+    return PortfolioBacktestConfig(**defaults)
+
+
 def _base_inputs(T=3, B=2):
     L = 3
     bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, L, spread_bps=5.0)
@@ -132,19 +145,17 @@ class TestValidateL2Shapes:
 
 
 class TestConfig:
-    def test_defaults(self):
-        cfg = PortfolioBacktestConfig()
-        assert cfg.gross_dv01_cap == 100.0
-        assert cfg.top_k == 10
-        assert cfg.initial_capital == 1_000_000.0
+    def test_all_fields_required(self):
+        with pytest.raises(TypeError):
+            PortfolioBacktestConfig()
 
     def test_frozen(self):
-        cfg = PortfolioBacktestConfig()
+        cfg = _cfg()
         with pytest.raises(AttributeError):
             cfg.top_k = 5
 
-    def test_custom(self):
-        cfg = PortfolioBacktestConfig(top_k=20, haircut=0.5)
+    def test_explicit_values(self):
+        cfg = _cfg(top_k=20, haircut=0.5)
         assert cfg.top_k == 20
         assert cfg.haircut == 0.5
 
@@ -212,7 +223,7 @@ class TestRunBacktest:
     def test_no_hedge(self):
         """run_backtest with no hedge arrays returns valid results."""
         inputs = _base_inputs(T=3, B=2)
-        res = run_backtest(**inputs)
+        res = run_backtest(**inputs, cfg=_cfg())
         assert isinstance(res, PortfolioBacktestResults)
         assert res.n_trades > 0
         assert res.equity.shape == (3,)
@@ -229,6 +240,7 @@ class TestRunBacktest:
             hedge_mid_px=h_mid,
             hedge_dv01=np.full((T, H), 0.01),
             hedge_ratios=np.full((T, B, H), -1.0),
+            cfg=_cfg(),
         )
         assert res.n_trades > 0
         assert res.hedge_positions.shape == (T, H)
@@ -237,7 +249,7 @@ class TestRunBacktest:
 
     def test_custom_config(self):
         inputs = _base_inputs(T=3, B=1)
-        cfg = PortfolioBacktestConfig(initial_capital=500_000.0)
+        cfg = _cfg(initial_capital=500_000.0)
         res = run_backtest(**inputs, cfg=cfg)
         # First bar with no trades → equity == initial_capital
         # But since fair >> ask, there will be trades. Just check equity plausible.
@@ -249,7 +261,7 @@ class TestRunBacktest:
         inputs = _base_inputs(T=2, B=1)
         inputs["bid_px"] = inputs["bid_px"].astype(np.float32)
         inputs["dv01"] = inputs["dv01"].astype(np.float32)
-        res = run_backtest(**inputs)
+        res = run_backtest(**inputs, cfg=_cfg())
         assert isinstance(res, PortfolioBacktestResults)
 
 
@@ -261,7 +273,7 @@ class TestRunBacktest:
 class TestResults:
     def test_bar_df_columns(self):
         inputs = _base_inputs(T=3, B=2)
-        res = run_backtest(**inputs)
+        res = run_backtest(**inputs, cfg=_cfg())
         df = res.bar_df
         assert "equity" in df.columns
         assert "cash" in df.columns
@@ -272,7 +284,7 @@ class TestResults:
 
     def test_trade_df_columns(self):
         inputs = _base_inputs(T=3, B=2)
-        res = run_backtest(**inputs)
+        res = run_backtest(**inputs, cfg=_cfg())
         df = res.trade_df
         assert len(df) == res.n_trades
         assert "bar" in df.columns
@@ -291,6 +303,7 @@ class TestResults:
             hedge_mid_px=h_mid,
             hedge_dv01=np.full((T, H), 0.01),
             hedge_ratios=np.full((T, B, H), -0.5),
+            cfg=_cfg(),
         )
         df = res.trade_df
         assert "hedge_cost" in df.columns
@@ -301,7 +314,7 @@ class TestResults:
         inputs = _base_inputs(T=3, B=1)
         dts = np.array(["2024-01-01", "2024-01-02", "2024-01-03"],
                         dtype="datetime64[D]")
-        res = run_backtest(**inputs, datetimes=dts)
+        res = run_backtest(**inputs, cfg=_cfg(), datetimes=dts)
         assert "datetime" in res.bar_df.columns
 
     def test_hedge_positions_in_bar_df(self):
@@ -315,5 +328,6 @@ class TestResults:
             hedge_mid_px=h_mid,
             hedge_dv01=np.full((T, H), 0.01),
             hedge_ratios=np.full((T, B, H), -1.0),
+            cfg=_cfg(),
         )
         assert "hedge_position_0" in res.bar_df.columns

@@ -49,9 +49,20 @@ class PortfolioSweepConfig:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _build_base_config(raw: dict[str, Any]) -> PortfolioBacktestConfig:
-    """Construct ``PortfolioBacktestConfig`` from the ``base_config`` YAML section."""
-    return PortfolioBacktestConfig(**raw)
+def _build_base_config(
+    raw: dict[str, Any],
+    grid: dict[str, Sequence],
+) -> PortfolioBacktestConfig:
+    """Construct ``PortfolioBacktestConfig`` from base_config + grid.
+
+    Grid parameters use the first value from each grid list as the base
+    value, so they should NOT appear in ``base_config``.  All non-grid
+    fields must be specified in ``base_config``.
+    """
+    merged = {**raw}
+    for key, values in grid.items():
+        merged[key] = values[0]
+    return PortfolioBacktestConfig(**merged)
 
 
 def _build_grid(raw: dict[str, list]) -> dict[str, Sequence]:
@@ -167,8 +178,18 @@ def load_sweep_config(path: str | Path) -> PortfolioSweepConfig:
         raise ValueError(f"Expected a YAML mapping at top level, got {type(raw).__name__}")
 
     grid_name = raw.get("grid_name", path.stem)
-    base_config = _build_base_config(raw.get("base_config", {}))
+    raw_base = raw.get("base_config", {})
     grid = _build_grid(raw.get("grid", {}))
+
+    overlap = set(raw_base) & set(grid)
+    if overlap:
+        raise ValueError(
+            f"Parameters {sorted(overlap)} appear in both base_config and grid. "
+            f"Grid parameters override base_config, so specifying them in both "
+            f"is ambiguous. Remove them from base_config."
+        )
+
+    base_config = _build_base_config(raw_base, grid)
     ranking_plan = _build_ranking_plan(raw.get("rank"))
     sweep_kwargs = _build_sweep_kwargs(raw.get("sweep"), ranking_plan)
     data_loader = _build_data_loader(raw.get("data"))

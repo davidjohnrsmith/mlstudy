@@ -36,6 +36,34 @@ from mlstudy.trading.backtest.mean_reversion.single_backtest.loop import HAS_NUM
 # Helpers
 # =========================================================================
 
+def _cfg(**overrides):
+    """Build an MRBacktestConfig with test defaults."""
+    defaults = dict(
+        target_notional_ref=100.0,
+        ref_leg_idx=0,
+        entry_z_threshold=2.0,
+        take_profit_zscore_soft_threshold=0.5,
+        take_profit_yield_change_soft_threshold=1.0,
+        take_profit_yield_change_hard_threshold=3.0,
+        stop_loss_yield_change_hard_threshold=5.0,
+        max_holding_bars=0,
+        expected_yield_pnl_bps_multiplier=1.0,
+        entry_cost_premium_yield_bps=0.0,
+        tp_cost_premium_yield_bps=0.0,
+        sl_cost_premium_yield_bps=0.0,
+        tp_quarantine_bars=0,
+        sl_quarantine_bars=0,
+        time_quarantine_bars=0,
+        max_levels_to_cross=5,
+        size_haircut=1.0,
+        validate_scope="REF_ONLY",
+        initial_capital=0.0,
+        use_jit=False,
+    )
+    defaults.update(overrides)
+    return MRBacktestConfig(**defaults)
+
+
 def _make_book(mid_px, half_spread, level2_offset, base_sizes):
     """Build 2-level L2 book from mid prices.
 
@@ -187,26 +215,12 @@ class TestMRBacktestEndToEnd:
 
     def _run(self, **kw):
         d = _make_scripted_inputs(**kw)
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=d["ref_idx"],
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
-            max_holding_bars=0,  # disabled
-            expected_yield_pnl_bps_multiplier=1.0,
-            entry_cost_premium_yield_bps=0.0,
-            tp_cost_premium_yield_bps=0.0,
             tp_quarantine_bars=2,
             sl_quarantine_bars=3,
-            time_quarantine_bars=0,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            initial_capital=0.0,
-            use_jit=False,
         )
         res = run_backtest(
             bid_px=d["bid_px"],
@@ -352,18 +366,10 @@ class TestMRBacktestNoLiquidity:
 
     def test_no_liquidity_blocks_entry(self):
         d = _make_scripted_inputs(zero_liquidity_bar=5)
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=d["ref_idx"],
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            use_jit=False,
         )
         res = run_backtest(
             bid_px=d["bid_px"],
@@ -389,21 +395,13 @@ class TestMRBacktestTooWide:
 
     def test_too_wide_blocks_entry(self):
         d = _make_scripted_inputs()
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=d["ref_idx"],
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
             # Tiny expected PnL + large cost premium -> negative budget
             expected_yield_pnl_bps_multiplier=0.01,
             entry_cost_premium_yield_bps=100.0,
-            use_jit=False,
         )
         res = run_backtest(
             bid_px=d["bid_px"],
@@ -459,19 +457,11 @@ class TestMRBacktestCooldownWithSignal:
         # Bar 9: cooldown expired, can enter
         zscore[9] = 3.0
 
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=ref_idx,
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
             sl_quarantine_bars=3,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            use_jit=False,
         )
 
         res = run_backtest(
@@ -523,19 +513,12 @@ class TestMRBacktestMaxHolding:
         zscore[3:] = 2.0
 
 
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=ref_idx,
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
             stop_loss_yield_change_hard_threshold=50.0,  # very high, won't trigger
             max_holding_bars=5,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            use_jit=False,
         )
 
         res = run_backtest(
@@ -589,18 +572,11 @@ class TestMRBacktestInactiveLegs:
         zscore[2] = 3.0
         zscore[3:] = 2.0
 
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=ref_idx,
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
             stop_loss_yield_change_hard_threshold=50.0,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            use_jit=False,
         )
 
         res = run_backtest(
@@ -630,21 +606,6 @@ class TestMRBacktestJITParity:
 
     def test_py_vs_jit_match(self):
         d = _make_scripted_inputs()
-        base_cfg = dict(
-            target_notional_ref=100.0,
-            ref_leg_idx=d["ref_idx"],
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
-            tp_quarantine_bars=2,
-            sl_quarantine_bars=3,
-            max_levels_to_cross=2,
-            size_haircut=1.0,
-            validate_scope="ALL_LEGS",
-            initial_capital=0.0,
-        )
         inputs = dict(
             bid_px=d["bid_px"],
             bid_sz=d["bid_sz"],
@@ -657,9 +618,16 @@ class TestMRBacktestJITParity:
             package_yield_bps=d["package_yield_bps"],
             hedge_ratios=d["hedge_ratios"],
         )
+        shared = dict(
+            ref_leg_idx=d["ref_idx"],
+            tp_quarantine_bars=2,
+            sl_quarantine_bars=3,
+            max_levels_to_cross=2,
+            validate_scope="ALL_LEGS",
+        )
 
-        res_py = run_backtest(**inputs, cfg=MRBacktestConfig(**base_cfg, use_jit=False))
-        res_jit = run_backtest(**inputs, cfg=MRBacktestConfig(**base_cfg, use_jit=True))
+        res_py = run_backtest(**inputs, cfg=_cfg(**shared, use_jit=False))
+        res_jit = run_backtest(**inputs, cfg=_cfg(**shared, use_jit=True))
 
         np.testing.assert_array_equal(res_py.codes, res_jit.codes)
         np.testing.assert_array_equal(res_py.state, res_jit.state)

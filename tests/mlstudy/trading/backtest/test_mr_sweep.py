@@ -131,6 +131,7 @@ def _base_cfg(ref_idx: int = 1) -> MRBacktestConfig:
         expected_yield_pnl_bps_multiplier=1.0,
         entry_cost_premium_yield_bps=0.0,
         tp_cost_premium_yield_bps=0.0,
+        sl_cost_premium_yield_bps=0.0,
         tp_quarantine_bars=2,
         sl_quarantine_bars=3,
         time_quarantine_bars=0,
@@ -734,7 +735,7 @@ class TestRanking:
 
     def test_default_plan_matches_pnl_order(self):
         results = _metrics_only_results()
-        ranked = SweepRanker.rank_scenarios(results)
+        ranked = SweepRanker.rank_scenarios(results, RankingPlan())
 
         pnls = [r.metrics.total_pnl for r in ranked]
         assert pnls == sorted(pnls, reverse=True)
@@ -801,12 +802,12 @@ class TestRanking:
 
     def test_single_scenario(self):
         results = _metrics_only_results()[:1]
-        ranked = SweepRanker.rank_scenarios(results)
+        ranked = SweepRanker.rank_scenarios(results, RankingPlan())
         assert len(ranked) == 1
         assert ranked[0].scenario_idx == results[0].scenario_idx
 
     def test_empty_list(self):
-        ranked = SweepRanker.rank_scenarios([])
+        ranked = SweepRanker.rank_scenarios([], RankingPlan())
         assert ranked == []
 
     def test_run_sweep_with_ranking_plan(self):

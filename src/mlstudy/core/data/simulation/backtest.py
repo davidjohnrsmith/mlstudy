@@ -220,6 +220,8 @@ def generate_parquets(cfg: GenConfig) -> None:
         size0=100.0, size_step=50.0,
         id_col="instrument_id",
     )
+    book_df = _drop_rows(book_df, rng, cfg.missing_prob)
+    book_df.to_parquet(cfg.out_dir / "book.parquet", index=False)
 
     # ---- Signal (for ALL instruments) --------------------------------------------
 

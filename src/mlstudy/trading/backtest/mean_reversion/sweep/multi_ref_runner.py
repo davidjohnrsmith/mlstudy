@@ -122,7 +122,7 @@ class MultiRefSweepRunner:
 
         # Resolve config once so each per-ref run uses the same object
         cfg = _resolve_config(config, config_map_path)
-        ranking_plan = cfg.ranking_plan
+        ranking_plan = cfg.ranking_plan or RankingPlan()
 
         # Resolve base output directory
         if _base_output_dir_override is not None:
@@ -590,7 +590,7 @@ class MultiRefSweepRunner:
         cfg = _resolve_config(config, config_map_path)
         grid_keys = list(cfg.grid.keys())
         metric_fields = [f.name for f in fields(BacktestMetrics)]
-        ranking_plan = cfg.ranking_plan
+        ranking_plan = cfg.ranking_plan or RankingPlan()
 
         all_summaries: list[pd.DataFrame] = []
         all_ref_ids: list[str] = []

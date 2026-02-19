@@ -34,14 +34,34 @@ _TUNING_DIR = _CONFIGS_DIR / "tuning_configs"
 # =========================================================================
 
 
+_FULL_BASE_CONFIG = dict(
+    gross_dv01_cap=100.0, top_k=10, z_inc=2.0, p_inc=0.05,
+    z_dec=1.0, p_dec=0.10, alpha_thr_inc=1.0, alpha_thr_dec=0.5,
+    max_levels=3, haircut=1.0, qty_step=0.0, min_qty_trade=0.0,
+    min_fill_ratio=0.0, cooldown_bars=0, cooldown_mode=0,
+    min_maturity_inc=0.0, initial_capital=1_000_000.0,
+)
+
+
 class TestBuildBaseConfig:
-    def test_defaults(self):
-        cfg = _build_base_config({})
+    def test_all_fields_no_grid(self):
+        cfg = _build_base_config(_FULL_BASE_CONFIG, {})
         assert isinstance(cfg, PortfolioBacktestConfig)
         assert cfg.gross_dv01_cap == 100.0
 
-    def test_overrides(self):
-        cfg = _build_base_config({"top_k": 20, "haircut": 0.5})
+    def test_grid_fills_missing_base_fields(self):
+        base = {k: v for k, v in _FULL_BASE_CONFIG.items() if k != "top_k"}
+        grid = {"top_k": [5, 10, 20]}
+        cfg = _build_base_config(base, grid)
+        assert cfg.top_k == 5  # first grid value used
+
+    def test_missing_fields_rejected(self):
+        with pytest.raises(TypeError):
+            _build_base_config({}, {})
+
+    def test_custom_values(self):
+        raw = {**_FULL_BASE_CONFIG, "top_k": 20, "haircut": 0.5}
+        cfg = _build_base_config(raw, {})
         assert cfg.top_k == 20
         assert cfg.haircut == 0.5
 
@@ -110,7 +130,9 @@ class TestLoadSweepConfig:
 
     def test_base_config_values_from_yaml(self):
         cfg = load_sweep_config(_TUNING_DIR / "portfolio.yaml")
-        assert cfg.base_config.gross_dv01_cap == 100.0
+        # gross_dv01_cap comes from grid (first value)
+        assert cfg.base_config.gross_dv01_cap == 50.0
+        # initial_capital comes from base_config
         assert cfg.base_config.initial_capital == 1_000_000.0
 
     def test_sweep_kwargs_from_yaml(self):
