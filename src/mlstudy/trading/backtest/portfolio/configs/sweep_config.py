@@ -25,8 +25,12 @@ from typing import Any, Sequence
 import yaml
 
 from .backtest_config import PortfolioBacktestConfig
-from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan  # noqa: F401
+from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan
 from mlstudy.trading.backtest.portfolio.data.data_loader import PortfolioDataLoader
+from ..parameters.parameter import PortfolioParameter
+from mlstudy.trading.backtest.parameters.parameters_registry import ParameterPreferenceRegistry
+
+_PORTFOLIO_REGISTRY = ParameterPreferenceRegistry(PortfolioParameter)
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,7 @@ def _build_ranking_plan(raw: dict[str, Any] | None) -> RankingPlan | None:
         tie_metrics=_parse_features(raw.get("tie_metrics")),
         primary_params=_parse_features(raw.get("primary_params")),
         tie_params=_parse_features(raw.get("tie_params")),
+        param_registry=_PORTFOLIO_REGISTRY,
     )
 
 

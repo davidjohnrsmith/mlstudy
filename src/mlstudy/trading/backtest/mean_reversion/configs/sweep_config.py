@@ -29,6 +29,10 @@ import yaml
 from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
 from mlstudy.trading.backtest.mean_reversion.data.data_loader import BacktestDataLoader
 from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan
+from mlstudy.trading.backtest.mean_reversion.parameters.parameter import MRParameter
+from mlstudy.trading.backtest.parameters.parameters_registry import ParameterPreferenceRegistry
+
+_MR_REGISTRY = ParameterPreferenceRegistry(MRParameter)
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,7 @@ def _build_ranking_plan(raw: dict[str, Any] | None) -> RankingPlan | None:
         tie_metrics=_parse_features(raw.get("tie_metrics")),
         primary_params=_parse_features(raw.get("primary_params")),
         tie_params=_parse_features(raw.get("tie_params")),
+        param_registry=_MR_REGISTRY,
     )
 
 

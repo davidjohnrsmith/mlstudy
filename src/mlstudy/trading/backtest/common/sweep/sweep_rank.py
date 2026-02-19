@@ -1,17 +1,22 @@
 """Strategy-agnostic sweep ranking.
 
 Provides multi-stage weighted-rank scoring for sweep results.
+The ``RankingPlan`` carries a ``param_registry`` so the ranker knows
+each strategy's parameter directions without global state.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from .sweep_types import SweepResultLight
 from ...metrics.metrics_registry import MetricPreferenceRegistry
-from ...parameters.parameters_registry import ParameterPreferenceRegistry
+
+if TYPE_CHECKING:
+    from ...parameters.parameters_registry import ParameterPreferenceRegistry
 
 
 @dataclass(frozen=True)
@@ -20,9 +25,9 @@ class RankingPlan:
     tie_metrics: tuple[tuple[str, float], ...] = ()
     primary_params: tuple[tuple[str, float], ...] = ()
     tie_params: tuple[tuple[str, float], ...] = ()
-
-
-DEFAULT_RANKING_PLAN = RankingPlan()
+    param_registry: ParameterPreferenceRegistry | None = field(
+        default=None, repr=False, compare=False,
+    )
 
 
 class SweepRanker:
@@ -53,6 +58,7 @@ class SweepRanker:
         results: list[SweepResultLight],
         features: tuple[tuple[str, float], ...],
         source: str,
+        param_registry: ParameterPreferenceRegistry | None = None,
     ) -> list[float]:
         """Compute weighted-rank score for a stage.
 
@@ -69,7 +75,13 @@ class SweepRanker:
                 direction = MetricPreferenceRegistry.direction(name)
                 raw = [getattr(r.metrics, name) for r in results]
             else:
-                direction = ParameterPreferenceRegistry.direction(name)
+                if param_registry is None:
+                    raise ValueError(
+                        f"Cannot rank by parameter {name!r}: no param_registry "
+                        f"on the RankingPlan.  Set param_registry when building "
+                        f"the plan."
+                    )
+                direction = param_registry.direction(name)
                 raw = [float(getattr(r.scenario.cfg, name)) for r in results]
 
             oriented = [v * direction for v in raw]
@@ -97,13 +109,11 @@ class SweepRanker:
         if not results:
             return []
 
-        if plan is None:
-            plan = DEFAULT_RANKING_PLAN
-
-        s1 = SweepRanker._stage_scores(results, plan.primary_metrics, "metric")
-        s2 = SweepRanker._stage_scores(results, plan.tie_metrics, "metric")
-        s3 = SweepRanker._stage_scores(results, plan.primary_params, "param")
-        s4 = SweepRanker._stage_scores(results, plan.tie_params, "param")
+        reg = plan.param_registry
+        s1 = SweepRanker._stage_scores(results, plan.primary_metrics, "metric", reg)
+        s2 = SweepRanker._stage_scores(results, plan.tie_metrics, "metric", reg)
+        s3 = SweepRanker._stage_scores(results, plan.primary_params, "param", reg)
+        s4 = SweepRanker._stage_scores(results, plan.tie_params, "param", reg)
 
         decorated = [
             (-s1[i], -s2[i], -s3[i], -s4[i], results[i].scenario_idx, results[i])
@@ -122,6 +132,7 @@ class SweepRanker:
         df: pd.DataFrame,
         features: tuple[tuple[str, float], ...],
         source: str,
+        param_registry: ParameterPreferenceRegistry | None = None,
     ) -> list[float]:
         """Compute weighted-rank score for a stage using DataFrame columns."""
         n = len(df)
@@ -137,7 +148,12 @@ class SweepRanker:
             if source == "metric":
                 direction = MetricPreferenceRegistry.direction(name)
             else:
-                direction = ParameterPreferenceRegistry.direction(name)
+                if param_registry is None:
+                    raise ValueError(
+                        f"Cannot rank by parameter {name!r}: no param_registry "
+                        f"on the RankingPlan."
+                    )
+                direction = param_registry.direction(name)
 
             raw = df[name].astype(float).tolist()
             oriented = [v * direction for v in raw]
@@ -167,13 +183,12 @@ class SweepRanker:
             out.insert(0, "rank", pd.Series(dtype=int))
             return out
 
-        if plan is None:
-            plan = DEFAULT_RANKING_PLAN
 
-        s1 = SweepRanker._df_stage_scores(df, plan.primary_metrics, "metric")
-        s2 = SweepRanker._df_stage_scores(df, plan.tie_metrics, "metric")
-        s3 = SweepRanker._df_stage_scores(df, plan.primary_params, "param")
-        s4 = SweepRanker._df_stage_scores(df, plan.tie_params, "param")
+        reg = plan.param_registry
+        s1 = SweepRanker._df_stage_scores(df, plan.primary_metrics, "metric", reg)
+        s2 = SweepRanker._df_stage_scores(df, plan.tie_metrics, "metric", reg)
+        s3 = SweepRanker._df_stage_scores(df, plan.primary_params, "param", reg)
+        s4 = SweepRanker._df_stage_scores(df, plan.tie_params, "param", reg)
 
         sort_keys = [(-s1[i], -s2[i], -s3[i], -s4[i], i) for i in range(len(df))]
         order = sorted(range(len(df)), key=lambda i: sort_keys[i])

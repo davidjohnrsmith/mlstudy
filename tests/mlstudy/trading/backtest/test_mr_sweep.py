@@ -21,8 +21,11 @@ from mlstudy.trading.backtest.common.sweep.sweep_rank import (
     RankingPlan,
     SweepRanker,
 )
+from mlstudy.trading.backtest.mean_reversion.parameters.parameter import MRParameter
 from mlstudy.trading.backtest.parameters.parameters_registry import ParameterPreferenceRegistry
 from mlstudy.trading.backtest.metrics.metrics_registry import MetricPreferenceRegistry
+
+_MR_REGISTRY = ParameterPreferenceRegistry(MRParameter)
 from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 
 
@@ -716,14 +719,18 @@ class TestRanking:
             MetricPreferenceRegistry.direction("bogus_metric")
 
     def test_param_registry_known(self):
-        assert ParameterPreferenceRegistry.direction("target_notional_ref") == +1
-        assert ParameterPreferenceRegistry.direction("entry_z_threshold") == +1
-        assert ParameterPreferenceRegistry.direction("max_holding_bars") == -1
-        assert ParameterPreferenceRegistry.direction("size_haircut") == -1
+        assert _MR_REGISTRY.direction("target_notional_ref") == +1
+        assert _MR_REGISTRY.direction("entry_z_threshold") == +1
+        assert _MR_REGISTRY.direction("max_holding_bars") == -1
+        assert _MR_REGISTRY.direction("size_haircut") == -1
 
     def test_param_registry_unknown(self):
         with pytest.raises(ValueError, match="Unknown parameter"):
-            ParameterPreferenceRegistry.direction("nonexistent_param")
+            _MR_REGISTRY.direction("nonexistent_param")
+
+    def test_mr_registry_rejects_portfolio_param(self):
+        with pytest.raises(ValueError, match="Unknown parameter"):
+            _MR_REGISTRY.direction("gross_dv01_cap")
 
     def test_default_plan_matches_pnl_order(self):
         results = _metrics_only_results()
@@ -784,6 +791,7 @@ class TestRanking:
         plan = RankingPlan(
             primary_metrics=(("total_pnl", 1.0),),
             primary_params=(("size_haircut", 1.0),),
+            param_registry=_MR_REGISTRY,
         )
         ranked = SweepRanker.rank_scenarios([r1, r2], plan)
 

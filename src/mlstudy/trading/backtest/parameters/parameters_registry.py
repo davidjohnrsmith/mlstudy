@@ -1,67 +1,78 @@
+"""Instance-based parameter direction registry.
+
+Each strategy builds its own ``ParameterPreferenceRegistry`` from its
+parameter enum.  The instance is stored on the ``RankingPlan`` so the
+sweep ranker knows which parameters (and directions) are valid.
+
+Usage::
+
+    from mlstudy.trading.backtest.parameters.parameters_enum import MRParameter, PortfolioParameter
+
+    mr_registry = ParameterPreferenceRegistry(MRParameter)
+    port_registry = ParameterPreferenceRegistry(PortfolioParameter)
+
+    mr_registry.direction("target_notional_ref")   # +1
+    port_registry.direction("gross_dv01_cap")       # +1
+
+    mr_registry.direction("gross_dv01_cap")         # ValueError — not an MR param
+    port_registry.direction("target_notional_ref")  # ValueError — not a portfolio param
+"""
+
 from __future__ import annotations
 
-from typing import Union
-
-from mlstudy.trading.backtest.parameters.parameters_enum import Parameter
-
-ParameterLike = Union[Parameter, str]
+from enum import Enum
+from typing import Type
 
 
 class ParameterPreferenceRegistry:
-    """Direction registry for MRBacktestConfig numeric fields.
+    """Direction registry scoped to a single strategy's parameters.
 
     +1 means higher is preferred, -1 means lower is preferred.
-    Defaults are derived from the ``Parameter`` enum.
     """
 
-    _DIRECTIONS: dict[str, int] = {p.key: p.direction for p in Parameter}
+    def __init__(self, param_enum: Type[Enum]) -> None:
+        self._param_enum = param_enum
+        self._directions: dict[str, int] = {
+            p.key: p.direction for p in param_enum
+        }
 
-    @classmethod
-    def direction(cls, name: str) -> int:
+    def direction(self, name: str) -> int:
+        """Return the preferred direction for *name*.
+
+        Raises ``ValueError`` if *name* is not in this registry's enum.
+        """
         try:
-            d = cls._DIRECTIONS[name]
+            return self._directions[name]
         except KeyError as e:
             raise ValueError(
-                f"Unknown parameter {name!r}; choose from {sorted(cls._DIRECTIONS)}"
+                f"Unknown parameter {name!r}; choose from {sorted(self._directions)}"
             ) from e
-        if d not in (+1, -1):
-            raise ValueError(f"Invalid direction {d} for parameter {name!r}")
-        return d
 
-    @classmethod
-    def override(cls, name: ParameterLike, direction: int) -> None:
-        """Override direction for a single parameter.
+    def is_registered(self, name: str) -> bool:
+        """Return True if *name* is known to this registry."""
+        return name in self._directions
 
-        Args:
-            name: Parameter enum member or parameter key string (e.g. "max_holding_bars").
-            direction: +1 (higher preferred) or -1 (lower preferred).
-        """
-        key = cls._coerce(name)
-        if key not in cls._DIRECTIONS:
+    def override(self, name: str, direction: int) -> None:
+        """Override direction for an already-registered parameter."""
+        if name not in self._directions:
             raise ValueError(
-                f"Unknown parameter {key!r}; choose from {sorted(cls._DIRECTIONS)}"
+                f"Unknown parameter {name!r}; choose from {sorted(self._directions)}"
             )
         if direction not in (+1, -1):
             raise ValueError(
-                f"Direction must be +1 or -1, got {direction!r} for {key!r}"
+                f"Direction must be +1 or -1, got {direction!r} for {name!r}"
             )
-        cls._DIRECTIONS[key] = int(direction)
+        self._directions[name] = int(direction)
 
-    @classmethod
-    def override_multi(cls, overrides: dict[ParameterLike, int]) -> None:
+    def override_multi(self, overrides: dict[str, int]) -> None:
         """Override directions for multiple parameters."""
         for name, direction in overrides.items():
-            cls.override(name, direction)
+            self.override(name, direction)
 
-    @classmethod
-    def reset(cls) -> None:
-        """Reset all directions to defaults from the ``Parameter`` enum."""
-        cls._DIRECTIONS = {p.key: p.direction for p in Parameter}
+    def reset(self) -> None:
+        """Reset all directions to defaults from the enum."""
+        self._directions = {p.key: p.direction for p in self._param_enum}
 
-    @staticmethod
-    def _coerce(param: ParameterLike) -> str:
-        if isinstance(param, Parameter):
-            return param.key
-        if isinstance(param, str):
-            return Parameter.from_key(param).key
-        raise TypeError(f"param must be Parameter or str, got {type(param)}")
+    def registered(self) -> dict[str, int]:
+        """Return a copy of all registered parameters and their directions."""
+        return dict(self._directions)
