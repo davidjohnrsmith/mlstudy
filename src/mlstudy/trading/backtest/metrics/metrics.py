@@ -98,18 +98,19 @@ def compute_metrics(
     bar_df: pd.DataFrame,
     trade_df: pd.DataFrame | None = None,
     *,
-    annualization_factor: int = 252,
+    annualization_factor: int | None = None,
 ) -> BacktestMetrics:
     """Compute all backtest metrics from bar_df and trade_df.
 
     Parameters
     ----------
     bar_df : pd.DataFrame
-        Per-bar DataFrame with columns ``pnl``, ``cumulative_pnl``, ``state``.
+        Per-bar DataFrame with columns ``equity``, ``state``.
     trade_df : pd.DataFrame, optional
         Round-trip trade DataFrame with columns ``pnl``, ``holding_bars``.
-    annualization_factor : int
-        Bars per year for annualizing ratios (default 252).
+    annualization_factor : int or None
+        Bars per year for annualizing ratios.  If *None*, inferred from
+        the ``datetime`` column in *bar_df*.
 
     Returns
     -------

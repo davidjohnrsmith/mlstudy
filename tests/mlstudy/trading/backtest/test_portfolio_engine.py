@@ -56,6 +56,7 @@ def _cfg(**overrides):
         max_levels=3, haircut=1.0, qty_step=0.0, min_qty_trade=0.0,
         min_fill_ratio=0.0, cooldown_bars=0, cooldown_mode=0,
         min_maturity_inc=0.0, initial_capital=1_000_000.0,
+        close_time="none",
     )
     defaults.update(overrides)
     return PortfolioBacktestConfig(**defaults)

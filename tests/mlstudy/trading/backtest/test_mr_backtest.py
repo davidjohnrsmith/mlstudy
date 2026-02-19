@@ -58,6 +58,7 @@ def _cfg(**overrides):
         size_haircut=1.0,
         validate_scope="REF_ONLY",
         initial_capital=0.0,
+        close_time="none",
         use_jit=False,
     )
     defaults.update(overrides)
@@ -638,3 +639,106 @@ class TestMRBacktestJITParity:
         assert res_py.n_trades == res_jit.n_trades
         np.testing.assert_array_equal(res_py.tr_bar, res_jit.tr_bar)
         np.testing.assert_array_equal(res_py.tr_code, res_jit.tr_code)
+
+
+class TestCloseBarDf:
+    """Tests for close_bar_df filtering on MRBacktestResults."""
+
+    def test_close_bar_df_none_when_close_time_none(self):
+        """close_bar_df is None when close_time='none'."""
+        d = _make_scripted_inputs()
+        cfg = _cfg(ref_leg_idx=d["ref_idx"], validate_scope="ALL_LEGS")
+        res = run_backtest(
+            bid_px=d["bid_px"], bid_sz=d["bid_sz"],
+            ask_px=d["ask_px"], ask_sz=d["ask_sz"],
+            mid_px=d["mid_px"], dv01=d["dv01"],
+            zscore=d["zscore"],
+            expected_yield_pnl_bps=d["expected_yield_pnl_bps"],
+            package_yield_bps=d["package_yield_bps"],
+            hedge_ratios=d["hedge_ratios"],
+            cfg=cfg,
+        )
+        assert res.close_bar_df is None
+
+    def test_close_bar_df_none_when_no_datetimes(self):
+        """close_bar_df is None when datetimes not provided even with close_time set."""
+        d = _make_scripted_inputs()
+        cfg = _cfg(ref_leg_idx=d["ref_idx"], close_time="16:00:00", validate_scope="ALL_LEGS")
+        res = run_backtest(
+            bid_px=d["bid_px"], bid_sz=d["bid_sz"],
+            ask_px=d["ask_px"], ask_sz=d["ask_sz"],
+            mid_px=d["mid_px"], dv01=d["dv01"],
+            zscore=d["zscore"],
+            expected_yield_pnl_bps=d["expected_yield_pnl_bps"],
+            package_yield_bps=d["package_yield_bps"],
+            hedge_ratios=d["hedge_ratios"],
+            cfg=cfg,
+        )
+        assert res.close_bar_df is None
+
+    def test_close_bar_df_filters_correctly(self):
+        """close_bar_df correctly filters to rows matching the close time."""
+        import pandas as pd
+
+        T = 20
+        d = _make_scripted_inputs(T=T, entry_bar=5, tp_bar=15, sl_bar=18)
+        # Create intraday datetimes: 4 bars per day at specific times
+        bars_per_day = 4
+        n_days = T // bars_per_day
+        times = ["09:30:00", "11:00:00", "14:00:00", "16:00:00"]
+        datetimes = []
+        base = pd.Timestamp("2024-01-02")
+        for day in range(n_days):
+            for t in times:
+                datetimes.append(base + pd.Timedelta(days=day) + pd.Timedelta(t))
+        datetimes = np.array(datetimes, dtype="datetime64[ns]")
+
+        cfg = _cfg(ref_leg_idx=d["ref_idx"], close_time="16:00:00", validate_scope="ALL_LEGS")
+        res = run_backtest(
+            bid_px=d["bid_px"], bid_sz=d["bid_sz"],
+            ask_px=d["ask_px"], ask_sz=d["ask_sz"],
+            mid_px=d["mid_px"], dv01=d["dv01"],
+            zscore=d["zscore"],
+            expected_yield_pnl_bps=d["expected_yield_pnl_bps"],
+            package_yield_bps=d["package_yield_bps"],
+            hedge_ratios=d["hedge_ratios"],
+            cfg=cfg, datetimes=datetimes,
+        )
+
+        assert res.close_bar_df is not None
+        assert len(res.close_bar_df) == n_days
+        # All rows should have time 16:00:00
+        close_times = pd.to_datetime(res.close_bar_df["datetime"]).dt.time
+        for t in close_times:
+            assert t == pd.Timestamp("16:00:00").time()
+
+    def test_close_bar_df_has_equity_column(self):
+        """close_bar_df should contain all the same columns as bar_df."""
+        import pandas as pd
+
+        T = 20
+        d = _make_scripted_inputs(T=T, entry_bar=2, tp_bar=8, sl_bar=18)
+        times = ["10:00:00", "16:00:00"]
+        datetimes = []
+        base = pd.Timestamp("2024-01-02")
+        for day in range(T // 2):
+            for t in times:
+                datetimes.append(base + pd.Timedelta(days=day) + pd.Timedelta(t))
+        datetimes = np.array(datetimes, dtype="datetime64[ns]")
+
+        cfg = _cfg(ref_leg_idx=d["ref_idx"], close_time="16:00:00", validate_scope="ALL_LEGS")
+        res = run_backtest(
+            bid_px=d["bid_px"], bid_sz=d["bid_sz"],
+            ask_px=d["ask_px"], ask_sz=d["ask_sz"],
+            mid_px=d["mid_px"], dv01=d["dv01"],
+            zscore=d["zscore"],
+            expected_yield_pnl_bps=d["expected_yield_pnl_bps"],
+            package_yield_bps=d["package_yield_bps"],
+            hedge_ratios=d["hedge_ratios"],
+            cfg=cfg, datetimes=datetimes,
+        )
+
+        assert res.close_bar_df is not None
+        assert "equity" in res.close_bar_df.columns
+        assert "datetime" in res.close_bar_df.columns
+        assert set(res.close_bar_df.columns) == set(res.bar_df.columns)

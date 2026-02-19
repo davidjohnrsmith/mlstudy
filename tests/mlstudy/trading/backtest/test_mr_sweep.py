@@ -55,6 +55,7 @@ def _make_scripted_inputs(
     base_book_size: float = 1000.0,
 ):
     """Minimal scripted dataset (same pattern as test_mr_backtest.py)."""
+    import pandas as pd
     N = 3
     ref_idx = 1
     hedge_ratios = np.tile(
@@ -103,6 +104,8 @@ def _make_scripted_inputs(
         zscore[sl_bar + 1 :] = 0.0
         package_yield_bps[sl_bar + 1 :] = 100.0
 
+    datetimes = pd.bdate_range("2024-01-02", periods=T, freq="B").values
+
     return dict(
         bid_px=bid_px,
         bid_sz=bid_sz,
@@ -115,6 +118,7 @@ def _make_scripted_inputs(
         package_yield_bps=package_yield_bps,
         hedge_ratios=hedge_ratios,
         ref_idx=ref_idx,
+        datetimes=datetimes,
     )
 
 
@@ -139,6 +143,7 @@ def _base_cfg(ref_idx: int = 1) -> MRBacktestConfig:
         size_haircut=1.0,
         validate_scope="ALL_LEGS",
         initial_capital=0.0,
+        close_time="none",
         use_jit=False,
     )
 

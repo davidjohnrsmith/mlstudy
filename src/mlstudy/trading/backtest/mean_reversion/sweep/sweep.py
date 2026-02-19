@@ -41,7 +41,8 @@ def _run_one_mr(
 ) -> SweepResultLight | SweepResult:
     try:
         res = run_backtest(cfg=scenario.cfg, **market_data)
-        metrics = MetricsCalculator(res.bar_df, res.trade_df).compute_all()
+        bar_df = res.close_bar_df if res.close_bar_df is not None else res.bar_df
+        metrics = MetricsCalculator(bar_df, res.trade_df).compute_all()
 
         if mode == "metrics_only":
             return SweepResultLight(

@@ -58,6 +58,7 @@ def _mr_cfg(**overrides):
         size_haircut=1.0,
         validate_scope="REF_ONLY",
         initial_capital=0.0,
+        close_time="none",
         use_jit=False,
     )
     defaults.update(overrides)

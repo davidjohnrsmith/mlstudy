@@ -78,21 +78,34 @@ class PortfolioBacktestResults:
 
     # optional context
     datetimes: np.ndarray | None = field(default=None, repr=False)
+    close_time: str | None = field(default=None, repr=False)
     mid_px: np.ndarray | None = field(default=None, repr=False)
     hedge_mid_px: np.ndarray | None = field(default=None, repr=False)
 
     bar_df: pd.DataFrame = None
     trade_df: pd.DataFrame = None
+    close_bar_df: pd.DataFrame = None
 
     def __post_init__(self):
         self.bar_df = self.to_bar_df()
         self.trade_df = self.to_trade_df()
+        self.close_bar_df = self._build_close_bar_df()
+
+    def _build_close_bar_df(self) -> pd.DataFrame | None:
+        if self.close_time is None or self.datetimes is None:
+            return None
+        df = self.bar_df
+        dt = pd.to_datetime(df["datetime"])
+        target = pd.Timestamp(self.close_time).time()
+        mask = dt.dt.time == target
+        return df[mask].reset_index(drop=True)
 
     @staticmethod
     def from_loop_output(
         out: tuple,
         *,
         datetimes: np.ndarray | None = None,
+        close_time: str | None = None,
         mid_px: np.ndarray | None = None,
         hedge_mid_px: np.ndarray | None = None,
     ) -> "PortfolioBacktestResults":
@@ -127,6 +140,7 @@ class PortfolioBacktestResults:
             tr_hedge_cost=out[25][:n],
             n_trades=n,
             datetimes=datetimes,
+            close_time=close_time,
             mid_px=mid_px,
             hedge_mid_px=hedge_mid_px,
         )

@@ -64,5 +64,8 @@ class MRBacktestConfig:
     # -- initial state -----------------------------------------------------
     initial_capital: float
 
+    # -- metrics -----------------------------------------------------------
+    close_time: str   # e.g. "16:00:00"; use "none" to disable close filtering
+
     # -- JIT ---------------------------------------------------------------
     use_jit: bool

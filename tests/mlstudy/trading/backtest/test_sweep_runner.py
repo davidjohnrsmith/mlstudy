@@ -88,6 +88,8 @@ def _make_scripted_inputs(T: int = 60):
     zscore[41:] = 0.0
     package_yield_bps[41:] = 100.0
 
+    datetimes = pd.bdate_range("2024-01-02", periods=T, freq="B").values
+
     return dict(
         bid_px=bid_px,
         bid_sz=bid_sz,
@@ -99,6 +101,7 @@ def _make_scripted_inputs(T: int = 60):
         expected_yield_pnl_bps=expected_yield_pnl_bps,
         package_yield_bps=package_yield_bps,
         hedge_ratios=hedge_ratios,
+        datetimes=datetimes,
     )
 
 
@@ -132,6 +135,7 @@ _FULL_MODE_YAML = {
         "size_haircut": 1.0,
         "validate_scope": "ALL_LEGS",
         "initial_capital": 0.0,
+        "close_time": "none",
         "use_jit": False,
     },
     "grid": {

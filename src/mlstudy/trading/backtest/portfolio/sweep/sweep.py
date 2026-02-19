@@ -41,7 +41,8 @@ def _run_one_portfolio(
         res = run_backtest(cfg=scenario.cfg, **market_data)
         # Portfolio trade_df uses per-fill format (not round-trip), so we
         # pass None to skip trade-level metrics and compute equity-only.
-        metrics = MetricsCalculator(res.bar_df, None).compute_equity()
+        bar_df = res.close_bar_df if res.close_bar_df is not None else res.bar_df
+        metrics = MetricsCalculator(bar_df, None).compute_equity()
 
         if mode == "metrics_only":
             return SweepResultLight(

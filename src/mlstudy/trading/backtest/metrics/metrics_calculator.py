@@ -21,19 +21,24 @@ from mlstudy.trading.backtest.metrics.equity_utils import (
 class MetricsCalculator:
     """Compute backtest metrics from bar_df and trade_df.
 
+    All equity-level metrics are derived solely from the ``equity`` column.
+
     Parameters
     ----------
     bar_df : pd.DataFrame
-        Per-bar DataFrame from ``MRBacktestResults.bar_df``.
-        Required columns: ``pnl``, ``cumulative_pnl``, ``state``.
-        Optional: ``equity``, position columns (``position`` or
-        ``position_0..N-1``), ``holding``.
+        Per-bar DataFrame.
+        Required columns: ``equity``, ``state``.
+        Optional: ``datetime``, position columns (``position`` or
+        ``position_0..N-1``).
     trade_df : pd.DataFrame or None
         Round-trip trade DataFrame from ``MRBacktestResults.trade_df``.
         Expected columns: ``pnl``, ``holding_bars``, ``total_cost``.
         If *None*, trade-level metrics are zeroed out.
-    annualization_factor : int
-        Bars per year for annualizing ratios (default 252).
+    annualization_factor : int or None
+        Bars per year for annualizing ratios.  If *None*, inferred from
+        the ``datetime`` column in *bar_df* (requires at least 2 bars).
+        If provided explicitly and ``datetime`` is available, validated
+        against the inferred value.
     """
 
     def __init__(
@@ -41,25 +46,83 @@ class MetricsCalculator:
         bar_df: pd.DataFrame,
         trade_df: pd.DataFrame | None = None,
         *,
-        annualization_factor: int = 252,
+        annualization_factor: int | None = None,
     ):
         self._bar_df = bar_df
         self._trade_df = trade_df if trade_df is not None else pd.DataFrame()
+
+        if annualization_factor is None:
+            annualization_factor = self.infer_annualization_factor(bar_df)
+        elif "datetime" in bar_df.columns:
+            inferred = self.infer_annualization_factor(bar_df)
+            ratio = abs(annualization_factor - inferred) / max(inferred, 1)
+            if ratio > 0.2:
+                raise ValueError(
+                    f"annualization_factor={annualization_factor} is inconsistent "
+                    f"with inferred value {inferred} from bar_df datetime column "
+                    f"(>{ratio:.0%} deviation)"
+                )
         self.annualization_factor = annualization_factor
 
-        # Derive returns (bar-over-bar PnL) as a Series
-        self._pnl = pd.Series(bar_df["pnl"].values, dtype=np.float64)
-        self._cumulative_pnl = pd.Series(bar_df["cumulative_pnl"].values, dtype=np.float64)
+        # Derive everything from the equity curve
+        equity = bar_df["equity"].values.astype(np.float64)
+        self._equity = pd.Series(equity, dtype=np.float64)
+
+        # pnl[t] = equity[t] - equity[t-1],  pnl[0] = 0
+        pnl = np.diff(equity, prepend=equity[0])
+        pnl[0] = 0.0
+        self._pnl = pd.Series(pnl, dtype=np.float64)
+
+        # cumulative_pnl[t] = equity[t] - equity[0]
+        self._cumulative_pnl = pd.Series(equity - equity[0], dtype=np.float64)
+
+        # percentage returns: ret[t] = (equity[t] - equity[t-1]) / equity[t-1]
+        lagged = np.empty_like(equity)
+        lagged[0] = equity[0]
+        lagged[1:] = equity[:-1]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            rets = np.where(
+                np.abs(lagged) > 1e-10,
+                pnl / lagged,
+                0.0,
+            )
+        self._returns = pd.Series(rets, dtype=np.float64)
 
         # Position: scalar state indicator for hit_rate / pct_in_market
         self._state = pd.Series(bar_df["state"].values, dtype=np.float64)
 
+    @staticmethod
+    def infer_annualization_factor(bar_df: pd.DataFrame) -> int:
+        """Infer annualization factor from bar_df ``datetime`` column.
+
+        Counts the median number of bars per calendar date, then multiplies
+        by 252 (trading days per year).
+
+        Raises
+        ------
+        ValueError
+            If ``bar_df`` has no ``datetime`` column or fewer than 2 bars.
+        """
+        if "datetime" not in bar_df.columns:
+            raise ValueError(
+                "bar_df has no 'datetime' column — cannot infer "
+                "annualization_factor.  Pass it explicitly."
+            )
+        datetimes = pd.to_datetime(bar_df["datetime"])
+        if len(datetimes) < 2:
+            raise ValueError(
+                "Need at least 2 bars to infer annualization_factor"
+            )
+        bars_per_day = datetimes.dt.date.value_counts().median()
+        return int(round(bars_per_day * 252))
+
     def _compute_equity_fields(self) -> dict[str, float | int]:
-        """Equity-curve metrics from bar_df."""
-        returns = self._pnl
+        """Equity-curve metrics derived from the equity curve."""
+        equity = self._equity
+        returns = self._returns
         cumulative = self._cumulative_pnl
 
-        total_pnl = float(returns.sum())
+        total_pnl = float(equity.iloc[-1] - equity.iloc[0])
         mean_ret = float(returns.mean())
         std_ret = float(returns.std())
 

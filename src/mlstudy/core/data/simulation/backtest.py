@@ -354,8 +354,8 @@ def main() -> None:
                     help="Comma-separated instrument_ids in desired order")
     ap.add_argument("--ref", type=str, default="UST_5Y", help="ref_instrument_id for signal")
     ap.add_argument("--start", type=str, default="2026-01-01 09:00:00", help="Start datetime (naive)")
-    ap.add_argument("--periods", type=int, default=2000, help="Number of timestamps")
-    ap.add_argument("--freq", type=str, default="1min", help="Pandas date_range freq, e.g. 1min, 5s, 1H")
+    ap.add_argument("--periods", type=int, default=20000, help="Number of timestamps")
+    ap.add_argument("--freq", type=str, default="5min", help="Pandas date_range freq, e.g. 1min, 5s, 1H")
     ap.add_argument("--levels", type=int, default=5, help="Number of book levels L")
     ap.add_argument("--seed", type=int, default=7, help="RNG seed")
     ap.add_argument("--missing-prob", type=float, default=0.02,

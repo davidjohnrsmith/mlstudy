@@ -56,3 +56,6 @@ class PortfolioBacktestConfig:
 
     # -- Capital --------------------------------------------------------------
     initial_capital: float
+
+    # -- Metrics ------------------------------------------------------------
+    close_time: str   # e.g. "16:00:00"; use "none" to disable close filtering

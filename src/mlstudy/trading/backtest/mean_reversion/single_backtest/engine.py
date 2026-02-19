@@ -170,6 +170,7 @@ def run_backtest(
     return MRBacktestResults.from_loop_output(
         raw,
         datetimes=datetimes,
+        close_time=cfg.close_time if cfg.close_time != "none" else None,
         mid_px=mid_px,
         package_yield_bps=package_yield_bps,
         zscore=zscore,

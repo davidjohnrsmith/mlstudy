@@ -91,7 +91,7 @@ def _make_portfolio_inputs(T: int = 30, B: int = 2, H: int = 1):
         hedge_mid_px=h_mid_px,
         hedge_dv01=np.full((T, H), 0.01, dtype=np.float64),
         hedge_ratios=np.full((T, B, H), -0.5, dtype=np.float64),
-        datetimes=np.arange(T),
+        datetimes=pd.bdate_range("2024-01-02", periods=T, freq="B").values,
     )
 
 
@@ -123,6 +123,7 @@ _FULL_MODE_YAML = {
         "cooldown_mode": 0,
         "min_maturity_inc": 0.0,
         "initial_capital": 1_000_000.0,
+        "close_time": "none",
     },
     "grid": {
         "z_inc": [1.5, 2.0, 3.0],

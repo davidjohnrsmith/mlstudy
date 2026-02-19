@@ -21,6 +21,7 @@ base_config:
   tp_cost_premium_yield_bps: 0.0
   sl_cost_premium_yield_bps: 0.0
   initial_capital: 0.0
+  close_time: "16:30"
   validate_scope: "REF_ONLY"
   use_jit: true
 
