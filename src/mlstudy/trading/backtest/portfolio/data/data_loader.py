@@ -119,6 +119,7 @@ class PortfolioMarketData:
             "hedge_dv01": self.hedge_dv01,
             "hedge_ratios": self.hedge_ratios,
             "datetimes": self.datetimes,
+            "instrument_ids": self.instrument_ids,
         }
         if self.maturity is not None:
             d["maturity"] = self.maturity

@@ -59,6 +59,12 @@ class SweepPersister:
                 arr = getattr(sr.results, field_name)
                 np.save(scenario_dir / f"{field_name}.npy", arr)
 
+            # Persist DataFrames as CSV for easy inspection
+            if sr.results.bar_df is not None:
+                sr.results.bar_df.to_csv(scenario_dir / "bar_df.csv", index=False)
+            if sr.results.trade_df is not None:
+                sr.results.trade_df.to_csv(scenario_dir / "trade_df.csv", index=False)
+
     @staticmethod
     def _save_scenario_plots(
         output_dir: Path,

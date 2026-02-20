@@ -167,7 +167,10 @@ class MetricsCalculator:
             win_loss = 0.0
         else:
             n_trades = len(trade_df)
-            avg_hold = float(trade_df["holding_bars"].mean())
+            if "holding_days" in trade_df.columns:
+                avg_hold = float(trade_df["holding_days"].mean())
+            else:
+                avg_hold = float(trade_df["holding_bars"].mean())
 
             trade_pnl = trade_df["pnl"]
             winners = trade_pnl[trade_pnl > 0]

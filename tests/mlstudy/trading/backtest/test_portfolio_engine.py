@@ -74,6 +74,7 @@ def _base_inputs(T=3, B=2):
         tradable=np.ones(B, dtype=np.int32),
         pos_limits_long=np.full(B, 1e6),
         pos_limits_short=np.full(B, -1e6),
+        instrument_ids=[f"INST_{i}" for i in range(B)],
     )
 
 
@@ -169,6 +170,7 @@ class TestConfig:
 class TestValidation:
     def test_shape_mismatch_dv01(self):
         inputs = _base_inputs()
+        inputs.pop("instrument_ids", None)
         inputs["dv01"] = np.zeros((10, 10))  # wrong shape
         with pytest.raises(ValueError, match="dv01"):
             _validate(**inputs,
@@ -180,6 +182,7 @@ class TestValidation:
     def test_partial_hedge_arrays_rejected(self):
         T, B, H = 3, 2, 1
         inputs = _base_inputs(T, B)
+        inputs.pop("instrument_ids", None)
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H)
         with pytest.raises(ValueError, match="all-None or all-provided"):
             _validate(**inputs,
@@ -191,6 +194,7 @@ class TestValidation:
     def test_hedge_ratios_shape_mismatch(self):
         T, B, H = 3, 2, 1
         inputs = _base_inputs(T, B)
+        inputs.pop("instrument_ids", None)
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H)
         hedge_dv01 = np.full((T, H), 0.01)
         hedge_ratios = np.zeros((T, B + 1, H))  # wrong B dimension
@@ -204,6 +208,7 @@ class TestValidation:
     def test_valid_inputs_pass(self):
         T, B, H = 3, 2, 1
         inputs = _base_inputs(T, B)
+        inputs.pop("instrument_ids", None)
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H)
         hedge_dv01 = np.full((T, H), 0.01)
         hedge_ratios = np.zeros((T, B, H))

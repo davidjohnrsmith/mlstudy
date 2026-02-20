@@ -33,10 +33,20 @@ class FIFORoundTrip:
     entry_vwap: float
     exit_vwap: float
     side: int  # +1 long, -1 short
+    entry_datetime: object = None  # np.datetime64 or None
+    exit_datetime: object = None   # np.datetime64 or None
 
     @property
     def holding_bars(self) -> int:
         return self.exit_bar - self.entry_bar
+
+    @property
+    def holding_days(self) -> float | None:
+        """Calendar days between entry and exit, or None if datetimes unavailable."""
+        if self.entry_datetime is None or self.exit_datetime is None:
+            return None
+        delta = np.datetime64(self.exit_datetime) - np.datetime64(self.entry_datetime)
+        return float(delta / np.timedelta64(1, "D"))
 
     @property
     def pnl(self) -> float:
@@ -60,12 +70,13 @@ def fifo_match(trade_df: pd.DataFrame) -> list[FIFORoundTrip]:
     if trade_df.empty:
         return []
 
+    has_dt = "datetime" in trade_df.columns
     round_trips: list[FIFORoundTrip] = []
 
     for inst in trade_df["instrument"].unique():
         inst_df = trade_df[trade_df["instrument"] == inst].sort_values("bar")
 
-        # FIFO queue: each entry is (remaining_qty, bar, vwap, side)
+        # FIFO queue: each entry is [remaining_qty, bar, vwap, side, datetime]
         queue: deque[list] = deque()
 
         for _, row in inst_df.iterrows():
@@ -73,13 +84,14 @@ def fifo_match(trade_df: pd.DataFrame) -> list[FIFORoundTrip]:
             qty = float(row["qty_fill"])
             bar = int(row["bar"])
             vwap = float(row["vwap"])
+            dt = row["datetime"] if has_dt else None
 
             if qty <= 1e-15:
                 continue
 
             # If queue is empty or same direction, push
             if not queue or queue[0][3] == side:
-                queue.append([qty, bar, vwap, side])
+                queue.append([qty, bar, vwap, side, dt])
                 continue
 
             # Opposite direction → match FIFO
@@ -90,13 +102,15 @@ def fifo_match(trade_df: pd.DataFrame) -> list[FIFORoundTrip]:
 
                 round_trips.append(
                     FIFORoundTrip(
-                        instrument=int(inst),
+                        instrument=inst,
                         qty=match_qty,
                         entry_bar=front[1],
                         exit_bar=bar,
                         entry_vwap=front[2],
                         exit_vwap=vwap,
                         side=front[3],
+                        entry_datetime=front[4],
+                        exit_datetime=dt,
                     )
                 )
 
@@ -107,7 +121,7 @@ def fifo_match(trade_df: pd.DataFrame) -> list[FIFORoundTrip]:
 
             # Leftover goes into queue as new position
             if remaining > 1e-15:
-                queue.append([remaining, bar, vwap, side])
+                queue.append([remaining, bar, vwap, side, dt])
 
     return round_trips
 
@@ -155,8 +169,13 @@ class PortfolioMetricsCalculator(MetricsCalculator):
 
         if round_trips:
             rt_pnls = np.array([rt.pnl for rt in round_trips])
-            rt_holds = np.array([rt.holding_bars for rt in round_trips])
             rt_qtys = np.array([rt.qty for rt in round_trips])
+
+            # Use holding_days when datetimes are available, else holding_bars
+            if round_trips[0].holding_days is not None:
+                rt_holds = np.array([rt.holding_days for rt in round_trips])
+            else:
+                rt_holds = np.array([rt.holding_bars for rt in round_trips])
 
             # Quantity-weighted average holding period
             total_qty = rt_qtys.sum()

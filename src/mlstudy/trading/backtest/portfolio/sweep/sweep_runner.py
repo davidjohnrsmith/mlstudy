@@ -37,6 +37,7 @@ from ..configs.sweep_config import PortfolioSweepConfig
 from ..configs.utils import _resolve_config
 from .sweep import PortfolioSweepExecutor
 from .sweep_persist import PortfolioSweepPersister
+from ...common.sweep.sweep_rank import RankingPlan
 from ...common.sweep.sweep_build import ScenarioBuilder
 from mlstudy.trading.backtest.common.sweep.sweep_types import (
     SweepResult,
@@ -50,6 +51,7 @@ _REQUIRED_KEYS = {
     "bid_px", "bid_sz", "ask_px", "ask_sz", "mid_px",
     "dv01", "fair_price", "zscore", "adf_p_value",
     "tradable", "pos_limits_long", "pos_limits_short",
+    "instrument_ids",
     "hedge_bid_px", "hedge_bid_sz", "hedge_ask_px", "hedge_ask_sz",
     "hedge_mid_px", "hedge_dv01", "hedge_ratios",
 }
@@ -63,6 +65,7 @@ class SweepRunResult:
     raw: list[SweepResult] | list[SweepResultLight] | SweepSummary
     table: pd.DataFrame
     output_dir: Path | None
+    param_leaderboard: pd.DataFrame | None = None
 
     @property
     def all_metrics(self) -> list[SweepResultLight] | None:
@@ -79,6 +82,56 @@ class SweepRunResult:
         if self.raw and isinstance(self.raw[0], SweepResult):
             return self.raw
         return None
+
+    def display_param_leaderboard(self, top_n: int = 10) -> str:
+        """Format the param leaderboard for display.
+
+        Parameters
+        ----------
+        top_n : int
+            Maximum number of rows to display.
+
+        Returns
+        -------
+        str
+            Formatted leaderboard table.
+        """
+        if self.param_leaderboard is None or self.param_leaderboard.empty:
+            return "No param leaderboard available."
+
+        grid_keys = list(self.config.grid.keys())
+        display_metrics = [
+            "total_pnl", "sharpe_ratio", "sortino_ratio", "max_drawdown",
+            "calmar_ratio", "hit_rate", "profit_factor", "n_trades",
+            "avg_holding_period",
+        ]
+
+        lb = self.param_leaderboard.head(top_n)
+        cols = ["rank"] + [k for k in grid_keys if k in lb.columns]
+        cols += [m for m in display_metrics if m in lb.columns]
+        df = lb[[c for c in cols if c in lb.columns]].copy()
+
+        # Format numeric columns for readability
+        for col in df.columns:
+            if col in ("rank", "n_trades"):
+                df[col] = df[col].astype(int)
+            elif col in grid_keys:
+                continue
+            elif df[col].dtype in ("float64", "float32"):
+                if col in ("total_pnl",):
+                    df[col] = df[col].map(lambda x: f"{x:,.0f}")
+                elif col in ("hit_rate",):
+                    df[col] = df[col].map(lambda x: f"{x:.1%}")
+                elif col in ("max_drawdown",):
+                    df[col] = df[col].map(lambda x: f"{x:,.0f}")
+                elif col in ("avg_holding_period",):
+                    df[col] = df[col].map(lambda x: f"{x:.1f}")
+                else:
+                    df[col] = df[col].map(lambda x: f"{x:.4f}")
+
+        header = f"Param Leaderboard (top {len(df)})"
+        separator = "=" * len(header)
+        return f"\n{separator}\n{header}\n{separator}\n{df.to_string(index=False)}\n"
 
 
 class PortfolioSweepRunner:
@@ -138,6 +191,9 @@ class PortfolioSweepRunner:
         # --- 2. Merge market data -------------------------------------------------
         md = dict(market_data or {})
         md.update(market_data_kwargs)
+        # instrument_ids may arrive via the named parameter rather than kwargs
+        if instrument_ids is not None and "instrument_ids" not in md:
+            md["instrument_ids"] = instrument_ids
         if not md and cfg.data_loader is not None:
             logger.info("Loading market data from config data section")
             loaded = cfg.data_loader.load(
@@ -175,7 +231,13 @@ class PortfolioSweepRunner:
         else:
             table = PortfolioSweepExecutor.summary_table(raw)
 
-        # --- 6. Persist results ---------------------------------------------------
+        # --- 6. Build param leaderboard --------------------------------------------
+        grid_keys = list(cfg.grid.keys())
+        param_leaderboard = PortfolioSweepPersister.build_param_leaderboard(
+            table, grid_keys, cfg.ranking_plan,
+        )
+
+        # --- 7. Persist results ---------------------------------------------------
         resolved_output_dir = None
         if save:
             resolved_output_dir = PortfolioSweepRunner.resolve_output_dir(
@@ -185,12 +247,18 @@ class PortfolioSweepRunner:
                 resolved_output_dir, cfg, raw, table, len(scenarios), elapsed,
             )
 
-        return SweepRunResult(
+        result = SweepRunResult(
             config=cfg,
             raw=raw,
             table=table,
             output_dir=resolved_output_dir,
+            param_leaderboard=param_leaderboard,
         )
+
+        # --- 8. Display param leaderboard -----------------------------------------
+        logger.info(result.display_param_leaderboard())
+
+        return result
 
     @staticmethod
     def resolve_output_dir(

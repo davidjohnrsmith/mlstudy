@@ -92,6 +92,8 @@ class PortfolioSweepExecutor:
         # Optional bucket caps
         issuer_dv01_caps=None,
         mat_bucket_dv01_caps=None,
+        # Instrument IDs
+        instrument_ids=None,
         # Hedge arrays (all-or-nothing)
         hedge_bid_px=None,
         hedge_bid_sz=None,
@@ -151,6 +153,9 @@ class PortfolioSweepExecutor:
             pos_limits_long=pos_limits_long,
             pos_limits_short=pos_limits_short,
         )
+        # instrument_ids (required by run_backtest)
+        if instrument_ids is not None:
+            market_data["instrument_ids"] = instrument_ids
         # Optional arrays
         for name, val in [
             ("maturity", maturity),

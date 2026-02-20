@@ -574,6 +574,19 @@ class TestRunnerPersistence:
             assert (sd / "equity.npy").exists()
             assert (sd / "pnl.npy").exists()
 
+    def test_saves_bar_df_and_trade_df_csv(self, full_mode_yaml, market_data, tmp_path):
+        out = tmp_path / "output"
+        SweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, output_dir=out
+        )
+        full_dir = out / "full"
+        for sd in sorted(full_dir.iterdir()):
+            assert (sd / "bar_df.csv").exists()
+            assert (sd / "trade_df.csv").exists()
+            bar_df = pd.read_csv(sd / "bar_df.csv")
+            assert "equity" in bar_df.columns
+            assert len(bar_df) > 0
+
     def test_saves_top_k_structure(self, top_k_yaml, market_data, tmp_path):
         out = tmp_path / "output"
         SweepRunner.run_sweep_from_config(

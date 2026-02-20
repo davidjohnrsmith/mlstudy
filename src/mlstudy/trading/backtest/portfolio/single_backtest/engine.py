@@ -120,6 +120,8 @@ def run_backtest(
     hedge_mid_px: Optional[np.ndarray] = None,
     hedge_dv01: Optional[np.ndarray] = None,
     hedge_ratios: Optional[np.ndarray] = None,
+    # -- Instrument IDs --
+    instrument_ids: list = None,
     # -- Config --
     cfg: PortfolioBacktestConfig = None,
     # -- Optional context --
@@ -167,6 +169,11 @@ def run_backtest(
     """
     if cfg is None:
         raise ValueError("cfg is required — pass a PortfolioBacktestConfig explicitly")
+    if instrument_ids is None:
+        raise ValueError(
+            "instrument_ids is required — pass a list of instrument ID strings "
+            "in the same order as the B dimension of the market data arrays"
+        )
 
     _validate(
         bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -175,6 +182,13 @@ def run_backtest(
         hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
         hedge_mid_px, hedge_dv01, hedge_ratios,
     )
+
+    B = mid_px.shape[1]
+    if len(instrument_ids) != B:
+        raise ValueError(
+            f"instrument_ids length {len(instrument_ids)} != B={B} "
+            f"(must match the instrument dimension of market data arrays)"
+        )
 
     # Convert to float64
     f_bid_px = ensure_f64(bid_px)
@@ -234,4 +248,5 @@ def run_backtest(
         close_time=cfg.close_time if cfg.close_time != "none" else None,
         mid_px=f_mid_px,
         hedge_mid_px=h_kwargs.get("hedge_mid_px"),
+        instrument_ids=instrument_ids,
     )

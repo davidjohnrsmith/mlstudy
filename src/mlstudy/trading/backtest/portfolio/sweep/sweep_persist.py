@@ -24,6 +24,8 @@ from mlstudy.trading.backtest.common.sweep.sweep_persist import (
     save_metrics_averages,
     summary_table,
 )
+from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan, SweepRanker
+from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 from mlstudy.trading.backtest.portfolio.configs.sweep_config import PortfolioSweepConfig
 from mlstudy.trading.backtest.common.sweep.sweep_types import SweepResult, SweepResultLight, SweepSummary
 
@@ -85,6 +87,60 @@ class PortfolioSweepPersister:
                 arr = getattr(sr.results, field_name)
                 np.save(scenario_dir / f"{field_name}.npy", arr)
 
+            # Persist DataFrames as CSV for easy inspection
+            if sr.results.bar_df is not None:
+                sr.results.bar_df.to_csv(scenario_dir / "bar_df.csv", index=False)
+            if sr.results.trade_df is not None:
+                sr.results.trade_df.to_csv(scenario_dir / "trade_df.csv", index=False)
+
+    @staticmethod
+    def build_param_leaderboard(
+        table: pd.DataFrame,
+        grid_keys: list[str],
+        ranking_plan: RankingPlan | None = None,
+        top_n: int = 10,
+    ) -> pd.DataFrame:
+        """Aggregate metrics by param combo, then rank.
+
+        Parameters
+        ----------
+        table : pd.DataFrame
+            Summary table from ``summary_table()`` containing grid param
+            columns and metric columns.
+        grid_keys : list[str]
+            Grid parameter names to group by.
+        ranking_plan : RankingPlan or None
+            Ranking plan for ordering.  Defaults to ``RankingPlan()``.
+        top_n : int
+            Return the top *N* param combos.
+
+        Returns
+        -------
+        pd.DataFrame
+            Ranked leaderboard with ``rank`` column (1-based).
+        """
+        if table.empty:
+            return pd.DataFrame()
+
+        valid_keys = [k for k in grid_keys if k in table.columns]
+        if not valid_keys:
+            return pd.DataFrame()
+
+        if ranking_plan is None:
+            ranking_plan = RankingPlan()
+
+        metric_fields = [f.name for f in BacktestMetrics.__dataclass_fields__.values()]
+        available_metrics = [m for m in metric_fields if m in table.columns]
+        if not available_metrics:
+            return pd.DataFrame()
+
+        agg_cols = valid_keys + available_metrics
+        grouped = table[agg_cols].groupby(valid_keys, dropna=False)[available_metrics]
+        agg = grouped.mean().reset_index()
+
+        ranked = SweepRanker.rank_dataframe(agg, ranking_plan)
+        return ranked.head(top_n).reset_index(drop=True)
+
     @staticmethod
     def persist(
         output_dir: Path,
@@ -106,6 +162,14 @@ class PortfolioSweepPersister:
             cfg.sweep_kwargs, n_scenarios, elapsed,
         )
         save_summary_table(output_dir, table)
+
+        # Param leaderboard
+        grid_keys = list(cfg.grid.keys())
+        leaderboard = PortfolioSweepPersister.build_param_leaderboard(
+            table, grid_keys, cfg.ranking_plan, top_n,
+        )
+        if not leaderboard.empty:
+            leaderboard.to_csv(output_dir / "param_leaderboard.csv", index=False)
 
         if isinstance(raw, SweepSummary):
             save_metrics_results(output_dir, raw.all_metrics)

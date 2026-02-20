@@ -86,15 +86,7 @@ _FAIR_DEC = int(FairType.DEC)
 _FAIR_INC = int(FairType.INC)
 
 
-# ======================================================================
-# Scipy availability
-# ======================================================================
-try:
-    from scipy.optimize import linprog as _linprog  # type: ignore[import-untyped]
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
-    _linprog = None  # type: ignore[assignment]
+from scipy.optimize import linprog as _linprog
 
 
 # ======================================================================
@@ -188,66 +180,64 @@ def _solve_lp(
     ub = np.minimum(dv01_liq_caps, pos_headroom)
     ub = np.maximum(ub, 0.0)
 
-    # Try scipy linprog first
-    if HAS_SCIPY:
-        # Minimise -alpha·x  (maximise alpha·x)
-        c = -alphas.copy()
+    # Minimise -alpha·x  (maximise alpha·x)
+    c = -alphas.copy()
 
-        # Bounds: 0 <= x_i <= ub_i
-        bounds = [(0.0, float(ub[i])) for i in range(K)]
+    # Bounds: 0 <= x_i <= ub_i
+    bounds = [(0.0, float(ub[i])) for i in range(K)]
 
-        # Inequality constraints: A_ub @ x <= b_ub
-        A_rows = []
-        b_rows = []
+    # Inequality constraints: A_ub @ x <= b_ub
+    A_rows = []
+    b_rows = []
 
-        # Gross DV01 cap: sum(x) <= gross_dv01_cap
-        A_rows.append(np.ones(K, dtype=np.float64))
-        b_rows.append(gross_dv01_cap)
+    # Gross DV01 cap: sum(x) <= gross_dv01_cap
+    A_rows.append(np.ones(K, dtype=np.float64))
+    b_rows.append(gross_dv01_cap)
 
-        # Issuer caps
-        if (issuer_bucket is not None and issuer_dv01_caps is not None
-                and len(issuer_dv01_caps) > 0):
-            n_issuers = len(issuer_dv01_caps)
-            for iss in range(n_issuers):
-                row = np.zeros(K, dtype=np.float64)
-                for k in range(K):
-                    b_idx = inst_indices[k]
-                    if issuer_bucket[b_idx] == iss:
-                        row[k] = sides[k]  # signed: buy adds, sell subtracts
-                cap = issuer_dv01_caps[iss]
-                # current + row·x <= cap  =>  row·x <= cap - current
-                A_rows.append(row)
-                b_rows.append(cap - current_issuer_dv01[iss])
-                # Also: current + row·x >= -cap  =>  -row·x <= cap + current
-                A_rows.append(-row)
-                b_rows.append(cap + current_issuer_dv01[iss])
+    # Issuer caps
+    if (issuer_bucket is not None and issuer_dv01_caps is not None
+            and len(issuer_dv01_caps) > 0):
+        n_issuers = len(issuer_dv01_caps)
+        for iss in range(n_issuers):
+            row = np.zeros(K, dtype=np.float64)
+            for k in range(K):
+                b_idx = inst_indices[k]
+                if issuer_bucket[b_idx] == iss:
+                    row[k] = sides[k]  # signed: buy adds, sell subtracts
+            cap = issuer_dv01_caps[iss]
+            # current + row·x <= cap  =>  row·x <= cap - current
+            A_rows.append(row)
+            b_rows.append(cap - current_issuer_dv01[iss])
+            # Also: current + row·x >= -cap  =>  -row·x <= cap + current
+            A_rows.append(-row)
+            b_rows.append(cap + current_issuer_dv01[iss])
 
-        # Maturity bucket caps
-        if (maturity_bucket is not None and mat_bucket_dv01_caps is not None
-                and len(mat_bucket_dv01_caps) > 0):
-            n_buckets = len(mat_bucket_dv01_caps)
-            for bkt in range(n_buckets):
-                row = np.zeros(K, dtype=np.float64)
-                for k in range(K):
-                    b_idx = inst_indices[k]
-                    if maturity_bucket[b_idx] == bkt:
-                        row[k] = sides[k]
-                cap = mat_bucket_dv01_caps[bkt]
-                A_rows.append(row)
-                b_rows.append(cap - current_mat_dv01[bkt])
-                A_rows.append(-row)
-                b_rows.append(cap + current_mat_dv01[bkt])
+    # Maturity bucket caps
+    if (maturity_bucket is not None and mat_bucket_dv01_caps is not None
+            and len(mat_bucket_dv01_caps) > 0):
+        n_buckets = len(mat_bucket_dv01_caps)
+        for bkt in range(n_buckets):
+            row = np.zeros(K, dtype=np.float64)
+            for k in range(K):
+                b_idx = inst_indices[k]
+                if maturity_bucket[b_idx] == bkt:
+                    row[k] = sides[k]
+            cap = mat_bucket_dv01_caps[bkt]
+            A_rows.append(row)
+            b_rows.append(cap - current_mat_dv01[bkt])
+            A_rows.append(-row)
+            b_rows.append(cap + current_mat_dv01[bkt])
 
-        A_ub = np.array(A_rows, dtype=np.float64) if A_rows else None
-        b_ub = np.array(b_rows, dtype=np.float64) if b_rows else None
+    A_ub = np.array(A_rows, dtype=np.float64) if A_rows else None
+    b_ub = np.array(b_rows, dtype=np.float64) if b_rows else None
 
-        try:
-            res = _linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds,
-                           method="highs")
-            if res.success:
-                return np.maximum(res.x, 0.0), False
-        except Exception:
-            pass
+    try:
+        res = _linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds,
+                       method="highs")
+        if res.success:
+            return np.maximum(res.x, 0.0), False
+    except Exception:
+        pass
 
     # Greedy fallback: allocate by descending alpha, respecting caps
     order = np.argsort(-alphas)
@@ -308,8 +298,8 @@ def lp_portfolio_loop(
     # -- Execution params --
     max_levels,         # int       L2 levels to walk
     haircut,            # float     fraction of displayed size usable
-    qty_step,          # float     DV01 rounding step
-    min_qty_trade,     # float     DV01 below this → skip
+    qty_step,          # float     notional rounding step
+    min_qty_trade,     # float     notional below this → skip
     min_fill_ratio,     # float     if filled/requested < this → skip (0 to disable)
     # -- Cooldown --
     cooldown_bars,      # int       bars of cooldown after trading

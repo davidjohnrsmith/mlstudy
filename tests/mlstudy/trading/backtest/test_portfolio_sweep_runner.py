@@ -91,6 +91,7 @@ def _make_portfolio_inputs(T: int = 30, B: int = 2, H: int = 1):
         hedge_mid_px=h_mid_px,
         hedge_dv01=np.full((T, H), 0.01, dtype=np.float64),
         hedge_ratios=np.full((T, B, H), -0.5, dtype=np.float64),
+        instrument_ids=[f"INST_{i}" for i in range(B)],
         datetimes=pd.bdate_range("2024-01-02", periods=T, freq="B").values,
     )
 
@@ -459,6 +460,19 @@ class TestRunnerPersistence:
             assert (sd / "equity.npy").exists()
             assert (sd / "pnl.npy").exists()
 
+    def test_saves_bar_df_and_trade_df_csv(self, full_mode_yaml, market_data, tmp_path):
+        out = tmp_path / "output"
+        PortfolioSweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, output_dir=out
+        )
+        full_dir = out / "full"
+        for sd in sorted(full_dir.iterdir()):
+            assert (sd / "bar_df.csv").exists()
+            assert (sd / "trade_df.csv").exists()
+            bar_df = pd.read_csv(sd / "bar_df.csv")
+            assert "equity" in bar_df.columns
+            assert len(bar_df) > 0
+
     def test_saves_top_k_structure(self, top_k_yaml, market_data, tmp_path):
         out = tmp_path / "output"
         PortfolioSweepRunner.run_sweep_from_config(
@@ -493,6 +507,89 @@ class TestRunnerPersistence:
         assert result.output_dir is not None
         assert "test_portfolio_full" in str(result.output_dir)
         assert result.output_dir.exists()
+
+
+# =========================================================================
+# Param leaderboard
+# =========================================================================
+
+
+class TestParamLeaderboard:
+    def test_leaderboard_returned_on_result(self, full_mode_yaml, market_data, tmp_path):
+        result = PortfolioSweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
+        )
+        assert result.param_leaderboard is not None
+        assert isinstance(result.param_leaderboard, pd.DataFrame)
+        assert "rank" in result.param_leaderboard.columns
+        assert len(result.param_leaderboard) > 0
+
+    def test_leaderboard_has_grid_params(self, full_mode_yaml, market_data, tmp_path):
+        result = PortfolioSweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
+        )
+        cfg = result.config
+        for key in cfg.grid:
+            assert key in result.param_leaderboard.columns
+
+    def test_leaderboard_has_metric_columns(self, full_mode_yaml, market_data, tmp_path):
+        result = PortfolioSweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, output_dir=tmp_path / "out"
+        )
+        assert "total_pnl" in result.param_leaderboard.columns
+        assert "sharpe_ratio" in result.param_leaderboard.columns
+
+    def test_leaderboard_persisted_csv(self, full_mode_yaml, market_data, tmp_path):
+        out = tmp_path / "output"
+        PortfolioSweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, output_dir=out
+        )
+        csv_path = out / "param_leaderboard.csv"
+        assert csv_path.exists()
+        lb = pd.read_csv(csv_path)
+        assert "rank" in lb.columns
+        assert "total_pnl" in lb.columns
+        assert len(lb) > 0
+
+    def test_leaderboard_no_save(self, full_mode_yaml, market_data):
+        result = PortfolioSweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, save=False
+        )
+        # Leaderboard should still be computed even without saving
+        assert result.param_leaderboard is not None
+        assert len(result.param_leaderboard) > 0
+
+    def test_leaderboard_metrics_only_mode(self, metrics_only_yaml, market_data, tmp_path):
+        result = PortfolioSweepRunner.run_sweep_from_config(
+            metrics_only_yaml, market_data=market_data, output_dir=tmp_path / "out"
+        )
+        assert result.param_leaderboard is not None
+        assert len(result.param_leaderboard) > 0
+
+    def test_display_param_leaderboard(self, full_mode_yaml, market_data):
+        result = PortfolioSweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, save=False
+        )
+        output = result.display_param_leaderboard()
+        assert "Param Leaderboard" in output
+        assert "total_pnl" in output
+        assert "sharpe_ratio" in output
+        assert "rank" in output
+
+    def test_display_param_leaderboard_empty(self):
+        """display_param_leaderboard with no leaderboard returns message."""
+        result = SweepRunResult(
+            config=None, raw=[], table=pd.DataFrame(),
+            output_dir=None, param_leaderboard=None,
+        )
+        assert "No param leaderboard" in result.display_param_leaderboard()
+
+    def test_display_param_leaderboard_top_n(self, full_mode_yaml, market_data):
+        result = PortfolioSweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, save=False
+        )
+        output = result.display_param_leaderboard(top_n=1)
+        assert "top 1" in output
 
 
 # =========================================================================

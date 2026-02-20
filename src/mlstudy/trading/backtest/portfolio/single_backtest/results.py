@@ -75,6 +75,7 @@ class PortfolioBacktestResults:
     tr_hedge_fills: np.ndarray
     tr_hedge_cost: np.ndarray
     n_trades: int
+    instrument_ids: list
 
     # optional context
     datetimes: np.ndarray | None = field(default=None, repr=False)
@@ -104,6 +105,7 @@ class PortfolioBacktestResults:
     def from_loop_output(
         out: tuple,
         *,
+        instrument_ids: list,
         datetimes: np.ndarray | None = None,
         close_time: str | None = None,
         mid_px: np.ndarray | None = None,
@@ -143,6 +145,7 @@ class PortfolioBacktestResults:
             close_time=close_time,
             mid_px=mid_px,
             hedge_mid_px=hedge_mid_px,
+            instrument_ids=instrument_ids,
         )
 
     # -------------------------------------------------------------------
@@ -202,10 +205,12 @@ class PortfolioBacktestResults:
             if has_dt:
                 row["datetime"] = self.datetimes[bar]
 
+            inst_idx = int(self.tr_instrument[i])
+
             row.update(
                 {
                     "bar": bar,
-                    "instrument": int(self.tr_instrument[i]),
+                    "instrument": self.instrument_ids[inst_idx],
                     "side": int(self.tr_side[i]),
                     "qty_req": float(self.tr_qty_req[i]),
                     "qty_fill": float(self.tr_qty_fill[i]),
