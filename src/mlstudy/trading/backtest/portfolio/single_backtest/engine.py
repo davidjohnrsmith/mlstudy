@@ -242,11 +242,20 @@ def run_backtest(
         **h_kwargs,
     )
 
+    # Extract top-of-book hedge bid/ask (T, H) from L2 arrays (T, H, L)
+    h_bid_tob = h_kwargs["hedge_bid_px"][:, :, 0] if "hedge_bid_px" in h_kwargs else None
+    h_ask_tob = h_kwargs["hedge_ask_px"][:, :, 0] if "hedge_ask_px" in h_kwargs else None
+
     return PortfolioBacktestResults.from_loop_output(
         raw,
         datetimes=datetimes,
         close_time=cfg.close_time if cfg.close_time != "none" else None,
         mid_px=f_mid_px,
         hedge_mid_px=h_kwargs.get("hedge_mid_px"),
+        hedge_bid_px=h_bid_tob,
+        hedge_ask_px=h_ask_tob,
+        hedge_ratios=h_kwargs.get("hedge_ratios"),
+        dv01=f_dv01,
+        hedge_dv01=h_kwargs.get("hedge_dv01"),
         instrument_ids=instrument_ids,
     )

@@ -184,7 +184,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[26]
+        n_trades = result[27]
         assert n_trades == 0
 
     def test_buy_signal_executes(self):
@@ -209,7 +209,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[26]
+        n_trades = result[27]
         assert n_trades > 0
         # Check that trades are buys
         tr_side = result[11]
@@ -236,7 +236,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[26]
+        n_trades = result[27]
         assert n_trades > 0
         tr_side = result[11]
         for i in range(n_trades):
@@ -353,7 +353,7 @@ class TestSignalGating:
             None, None, None,
             **params,
         )
-        assert result[26] == 0  # no trades
+        assert result[27] == 0  # no trades
 
     def test_high_adf_pvalue_no_fair(self):
         """ADF p-value above threshold should block fair price activation."""
@@ -375,7 +375,7 @@ class TestSignalGating:
             None, None, None,
             **params,
         )
-        assert result[26] == 0
+        assert result[27] == 0
 
 
 class TestPositionLimits:
@@ -426,7 +426,7 @@ class TestNonTradable:
             None, None, None,
             **params,
         )
-        n_trades = result[26]
+        n_trades = result[27]
         tr_instrument = result[10]
         for i in range(n_trades):
             assert tr_instrument[i] != 1  # instrument 1 should never be traded
@@ -550,7 +550,7 @@ class TestHedgeExecution:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[26]
+        n_trades = result[27]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # Instrument buy with negative hedge_ratio → hedge sells → hedge_pos < 0
@@ -711,7 +711,7 @@ class TestNoHedge:
             None, None, None,
             **params,
         )
-        n_trades = result[26]
+        n_trades = result[27]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # H=0 → out_hedge_pos is (T, 1) of zeros
@@ -754,7 +754,7 @@ class TestHedgePartialFill:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[26]
+        n_trades = result[27]
         assert n_trades > 0
         tr_hedge_fills = result[24]
         # Hedge should be partially filled (limited by book size)

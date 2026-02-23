@@ -23,6 +23,7 @@ class PortfolioBacktestResults:
     n_trades_bar  : (T,)    number of instrument trades executed per bar.
     cooldown      : (T,)    remaining cooldown bars.
     hedge_positions : (T, H)  hedge instrument positions at end of each bar.
+    hedge_pnl     : (T,)    hedge PnL per bar (MTM change minus cash outflows).
 
     Per-trade arrays (length *n_trades*)
     ------------------------------------
@@ -55,6 +56,7 @@ class PortfolioBacktestResults:
     n_trades_bar: np.ndarray
     cooldown: np.ndarray
     hedge_positions: np.ndarray
+    hedge_pnl: np.ndarray
 
     # per-trade
     tr_bar: np.ndarray
@@ -82,6 +84,11 @@ class PortfolioBacktestResults:
     close_time: str | None = field(default=None, repr=False)
     mid_px: np.ndarray | None = field(default=None, repr=False)
     hedge_mid_px: np.ndarray | None = field(default=None, repr=False)
+    hedge_bid_px: np.ndarray | None = field(default=None, repr=False)  # (T, H) top-of-book
+    hedge_ask_px: np.ndarray | None = field(default=None, repr=False)  # (T, H) top-of-book
+    hedge_ratios: np.ndarray | None = field(default=None, repr=False)  # (T, B, H)
+    dv01: np.ndarray | None = field(default=None, repr=False)          # (T, B)
+    hedge_dv01: np.ndarray | None = field(default=None, repr=False)    # (T, H)
 
     bar_df: pd.DataFrame = None
     trade_df: pd.DataFrame = None
@@ -110,9 +117,14 @@ class PortfolioBacktestResults:
         close_time: str | None = None,
         mid_px: np.ndarray | None = None,
         hedge_mid_px: np.ndarray | None = None,
+        hedge_bid_px: np.ndarray | None = None,
+        hedge_ask_px: np.ndarray | None = None,
+        hedge_ratios: np.ndarray | None = None,
+        dv01: np.ndarray | None = None,
+        hedge_dv01: np.ndarray | None = None,
     ) -> "PortfolioBacktestResults":
         """Construct from the raw tuple returned by :func:`lp_portfolio_loop`."""
-        n = int(out[26])
+        n = int(out[27])
         return PortfolioBacktestResults(
             positions=out[0],
             cash=out[1],
@@ -123,6 +135,7 @@ class PortfolioBacktestResults:
             n_trades_bar=out[6],
             cooldown=out[7],
             hedge_positions=out[8],
+            hedge_pnl=out[26],
             tr_bar=out[9][:n],
             tr_instrument=out[10][:n],
             tr_side=out[11][:n],
@@ -145,6 +158,11 @@ class PortfolioBacktestResults:
             close_time=close_time,
             mid_px=mid_px,
             hedge_mid_px=hedge_mid_px,
+            hedge_bid_px=hedge_bid_px,
+            hedge_ask_px=hedge_ask_px,
+            hedge_ratios=hedge_ratios,
+            dv01=dv01,
+            hedge_dv01=hedge_dv01,
             instrument_ids=instrument_ids,
         )
 
@@ -181,11 +199,12 @@ class PortfolioBacktestResults:
             for b in range(pos.shape[1]):
                 data[f"position_{b}"] = pos[:T, b]
 
-        # Hedge positions
+        # Hedge positions and PnL
         hpos = self.hedge_positions
         if hpos.ndim == 2 and hpos.shape[1] > 0:
             for h in range(hpos.shape[1]):
                 data[f"hedge_position_{h}"] = hpos[:T, h]
+            data["hedge_pnl"] = self.hedge_pnl[:T]
 
         if self.mid_px is not None and self.mid_px.ndim == 2:
             for b in range(self.mid_px.shape[1]):

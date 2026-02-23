@@ -438,6 +438,7 @@ def lp_portfolio_loop(
 
     # -- Per-bar hedge output --
     out_hedge_pos = np.zeros((T, max(H, 1)), dtype=np.float64)
+    out_hedge_pnl = np.zeros(T, dtype=np.float64)
 
     # -- Mutable state --
     pos = np.zeros(B, dtype=np.float64)     # current notional position per instrument
@@ -445,6 +446,7 @@ def lp_portfolio_loop(
     cash = float(initial_capital)
     cooldown_remaining = 0
     prev_equity = float(initial_capital)
+    prev_hedge_mtm = 0.0
 
     # Pre-compute current bucket dv01 arrays (updated after each bar's trades)
     n_issuers = len(issuer_dv01_caps) if issuer_dv01_caps is not None else 0
@@ -456,6 +458,7 @@ def lp_portfolio_loop(
         code = _NO_ACTION
         bar_cost = 0.0
         bar_n_trades = 0
+        hedge_trade_cash = 0.0  # sum of h_signed * h_vwap for hedge trades this bar
 
         # ==============================================================
         # Step 0: Cooldown check
@@ -797,6 +800,7 @@ def lp_portfolio_loop(
                             continue
                         h_signed = np.sign(hedge_remaining) * h_filled
                         cash -= h_signed * h_vwap
+                        hedge_trade_cash += h_signed * h_vwap
                         hedge_pos[h] += h_signed
                         h_exec_cost = abs(h_vwap - hedge_mid_px[t, h]) * h_filled
                         bar_cost += h_exec_cost
@@ -842,6 +846,15 @@ def lp_portfolio_loop(
         gross_pnl_t = pnl_t + bar_cost
         prev_equity = equity_t
 
+        # Hedge PnL: MTM change minus cash outflows for hedge trades
+        hedge_pnl_t = 0.0
+        if has_hedge:
+            hedge_mtm_t = 0.0
+            for h in range(H):
+                hedge_mtm_t += hedge_pos[h] * hedge_mid_px[t, h]
+            hedge_pnl_t = hedge_mtm_t - prev_hedge_mtm - hedge_trade_cash
+            prev_hedge_mtm = hedge_mtm_t
+
         # Write output arrays
         for b in range(B):
             out_pos[t, b] = pos[b]
@@ -852,6 +865,7 @@ def lp_portfolio_loop(
         out_equity[t] = equity_t
         out_pnl[t] = pnl_t
         out_gross_pnl[t] = gross_pnl_t
+        out_hedge_pnl[t] = hedge_pnl_t
         out_codes[t] = code
         out_n_trades_bar[t] = bar_n_trades
         out_cooldown[t] = cooldown_remaining
@@ -885,6 +899,8 @@ def lp_portfolio_loop(
         tr_hedge_vwaps,     # 23: (max_trades, H)
         tr_hedge_fills,     # 24: (max_trades, H)
         tr_hedge_cost,      # 25: (max_trades,)
+        # Per-bar hedge PnL
+        out_hedge_pnl,      # 26: (T,)
         # Scalar
-        n_trades_total,     # 26
+        n_trades_total,     # 27
     )

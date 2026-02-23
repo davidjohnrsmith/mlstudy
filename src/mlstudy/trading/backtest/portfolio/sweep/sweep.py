@@ -40,7 +40,16 @@ def _run_one_portfolio(
     try:
         res = run_backtest(cfg=scenario.cfg, **market_data)
         bar_df = res.close_bar_df if res.close_bar_df is not None else res.bar_df
-        metrics = PortfolioMetricsCalculator(bar_df, res.trade_df).compute_all()
+        metrics = PortfolioMetricsCalculator(
+            bar_df, res.trade_df,
+            hedge_ratios=res.hedge_ratios,
+            dv01=res.dv01,
+            hedge_dv01=res.hedge_dv01,
+            hedge_mid_px=res.hedge_mid_px,
+            hedge_bid_px=res.hedge_bid_px,
+            hedge_ask_px=res.hedge_ask_px,
+            instrument_ids=res.instrument_ids,
+        ).compute_all()
 
         if mode == "metrics_only":
             return SweepResultLight(
