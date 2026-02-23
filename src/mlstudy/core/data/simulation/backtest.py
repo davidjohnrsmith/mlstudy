@@ -21,7 +21,117 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# ----------------------------
+# Helpers (reuse from your script)
+# ----------------------------
+def _make_datetimes(start: str, periods: int, freq: str) -> pd.DatetimeIndex:
+    return pd.date_range(start=start, periods=periods, freq=freq, tz=None)
 
+
+def _random_walk(rng: np.random.Generator, n: int, step_scale: float) -> np.ndarray:
+    steps = rng.normal(loc=0.0, scale=step_scale, size=n)
+    return np.cumsum(steps)
+
+
+def _drop_rows(df: pd.DataFrame, rng: np.random.Generator, p: float) -> pd.DataFrame:
+    if p <= 0:
+        return df
+    mask = rng.random(len(df)) >= p
+    return df.loc[mask].reset_index(drop=True)
+
+
+def _make_mid_df(
+    rng: np.random.Generator,
+    dts: pd.DatetimeIndex,
+    ids: list[str],
+    jitter_bps: float,
+    base0: float,
+    base_step: float,
+    common_scale: float = 1.0,
+    idio_scale: float = 0.6,
+    id_col: str = "instrument_id",
+) -> pd.DataFrame:
+    """
+    Make correlated mid prices for a list of instruments.
+    mid is roughly in price units around base0 with small random-walk moves.
+    """
+    T = len(dts)
+    # bps -> price units (approx); you used jitter_bps * 1e-4
+    common = _random_walk(rng, T, step_scale=(jitter_bps * common_scale) * 1e-4)
+
+    frames = []
+    for j, inst in enumerate(ids):
+        inst_noise = _random_walk(rng, T, step_scale=(jitter_bps * idio_scale) * 1e-4)
+        base = base0 + base_step * j
+        mid = (base + common + inst_noise).astype(np.float64)
+        frames.append(pd.DataFrame({"datetime": dts, id_col: inst, "mid_px": mid}))
+    return pd.concat(frames, ignore_index=True)
+
+
+def _make_dv01_df(
+    rng: np.random.Generator,
+    dts: pd.DatetimeIndex,
+    ids: list[str],
+    base0: float,
+    base_step: float,
+    noise: float,
+    id_col: str,
+) -> pd.DataFrame:
+    """
+    Simple positive DV01 series per instrument (mostly stable).
+    """
+    T = len(dts)
+    frames = []
+    for j, inst in enumerate(ids):
+        base = base0 + base_step * j
+        dv01 = (base + rng.normal(0, noise, size=T)).astype(np.float64)
+        dv01 = np.clip(dv01, 1e-6, None)
+        frames.append(pd.DataFrame({"datetime": dts, id_col: inst, "dv01": dv01}))
+    return pd.concat(frames, ignore_index=True)
+
+
+def _make_book_df(
+    rng: np.random.Generator,
+    dts: pd.DatetimeIndex,
+    mid_df: pd.DataFrame,
+    ids: list[str],
+    levels: int,
+    spread0: float,
+    spread_step: float,
+    size0: float,
+    size_step: float,
+    id_col: str,
+    # IMPORTANT: column naming here matches your PortfolioDataLoader expectations:
+    # bid_px_0/bid_sz_0/ask_px_0/ask_sz_0 ...
+) -> pd.DataFrame:
+    T = len(dts)
+    mid_pivot = mid_df.pivot(index="datetime", columns=id_col, values="mid_px").reindex(dts)
+
+    frames = []
+    for inst in ids:
+        inst_mid = mid_pivot[inst].to_numpy(dtype=np.float64)
+
+        # If mid_df had missing rows, pivot introduces NaNs; keep them (gaps are fine),
+        # but when computing book, NaNs will propagate. That’s okay if loader ffill/drop.
+        rows: dict[str, object] = {"datetime": dts, id_col: inst}
+
+        for l in range(levels):
+            spread = (spread0 + spread_step * l)  # in price units
+            bid = (inst_mid - spread).astype(np.float64)
+            ask = (inst_mid + spread).astype(np.float64)
+
+            # sizes
+            bid_sz = (size0 + size_step * l) * (1.0 + rng.normal(0, 0.05, size=T))
+            ask_sz = (size0 + size_step * l) * (1.0 + rng.normal(0, 0.05, size=T))
+
+            rows[f"bid_px_l{l}"] = bid
+            rows[f"ask_px_l{l}"] = ask
+            rows[f"bid_sz_l{l}"] = np.maximum(1.0, bid_sz).astype(np.float64)
+            rows[f"ask_sz_l{l}"] = np.maximum(1.0, ask_sz).astype(np.float64)
+
+        frames.append(pd.DataFrame(rows))
+
+    return pd.concat(frames, ignore_index=True)
 @dataclass
 class GenConfig:
     out_dir: Path
@@ -104,39 +214,27 @@ def generate_parquets(cfg: GenConfig) -> None:
     dv01_df.to_parquet(cfg.out_dir / "dv01.parquet", index=False)
 
     # ---- Book levels (bid/ask px/sz) ------------------------------------------
-    # Loader auto-detects levels via bid_price_l0..L-1 columns. :contentReference[oaicite:3]{index=3}
-    # We build around mid with a spread that widens with depth.
-    book_frames = []
-    # Merge mid values so book is consistent with mid
-    mid_pivot = mid_df.pivot(index="datetime", columns="instrument_id", values="mid_px").reindex(dts)
-    # If mid_df had missing rows, mid_pivot can have NaNs; book gaps are fine (loader can ffill/drop). :contentReference[oaicite:4]{index=4}
-    for inst in instruments:
-        inst_mid = mid_pivot[inst].to_numpy()
-        rows = {"datetime": dts, "instrument_id": inst}
-        for l in range(cfg.levels):
-            # spread in price units; deeper levels have worse prices
-            spread = (0.8 + 0.3 * l) * 1e-2  # ~0.008..0.017 price units
-            # sizes increase with depth
-            bid_sz = (100 + 50 * l) * (1.0 + rng.normal(0, 0.05, size=T))
-            ask_sz = (100 + 50 * l) * (1.0 + rng.normal(0, 0.05, size=T))
-
-            rows[f"bid_price_l{l}"] = (inst_mid - spread).astype(np.float64)
-            rows[f"ask_price_l{l}"] = (inst_mid + spread).astype(np.float64)
-            rows[f"bid_size_l{l}"] = np.maximum(1.0, bid_sz).astype(np.float64)
-            rows[f"ask_size_l{l}"] = np.maximum(1.0, ask_sz).astype(np.float64)
-
-        book_frames.append(pd.DataFrame(rows))
-
-    book_df = pd.concat(book_frames, ignore_index=True)
+    book_df = _make_book_df(
+        rng, dts, mid_df, cfg.instrument_ids, cfg.levels,
+        spread0=0.008, spread_step=0.003,  # similar to your single-instrument generator
+        size0=100.0, size_step=50.0,
+        id_col="instrument_id",
+    )
     book_df = _drop_rows(book_df, rng, cfg.missing_prob)
     book_df.to_parquet(cfg.out_dir / "book.parquet", index=False)
 
     # ---- Signal (for ALL instruments) --------------------------------------------
-    # If your loader currently filters to one ref instrument, it can still do so;
-    # but this dataset now supports switching ref instruments without regenerating.
 
     signal_frames = []
+
+    # horizon in bars for "1 day ahead" forecast.
+    # If your bar is 5min, 1 day ≈ 288; if unknown, pick something stable.
+    horizon = getattr(cfg, "fair_horizon_bars", None)
+    if horizon is None:
+        horizon = min(288, max(1, T // 5))
+
     for j, inst in enumerate(instruments):
+        # --- z-score AR-ish process ---
         z = rng.normal(0, 1.0, size=T)
         for t in range(1, T):
             z[t] = 0.92 * z[t - 1] + 0.35 * z[t]
@@ -147,6 +245,34 @@ def generate_parquets(cfg: GenConfig) -> None:
         expected_yield_pnl_bps = (-0.8 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
         package_yield_bps = (0.5 * z + rng.normal(0, 0.2, size=T)).astype(np.float64)
 
+        # --- NEW: simulate a mid price and a 1-day ahead fair_price forecast ---
+        # mid price random walk around a level; make instruments differ slightly
+        mid0 = 100.0 + 2.0 * j + rng.normal(0, 1.0)
+        mid = np.empty(T, dtype=np.float64)
+        mid[0] = mid0
+        for t in range(1, T):
+            mid[t] = mid[t - 1] + rng.normal(0, 0.03)  # small drift/vol
+
+        # create fair = future mid (shifted) + forecast noise
+        fair_price = np.empty(T, dtype=np.float64)
+        if horizon < T:
+            fair_price[:-horizon] = mid[horizon:]
+            fair_price[-horizon:] = mid[-1]  # last part: hold flat
+        else:
+            fair_price[:] = mid[-1]
+
+        # Add model noise (prediction error)
+        fair_price += rng.normal(0, 0.05, size=T)
+
+        # --- NEW: adf p-value regime simulation ---
+        # 70% mean-reverting regime (small p), 30% non-stationary (large p)
+        stable = rng.random(T) < 0.7
+        adf_p_value = np.where(
+            stable,
+            rng.uniform(0.001, 0.08, size=T),  # "passes" typical p-threshold
+            rng.uniform(0.12, 0.90, size=T),  # "fails" ADF gate
+        ).astype(np.float64)
+
         signal_frames.append(
             pd.DataFrame(
                 {
@@ -155,6 +281,9 @@ def generate_parquets(cfg: GenConfig) -> None:
                     "zscore": z.astype(np.float64),
                     "expected_yield_pnl_bps": expected_yield_pnl_bps,
                     "package_yield_bps": package_yield_bps,
+                    # NEW columns
+                    "fair_price": fair_price,
+                    "adf_p_value": adf_p_value,
                 }
             )
         )
@@ -225,8 +354,8 @@ def main() -> None:
                     help="Comma-separated instrument_ids in desired order")
     ap.add_argument("--ref", type=str, default="UST_5Y", help="ref_instrument_id for signal")
     ap.add_argument("--start", type=str, default="2026-01-01 09:00:00", help="Start datetime (naive)")
-    ap.add_argument("--periods", type=int, default=2000, help="Number of timestamps")
-    ap.add_argument("--freq", type=str, default="1min", help="Pandas date_range freq, e.g. 1min, 5s, 1H")
+    ap.add_argument("--periods", type=int, default=20000, help="Number of timestamps")
+    ap.add_argument("--freq", type=str, default="5min", help="Pandas date_range freq, e.g. 1min, 5s, 1H")
     ap.add_argument("--levels", type=int, default=5, help="Number of book levels L")
     ap.add_argument("--seed", type=int, default=7, help="RNG seed")
     ap.add_argument("--missing-prob", type=float, default=0.02,

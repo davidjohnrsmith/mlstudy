@@ -8,21 +8,24 @@ import warnings
 import numpy as np
 import pytest
 
+from mlstudy.trading.backtest.common.sweep.sweep_build import ScenarioBuilder
 from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import (
+from mlstudy.trading.backtest.common.sweep.sweep_types import (
     SweepResultLight,
     SweepResult,
     SweepScenario,
     SweepSummary,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import ScenarioBuilder
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep import SweepExecutor
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import (
+from mlstudy.trading.backtest.common.sweep.sweep_rank import (
     RankingPlan,
     SweepRanker,
 )
+from mlstudy.trading.backtest.mean_reversion.parameters.parameter import MRParameter
 from mlstudy.trading.backtest.parameters.parameters_registry import ParameterPreferenceRegistry
 from mlstudy.trading.backtest.metrics.metrics_registry import MetricPreferenceRegistry
+
+_MR_REGISTRY = ParameterPreferenceRegistry(MRParameter)
 from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 
 
@@ -52,6 +55,7 @@ def _make_scripted_inputs(
     base_book_size: float = 1000.0,
 ):
     """Minimal scripted dataset (same pattern as test_mr_backtest.py)."""
+    import pandas as pd
     N = 3
     ref_idx = 1
     hedge_ratios = np.tile(
@@ -100,6 +104,8 @@ def _make_scripted_inputs(
         zscore[sl_bar + 1 :] = 0.0
         package_yield_bps[sl_bar + 1 :] = 100.0
 
+    datetimes = pd.bdate_range("2024-01-02", periods=T, freq="B").values
+
     return dict(
         bid_px=bid_px,
         bid_sz=bid_sz,
@@ -112,6 +118,7 @@ def _make_scripted_inputs(
         package_yield_bps=package_yield_bps,
         hedge_ratios=hedge_ratios,
         ref_idx=ref_idx,
+        datetimes=datetimes,
     )
 
 
@@ -128,6 +135,7 @@ def _base_cfg(ref_idx: int = 1) -> MRBacktestConfig:
         expected_yield_pnl_bps_multiplier=1.0,
         entry_cost_premium_yield_bps=0.0,
         tp_cost_premium_yield_bps=0.0,
+        sl_cost_premium_yield_bps=0.0,
         tp_quarantine_bars=2,
         sl_quarantine_bars=3,
         time_quarantine_bars=0,
@@ -135,6 +143,7 @@ def _base_cfg(ref_idx: int = 1) -> MRBacktestConfig:
         size_haircut=1.0,
         validate_scope="ALL_LEGS",
         initial_capital=0.0,
+        close_time="none",
         use_jit=False,
     )
 
@@ -716,18 +725,22 @@ class TestRanking:
             MetricPreferenceRegistry.direction("bogus_metric")
 
     def test_param_registry_known(self):
-        assert ParameterPreferenceRegistry.direction("target_notional_ref") == +1
-        assert ParameterPreferenceRegistry.direction("entry_z_threshold") == +1
-        assert ParameterPreferenceRegistry.direction("max_holding_bars") == -1
-        assert ParameterPreferenceRegistry.direction("size_haircut") == -1
+        assert _MR_REGISTRY.direction("target_notional_ref") == +1
+        assert _MR_REGISTRY.direction("entry_z_threshold") == +1
+        assert _MR_REGISTRY.direction("max_holding_bars") == -1
+        assert _MR_REGISTRY.direction("size_haircut") == -1
 
     def test_param_registry_unknown(self):
         with pytest.raises(ValueError, match="Unknown parameter"):
-            ParameterPreferenceRegistry.direction("nonexistent_param")
+            _MR_REGISTRY.direction("nonexistent_param")
+
+    def test_mr_registry_rejects_portfolio_param(self):
+        with pytest.raises(ValueError, match="Unknown parameter"):
+            _MR_REGISTRY.direction("gross_dv01_cap")
 
     def test_default_plan_matches_pnl_order(self):
         results = _metrics_only_results()
-        ranked = SweepRanker.rank_scenarios(results)
+        ranked = SweepRanker.rank_scenarios(results, RankingPlan())
 
         pnls = [r.metrics.total_pnl for r in ranked]
         assert pnls == sorted(pnls, reverse=True)
@@ -784,6 +797,7 @@ class TestRanking:
         plan = RankingPlan(
             primary_metrics=(("total_pnl", 1.0),),
             primary_params=(("size_haircut", 1.0),),
+            param_registry=_MR_REGISTRY,
         )
         ranked = SweepRanker.rank_scenarios([r1, r2], plan)
 
@@ -793,12 +807,12 @@ class TestRanking:
 
     def test_single_scenario(self):
         results = _metrics_only_results()[:1]
-        ranked = SweepRanker.rank_scenarios(results)
+        ranked = SweepRanker.rank_scenarios(results, RankingPlan())
         assert len(ranked) == 1
         assert ranked[0].scenario_idx == results[0].scenario_idx
 
     def test_empty_list(self):
-        ranked = SweepRanker.rank_scenarios([])
+        ranked = SweepRanker.rank_scenarios([], RankingPlan())
         assert ranked == []
 
     def test_run_sweep_with_ranking_plan(self):

@@ -26,43 +26,46 @@ class MRBacktestConfig:
     """
 
     # -- sizing / reference ------------------------------------------------
-    target_notional_ref: float = 100.0
-    ref_leg_idx: int = 0
+    target_notional_ref: float
+    ref_leg_idx: int
 
     # -- entry -------------------------------------------------------------
-    entry_z_threshold: float = 2.0
+    entry_z_threshold: float
 
     # -- take-profit -------------------------------------------------------
-    take_profit_zscore_soft_threshold: float = 0.5
-    take_profit_yield_change_soft_threshold: float = 1.0  # yield bps
-    take_profit_yield_change_hard_threshold: float = 3.0  # yield bps
+    take_profit_zscore_soft_threshold: float
+    take_profit_yield_change_soft_threshold: float
+    take_profit_yield_change_hard_threshold: float
 
     # -- stop-loss ---------------------------------------------------------
-    stop_loss_yield_change_hard_threshold: float = 5.0  # yield bps
+    stop_loss_yield_change_hard_threshold: float
 
     # -- max holding -------------------------------------------------------
-    max_holding_bars: int = 0  # 0 = disabled
+    max_holding_bars: int
 
     # -- cost premia -------------------------------------------------------
-    expected_yield_pnl_bps_multiplier: float = 1.0
-    entry_cost_premium_yield_bps: float = 0.0
-    tp_cost_premium_yield_bps: float = 0.0
-    sl_cost_premium_yield_bps: float = 0.0  # unused for forced
+    expected_yield_pnl_bps_multiplier: float
+    entry_cost_premium_yield_bps: float
+    tp_cost_premium_yield_bps: float
+    sl_cost_premium_yield_bps: float
 
     # -- quarantine --------------------------------------------------------
-    tp_quarantine_bars: int = 0
-    sl_quarantine_bars: int = 0
-    time_quarantine_bars: int = 0
+    tp_quarantine_bars: int
+    sl_quarantine_bars: int
+    time_quarantine_bars: int
 
     # -- execution ---------------------------------------------------------
-    max_levels_to_cross: int = 5
-    size_haircut: float = 1.0
+    max_levels_to_cross: int
+    size_haircut: float
 
     # -- market validity ---------------------------------------------------
-    validate_scope: str = "REF_ONLY"  # "REF_ONLY" | "ALL_LEGS"
+    validate_scope: str
 
     # -- initial state -----------------------------------------------------
-    initial_capital: float = 0.0
+    initial_capital: float
+
+    # -- metrics -----------------------------------------------------------
+    close_time: str   # e.g. "16:00:00"; use "none" to disable close filtering
 
     # -- JIT ---------------------------------------------------------------
-    use_jit: bool = False
+    use_jit: bool

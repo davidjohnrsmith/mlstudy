@@ -36,6 +36,35 @@ from mlstudy.trading.backtest.mean_reversion.single_backtest.loop import HAS_NUM
 # Helpers
 # =========================================================================
 
+def _cfg(**overrides):
+    """Build an MRBacktestConfig with test defaults."""
+    defaults = dict(
+        target_notional_ref=100.0,
+        ref_leg_idx=0,
+        entry_z_threshold=2.0,
+        take_profit_zscore_soft_threshold=0.5,
+        take_profit_yield_change_soft_threshold=1.0,
+        take_profit_yield_change_hard_threshold=3.0,
+        stop_loss_yield_change_hard_threshold=5.0,
+        max_holding_bars=0,
+        expected_yield_pnl_bps_multiplier=1.0,
+        entry_cost_premium_yield_bps=0.0,
+        tp_cost_premium_yield_bps=0.0,
+        sl_cost_premium_yield_bps=0.0,
+        tp_quarantine_bars=0,
+        sl_quarantine_bars=0,
+        time_quarantine_bars=0,
+        max_levels_to_cross=5,
+        size_haircut=1.0,
+        validate_scope="REF_ONLY",
+        initial_capital=0.0,
+        close_time="none",
+        use_jit=False,
+    )
+    defaults.update(overrides)
+    return MRBacktestConfig(**defaults)
+
+
 def _make_book(mid_px, half_spread, level2_offset, base_sizes):
     """Build 2-level L2 book from mid prices.
 
@@ -187,26 +216,12 @@ class TestMRBacktestEndToEnd:
 
     def _run(self, **kw):
         d = _make_scripted_inputs(**kw)
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=d["ref_idx"],
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
-            max_holding_bars=0,  # disabled
-            expected_yield_pnl_bps_multiplier=1.0,
-            entry_cost_premium_yield_bps=0.0,
-            tp_cost_premium_yield_bps=0.0,
             tp_quarantine_bars=2,
             sl_quarantine_bars=3,
-            time_quarantine_bars=0,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            initial_capital=0.0,
-            use_jit=False,
         )
         res = run_backtest(
             bid_px=d["bid_px"],
@@ -352,18 +367,10 @@ class TestMRBacktestNoLiquidity:
 
     def test_no_liquidity_blocks_entry(self):
         d = _make_scripted_inputs(zero_liquidity_bar=5)
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=d["ref_idx"],
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            use_jit=False,
         )
         res = run_backtest(
             bid_px=d["bid_px"],
@@ -389,21 +396,13 @@ class TestMRBacktestTooWide:
 
     def test_too_wide_blocks_entry(self):
         d = _make_scripted_inputs()
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=d["ref_idx"],
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
             # Tiny expected PnL + large cost premium -> negative budget
             expected_yield_pnl_bps_multiplier=0.01,
             entry_cost_premium_yield_bps=100.0,
-            use_jit=False,
         )
         res = run_backtest(
             bid_px=d["bid_px"],
@@ -459,19 +458,11 @@ class TestMRBacktestCooldownWithSignal:
         # Bar 9: cooldown expired, can enter
         zscore[9] = 3.0
 
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=ref_idx,
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
             sl_quarantine_bars=3,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            use_jit=False,
         )
 
         res = run_backtest(
@@ -523,19 +514,12 @@ class TestMRBacktestMaxHolding:
         zscore[3:] = 2.0
 
 
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=ref_idx,
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
             stop_loss_yield_change_hard_threshold=50.0,  # very high, won't trigger
             max_holding_bars=5,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            use_jit=False,
         )
 
         res = run_backtest(
@@ -589,18 +573,11 @@ class TestMRBacktestInactiveLegs:
         zscore[2] = 3.0
         zscore[3:] = 2.0
 
-        cfg = MRBacktestConfig(
-            target_notional_ref=100.0,
+        cfg = _cfg(
             ref_leg_idx=ref_idx,
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
             stop_loss_yield_change_hard_threshold=50.0,
             max_levels_to_cross=2,
-            size_haircut=1.0,
             validate_scope="ALL_LEGS",
-            use_jit=False,
         )
 
         res = run_backtest(
@@ -630,21 +607,6 @@ class TestMRBacktestJITParity:
 
     def test_py_vs_jit_match(self):
         d = _make_scripted_inputs()
-        base_cfg = dict(
-            target_notional_ref=100.0,
-            ref_leg_idx=d["ref_idx"],
-            entry_z_threshold=2.0,
-            take_profit_zscore_soft_threshold=0.5,
-            take_profit_yield_change_soft_threshold=1.0,
-            take_profit_yield_change_hard_threshold=3.0,
-            stop_loss_yield_change_hard_threshold=5.0,
-            tp_quarantine_bars=2,
-            sl_quarantine_bars=3,
-            max_levels_to_cross=2,
-            size_haircut=1.0,
-            validate_scope="ALL_LEGS",
-            initial_capital=0.0,
-        )
         inputs = dict(
             bid_px=d["bid_px"],
             bid_sz=d["bid_sz"],
@@ -657,9 +619,16 @@ class TestMRBacktestJITParity:
             package_yield_bps=d["package_yield_bps"],
             hedge_ratios=d["hedge_ratios"],
         )
+        shared = dict(
+            ref_leg_idx=d["ref_idx"],
+            tp_quarantine_bars=2,
+            sl_quarantine_bars=3,
+            max_levels_to_cross=2,
+            validate_scope="ALL_LEGS",
+        )
 
-        res_py = run_backtest(**inputs, cfg=MRBacktestConfig(**base_cfg, use_jit=False))
-        res_jit = run_backtest(**inputs, cfg=MRBacktestConfig(**base_cfg, use_jit=True))
+        res_py = run_backtest(**inputs, cfg=_cfg(**shared, use_jit=False))
+        res_jit = run_backtest(**inputs, cfg=_cfg(**shared, use_jit=True))
 
         np.testing.assert_array_equal(res_py.codes, res_jit.codes)
         np.testing.assert_array_equal(res_py.state, res_jit.state)
@@ -670,3 +639,106 @@ class TestMRBacktestJITParity:
         assert res_py.n_trades == res_jit.n_trades
         np.testing.assert_array_equal(res_py.tr_bar, res_jit.tr_bar)
         np.testing.assert_array_equal(res_py.tr_code, res_jit.tr_code)
+
+
+class TestCloseBarDf:
+    """Tests for close_bar_df filtering on MRBacktestResults."""
+
+    def test_close_bar_df_none_when_close_time_none(self):
+        """close_bar_df is None when close_time='none'."""
+        d = _make_scripted_inputs()
+        cfg = _cfg(ref_leg_idx=d["ref_idx"], validate_scope="ALL_LEGS")
+        res = run_backtest(
+            bid_px=d["bid_px"], bid_sz=d["bid_sz"],
+            ask_px=d["ask_px"], ask_sz=d["ask_sz"],
+            mid_px=d["mid_px"], dv01=d["dv01"],
+            zscore=d["zscore"],
+            expected_yield_pnl_bps=d["expected_yield_pnl_bps"],
+            package_yield_bps=d["package_yield_bps"],
+            hedge_ratios=d["hedge_ratios"],
+            cfg=cfg,
+        )
+        assert res.close_bar_df is None
+
+    def test_close_bar_df_none_when_no_datetimes(self):
+        """close_bar_df is None when datetimes not provided even with close_time set."""
+        d = _make_scripted_inputs()
+        cfg = _cfg(ref_leg_idx=d["ref_idx"], close_time="16:00:00", validate_scope="ALL_LEGS")
+        res = run_backtest(
+            bid_px=d["bid_px"], bid_sz=d["bid_sz"],
+            ask_px=d["ask_px"], ask_sz=d["ask_sz"],
+            mid_px=d["mid_px"], dv01=d["dv01"],
+            zscore=d["zscore"],
+            expected_yield_pnl_bps=d["expected_yield_pnl_bps"],
+            package_yield_bps=d["package_yield_bps"],
+            hedge_ratios=d["hedge_ratios"],
+            cfg=cfg,
+        )
+        assert res.close_bar_df is None
+
+    def test_close_bar_df_filters_correctly(self):
+        """close_bar_df correctly filters to rows matching the close time."""
+        import pandas as pd
+
+        T = 20
+        d = _make_scripted_inputs(T=T, entry_bar=5, tp_bar=15, sl_bar=18)
+        # Create intraday datetimes: 4 bars per day at specific times
+        bars_per_day = 4
+        n_days = T // bars_per_day
+        times = ["09:30:00", "11:00:00", "14:00:00", "16:00:00"]
+        datetimes = []
+        base = pd.Timestamp("2024-01-02")
+        for day in range(n_days):
+            for t in times:
+                datetimes.append(base + pd.Timedelta(days=day) + pd.Timedelta(t))
+        datetimes = np.array(datetimes, dtype="datetime64[ns]")
+
+        cfg = _cfg(ref_leg_idx=d["ref_idx"], close_time="16:00:00", validate_scope="ALL_LEGS")
+        res = run_backtest(
+            bid_px=d["bid_px"], bid_sz=d["bid_sz"],
+            ask_px=d["ask_px"], ask_sz=d["ask_sz"],
+            mid_px=d["mid_px"], dv01=d["dv01"],
+            zscore=d["zscore"],
+            expected_yield_pnl_bps=d["expected_yield_pnl_bps"],
+            package_yield_bps=d["package_yield_bps"],
+            hedge_ratios=d["hedge_ratios"],
+            cfg=cfg, datetimes=datetimes,
+        )
+
+        assert res.close_bar_df is not None
+        assert len(res.close_bar_df) == n_days
+        # All rows should have time 16:00:00
+        close_times = pd.to_datetime(res.close_bar_df["datetime"]).dt.time
+        for t in close_times:
+            assert t == pd.Timestamp("16:00:00").time()
+
+    def test_close_bar_df_has_equity_column(self):
+        """close_bar_df should contain all the same columns as bar_df."""
+        import pandas as pd
+
+        T = 20
+        d = _make_scripted_inputs(T=T, entry_bar=2, tp_bar=8, sl_bar=18)
+        times = ["10:00:00", "16:00:00"]
+        datetimes = []
+        base = pd.Timestamp("2024-01-02")
+        for day in range(T // 2):
+            for t in times:
+                datetimes.append(base + pd.Timedelta(days=day) + pd.Timedelta(t))
+        datetimes = np.array(datetimes, dtype="datetime64[ns]")
+
+        cfg = _cfg(ref_leg_idx=d["ref_idx"], close_time="16:00:00", validate_scope="ALL_LEGS")
+        res = run_backtest(
+            bid_px=d["bid_px"], bid_sz=d["bid_sz"],
+            ask_px=d["ask_px"], ask_sz=d["ask_sz"],
+            mid_px=d["mid_px"], dv01=d["dv01"],
+            zscore=d["zscore"],
+            expected_yield_pnl_bps=d["expected_yield_pnl_bps"],
+            package_yield_bps=d["package_yield_bps"],
+            hedge_ratios=d["hedge_ratios"],
+            cfg=cfg, datetimes=datetimes,
+        )
+
+        assert res.close_bar_df is not None
+        assert "equity" in res.close_bar_df.columns
+        assert "datetime" in res.close_bar_df.columns
+        assert set(res.close_bar_df.columns) == set(res.bar_df.columns)

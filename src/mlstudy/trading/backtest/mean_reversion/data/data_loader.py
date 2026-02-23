@@ -24,7 +24,6 @@ Usage::
 from __future__ import annotations
 
 import logging
-import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,7 +32,20 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from mlstudy.trading.backtest.common.data.helpers import (
+    align_and_fill,
+    detect_book_levels,
+    extract_hedge_ids,
+    pivot_book,
+    pivot_simple,
+    reshape_book,
+    warn_nans,
+)
+
 logger = logging.getLogger(__name__)
+
+# Backward-compatible alias for tests that import the private name
+_detect_book_levels = detect_book_levels
 
 
 @dataclass(frozen=True)
@@ -167,7 +179,7 @@ class BacktestDataLoader:
         hedge_df = pd.read_parquet(data_path_dir / self.hedge_ratio_filename)
 
         # --- 2. Auto-detect book levels -----------------------------------------
-        n_levels = _detect_book_levels(book_df.columns)
+        n_levels = detect_book_levels(book_df.columns)
         logger.info("Detected %d book levels", n_levels)
 
         # --- 3. Filter signal to ref instrument ---------------------------------
@@ -181,9 +193,9 @@ class BacktestDataLoader:
 
         # --- 4. Pivot long → wide -----------------------------------------------
         # Book: pivot each level column per instrument
-        book_pivoted = _pivot_book(book_df, dt_col, inst_col, instruments, n_levels)
-        mid_pivoted = _pivot_simple(mid_df, dt_col, inst_col, instruments, "mid_px")
-        dv01_pivoted = _pivot_simple(dv01_df, dt_col, inst_col, instruments, "dv01")
+        book_pivoted = pivot_book(book_df, dt_col, inst_col, instruments, n_levels)
+        mid_pivoted = pivot_simple(mid_df, dt_col, inst_col, instruments, "mid_px")
+        dv01_pivoted = pivot_simple(dv01_df, dt_col, inst_col, instruments, "dv01")
 
         # Signal: already filtered to single instrument, just set index
         signal_indexed = signal_df.set_index(dt_col)[
@@ -198,66 +210,26 @@ class BacktestDataLoader:
         )
 
         # --- 5. Build unified datetime index & align ----------------------------
-        all_dts = sorted(
-            set(book_pivoted.index)
-            | set(mid_pivoted.index)
-            | set(dv01_pivoted.index)
-            | set(signal_indexed.index)
-            | set(hedge_pivoted.index)
-        )
-        all_dts_idx = pd.DatetimeIndex(all_dts)
-
         sources = {
-            "book": book_pivoted.reindex(all_dts_idx),
-            "mid": mid_pivoted.reindex(all_dts_idx),
-            "dv01": dv01_pivoted.reindex(all_dts_idx),
-            "signal": signal_indexed.reindex(all_dts_idx),
-            "hedge": hedge_pivoted.reindex(all_dts_idx),
+            "book": book_pivoted,
+            "mid": mid_pivoted,
+            "dv01": dv01_pivoted,
+            "signal": signal_indexed,
+            "hedge": hedge_pivoted,
         }
 
-        if self.fill_method == "ffill":
-            for key in sources:
-                sources[key] = sources[key].ffill()
-
-            # Drop leading rows where signal + hedge still have NaN
-            # (market data for inactive instruments may legitimately
-            # have no prior value to ffill from).
-            essential_valid = pd.concat(
-                [sources[k].notna().all(axis=1) for k in ("signal", "hedge")],
-                axis=1,
-            ).all(axis=1)
-            first_valid = essential_valid.idxmax() if essential_valid.any() else None
-            if first_valid is None:
-                raise ValueError("No rows with complete data after ffill")
-            mask = all_dts_idx >= first_valid
-            for key in sources:
-                sources[key] = sources[key].loc[mask]
-            all_dts_idx = all_dts_idx[mask]
-
-            # Fill remaining NaN in market data for inactive instruments
-            # dv01 → 1.0 (safe non-zero denominator, multiplied by 0 hedge ratio)
-            # mid, book → 0.0
-            sources["dv01"] = sources["dv01"].fillna(1.0)
-            sources["mid"] = sources["mid"].fillna(0.0)
-            sources["book"] = sources["book"].fillna(0.0)
-        elif self.fill_method == "drop":
-            all_valid = pd.concat(
-                [s.notna().all(axis=1) for s in sources.values()], axis=1
-            ).all(axis=1)
-            mask = all_valid.values
-            for key in sources:
-                sources[key] = sources[key].loc[mask]
-            all_dts_idx = all_dts_idx[mask]
-            if len(all_dts_idx) == 0:
-                raise ValueError("No rows with complete data in drop mode")
-        else:
-            raise ValueError(f"Unknown fill_method={self.fill_method!r}")
+        sources, all_dts_idx = align_and_fill(
+            sources,
+            fill_method=self.fill_method,
+            essential_keys=("signal", "hedge"),
+            fillna_defaults={"dv01": 1.0, "mid": 0.0, "book": 0.0},
+        )
 
         T = len(all_dts_idx)
 
         # --- 6. Extract numpy arrays --------------------------------------------
         # Book: (T, N*L*4 columns) → (T, N, L) per field
-        bid_px, bid_sz, ask_px, ask_sz = _reshape_book(
+        bid_px, bid_sz, ask_px, ask_sz = reshape_book(
             sources["book"], instruments, n_levels
         )
 
@@ -278,7 +250,7 @@ class BacktestDataLoader:
             zscore, expected_yield_pnl_bps, package_yield_bps,
             hedge_ratios, T, n_inst, n_levels,
         )
-        _warn_nans(
+        warn_nans(
             bid_px=bid_px, bid_sz=bid_sz, ask_px=ask_px, ask_sz=ask_sz,
             mid_px=mid_px, dv01=dv01_arr,
         )
@@ -302,104 +274,6 @@ class BacktestDataLoader:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _detect_book_levels(columns: pd.Index) -> int:
-    """Auto-detect the number of book levels from column names.
-
-    Looks for ``bid_price_l0, bid_price_l1, ...`` pattern.
-    """
-    levels = set()
-    for col in columns:
-        m = re.match(r"bid_price_l(\d+)$", col)
-        if m:
-            levels.add(int(m.group(1)))
-    if not levels:
-        raise ValueError(
-            "Cannot detect book levels: no columns matching 'bid_price_l<N>' found"
-        )
-    n = max(levels) + 1
-    if levels != set(range(n)):
-        raise ValueError(f"Book levels are not contiguous: found {sorted(levels)}")
-    return n
-
-
-def _pivot_simple(
-    df: pd.DataFrame,
-    dt_col: str,
-    inst_col: str,
-    instruments: list[str],
-    value_col: str,
-) -> pd.DataFrame:
-    """Pivot a long-format DataFrame to wide: index=datetime, columns=instruments."""
-    pivoted = df.pivot(index=dt_col, columns=inst_col, values=value_col)
-    # Reorder columns to match instrument_ids; missing instruments → NaN
-    pivoted = pivoted.reindex(columns=instruments)
-    pivoted.index = pd.DatetimeIndex(pivoted.index)
-    pivoted = pivoted.sort_index()
-    return pivoted
-
-
-def _pivot_book(
-    df: pd.DataFrame,
-    dt_col: str,
-    inst_col: str,
-    instruments: list[str],
-    n_levels: int,
-) -> pd.DataFrame:
-    """Pivot book data: each (field, level, instrument) becomes a column.
-
-    Returns a wide DataFrame with columns named like
-    ``bid_price_l0__UST_2Y, bid_size_l0__UST_2Y, ...``.
-    """
-    value_cols = []
-    for l in range(n_levels):
-        value_cols.extend([
-            f"bid_price_l{l}", f"bid_size_l{l}",
-            f"ask_price_l{l}", f"ask_size_l{l}",
-        ])
-
-    # Pivot each value column separately, then concat
-    parts = []
-    for vc in value_cols:
-        p = df.pivot(index=dt_col, columns=inst_col, values=vc)
-        p = p.reindex(columns=instruments)
-        # Rename columns to include the value field
-        p.columns = [f"{vc}__{inst}" for inst in instruments]
-        parts.append(p)
-
-    result = pd.concat(parts, axis=1)
-    result.index = pd.DatetimeIndex(result.index)
-    result = result.sort_index()
-    return result
-
-
-def _reshape_book(
-    book_wide: pd.DataFrame,
-    instruments: list[str],
-    n_levels: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Reshape pivoted book DataFrame into (T, N, L) arrays.
-
-    Returns (bid_px, bid_sz, ask_px, ask_sz).
-    """
-    T = len(book_wide)
-    N = len(instruments)
-    L = n_levels
-
-    bid_px = np.empty((T, N, L), dtype=np.float64)
-    bid_sz = np.empty((T, N, L), dtype=np.float64)
-    ask_px = np.empty((T, N, L), dtype=np.float64)
-    ask_sz = np.empty((T, N, L), dtype=np.float64)
-
-    for j, inst in enumerate(instruments):
-        for l in range(L):
-            bid_px[:, j, l] = book_wide[f"bid_price_l{l}__{inst}"].values
-            bid_sz[:, j, l] = book_wide[f"bid_size_l{l}__{inst}"].values
-            ask_px[:, j, l] = book_wide[f"ask_price_l{l}__{inst}"].values
-            ask_sz[:, j, l] = book_wide[f"ask_size_l{l}__{inst}"].values
-
-    return bid_px, bid_sz, ask_px, ask_sz
-
 
 def _extract_instrument_superset(
     hedge_df: pd.DataFrame,
@@ -547,15 +421,4 @@ def _validate_shapes(
         if arr.shape != expected[name]:
             raise ValueError(
                 f"{name} shape mismatch: expected {expected[name]}, got {arr.shape}"
-            )
-
-
-def _warn_nans(**arrays: np.ndarray) -> None:
-    """Warn if any arrays contain NaN values."""
-    for name, arr in arrays.items():
-        n_nan = np.isnan(arr).sum()
-        if n_nan > 0:
-            warnings.warn(
-                f"{name} contains {n_nan} NaN values ({n_nan / arr.size:.1%})",
-                stacklevel=2,
             )

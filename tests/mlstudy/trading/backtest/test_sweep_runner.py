@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 import yaml
 
+from mlstudy.trading.backtest.common.sweep.sweep_build import ScenarioBuilder
 from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
 from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import (
 
@@ -18,12 +19,12 @@ from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import (
 )
 from mlstudy.trading.backtest.mean_reversion.configs.utils import load_sweep_config_by_name, load_config_map
 
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import RankingPlan
+from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import (
     SweepRunResult,
     SweepRunner,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import (
+from mlstudy.trading.backtest.common.sweep.sweep_types import (
     SweepResultLight,
     SweepResult,
     SweepSummary,
@@ -87,6 +88,8 @@ def _make_scripted_inputs(T: int = 60):
     zscore[41:] = 0.0
     package_yield_bps[41:] = 100.0
 
+    datetimes = pd.bdate_range("2024-01-02", periods=T, freq="B").values
+
     return dict(
         bid_px=bid_px,
         bid_sz=bid_sz,
@@ -98,6 +101,7 @@ def _make_scripted_inputs(T: int = 60):
         expected_yield_pnl_bps=expected_yield_pnl_bps,
         package_yield_bps=package_yield_bps,
         hedge_ratios=hedge_ratios,
+        datetimes=datetimes,
     )
 
 
@@ -115,15 +119,23 @@ _FULL_MODE_YAML = {
     "base_config": {
         "ref_leg_idx": 1,
         "target_notional_ref": 100.0,
-        "entry_z_threshold": 2.0,
         "take_profit_zscore_soft_threshold": 0.5,
         "take_profit_yield_change_soft_threshold": 1.0,
         "take_profit_yield_change_hard_threshold": 3.0,
         "stop_loss_yield_change_hard_threshold": 5.0,
+        "max_holding_bars": 0,
+        "expected_yield_pnl_bps_multiplier": 1.0,
+        "entry_cost_premium_yield_bps": 0.0,
+        "tp_cost_premium_yield_bps": 0.0,
+        "sl_cost_premium_yield_bps": 0.0,
         "tp_quarantine_bars": 2,
         "sl_quarantine_bars": 3,
+        "time_quarantine_bars": 0,
         "max_levels_to_cross": 2,
+        "size_haircut": 1.0,
         "validate_scope": "ALL_LEGS",
+        "initial_capital": 0.0,
+        "close_time": "none",
         "use_jit": False,
     },
     "grid": {
@@ -562,6 +574,19 @@ class TestRunnerPersistence:
             assert (sd / "equity.npy").exists()
             assert (sd / "pnl.npy").exists()
 
+    def test_saves_bar_df_and_trade_df_csv(self, full_mode_yaml, market_data, tmp_path):
+        out = tmp_path / "output"
+        SweepRunner.run_sweep_from_config(
+            full_mode_yaml, market_data=market_data, output_dir=out
+        )
+        full_dir = out / "full"
+        for sd in sorted(full_dir.iterdir()):
+            assert (sd / "bar_df.csv").exists()
+            assert (sd / "trade_df.csv").exists()
+            bar_df = pd.read_csv(sd / "bar_df.csv")
+            assert "equity" in bar_df.columns
+            assert len(bar_df) > 0
+
     def test_saves_top_k_structure(self, top_k_yaml, market_data, tmp_path):
         out = tmp_path / "output"
         SweepRunner.run_sweep_from_config(
@@ -610,7 +635,6 @@ class TestRunnerPersistence:
 class TestConsistencyWithDirectSweep:
     def test_full_mode_pnl_matches(self, full_mode_yaml, market_data, tmp_path):
         from mlstudy.trading.backtest.mean_reversion.sweep.sweep import SweepExecutor
-        from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import ScenarioBuilder
 
         cfg = load_sweep_config(full_mode_yaml)
         scenarios = ScenarioBuilder.make_scenarios(cfg.base_config, cfg.grid, name_prefix=cfg.grid_name)
@@ -629,7 +653,6 @@ class TestConsistencyWithDirectSweep:
         self, metrics_only_yaml, market_data, tmp_path
     ):
         from mlstudy.trading.backtest.mean_reversion.sweep.sweep import SweepExecutor
-        from mlstudy.trading.backtest.mean_reversion.sweep.sweep_build import ScenarioBuilder
 
         cfg = load_sweep_config(metrics_only_yaml)
         scenarios = ScenarioBuilder.make_scenarios(cfg.base_config, cfg.grid, name_prefix=cfg.grid_name)

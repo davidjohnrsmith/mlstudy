@@ -354,12 +354,17 @@ def _make_bar_and_trade_dfs() -> tuple[pd.DataFrame, pd.DataFrame]:
     state = np.zeros(n, dtype=float)
     state[5:20] = 1.0
     state[30:45] = -1.0
-    cumulative_pnl = np.cumsum(pnl)
     position_0 = state * 10.0
 
+    initial_capital = 100_000.0
+    equity = initial_capital + np.cumsum(pnl)
+
+    # Daily datetimes (trading days only)
+    datetimes = pd.bdate_range("2024-01-02", periods=n, freq="B")
+
     bar_df = pd.DataFrame({
-        "pnl": pnl,
-        "cumulative_pnl": cumulative_pnl,
+        "datetime": datetimes,
+        "equity": equity,
         "state": state,
         "position_0": position_0,
     })

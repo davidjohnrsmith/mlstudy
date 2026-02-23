@@ -146,3 +146,4 @@ desktop.ini
 *.temp
 scratch/
 claude_task/
+.run/

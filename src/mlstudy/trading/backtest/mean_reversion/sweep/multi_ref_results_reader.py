@@ -91,6 +91,40 @@ class MultiRefResultsReader:
         )
 
     @staticmethod
+    def load_partition(base_dir: str | Path, partition_index: int) -> MultiRefRunData:
+        """Load a single partition's results.
+
+        Parameters
+        ----------
+        base_dir : str or Path
+            Directory containing ``partition_NNN/`` subdirectories.
+        partition_index : int
+            Zero-based partition index.
+
+        Returns
+        -------
+        MultiRefRunData
+        """
+        return MultiRefResultsReader.load(
+            Path(base_dir) / f"partition_{partition_index:03d}",
+        )
+
+    @staticmethod
+    def load_combined(base_dir: str | Path) -> MultiRefRunData:
+        """Load combined results produced by ``collect_partitions``.
+
+        Parameters
+        ----------
+        base_dir : str or Path
+            Directory containing the ``combined/`` subdirectory.
+
+        Returns
+        -------
+        MultiRefRunData
+        """
+        return MultiRefResultsReader.load(Path(base_dir) / "combined")
+
+    @staticmethod
     def load_ref(run_dir: str | Path, ref_instrument_id: str) -> SweepRunData:
         """Load a single ref instrument's full sweep results.
 

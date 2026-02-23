@@ -28,7 +28,11 @@ import yaml
 
 from mlstudy.trading.backtest.mean_reversion.configs.backtest_config import MRBacktestConfig
 from mlstudy.trading.backtest.mean_reversion.data.data_loader import BacktestDataLoader
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import RankingPlan
+from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan
+from mlstudy.trading.backtest.mean_reversion.parameters.parameter import MRParameter
+from mlstudy.trading.backtest.parameters.parameters_registry import ParameterPreferenceRegistry
+
+_MR_REGISTRY = ParameterPreferenceRegistry(MRParameter)
 
 
 @dataclass(frozen=True)
@@ -47,9 +51,20 @@ class SweepConfig:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _build_base_config(raw: dict[str, Any]) -> MRBacktestConfig:
-    """Construct ``MRBacktestConfig`` from the ``base_config`` YAML section."""
-    return MRBacktestConfig(**raw)
+def _build_base_config(
+    raw: dict[str, Any],
+    grid: dict[str, Sequence],
+) -> MRBacktestConfig:
+    """Construct ``MRBacktestConfig`` from base_config + grid.
+
+    Grid parameters use the first value from each grid list as the base
+    value, so they should NOT appear in ``base_config``.  All non-grid
+    fields must be specified in ``base_config``.
+    """
+    merged = {**raw}
+    for key, values in grid.items():
+        merged[key] = values[0]
+    return MRBacktestConfig(**merged)
 
 
 def _build_grid(raw: dict[str, list]) -> dict[str, Sequence]:
@@ -102,6 +117,7 @@ def _build_ranking_plan(raw: dict[str, Any] | None) -> RankingPlan | None:
         tie_metrics=_parse_features(raw.get("tie_metrics")),
         primary_params=_parse_features(raw.get("primary_params")),
         tie_params=_parse_features(raw.get("tie_params")),
+        param_registry=_MR_REGISTRY,
     )
 
 
@@ -170,8 +186,18 @@ def load_sweep_config(path: str | Path) -> SweepConfig:
         raise ValueError(f"Expected a YAML mapping at top level, got {type(raw).__name__}")
 
     grid_name = raw.get("grid_name", path.stem)
-    base_config = _build_base_config(raw.get("base_config", {}))
+    raw_base = raw.get("base_config", {})
     grid = _build_grid(raw.get("grid", {}))
+
+    overlap = set(raw_base) & set(grid)
+    if overlap:
+        raise ValueError(
+            f"Parameters {sorted(overlap)} appear in both base_config and grid. "
+            f"Grid parameters override base_config, so specifying them in both "
+            f"is ambiguous. Remove them from base_config."
+        )
+
+    base_config = _build_base_config(raw_base, grid)
     ranking_plan = _build_ranking_plan(raw.get("rank"))
     sweep_kwargs = _build_sweep_kwargs(raw.get("sweep"), ranking_plan)
 

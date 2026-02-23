@@ -154,7 +154,7 @@ def simulate_rebalance(
         Tuple of (list of trades, new holdings after rebalance).
     """
     if config is None:
-        config = PortfolioBacktestConfig()
+        raise ValueError("config is required — pass a PortfolioBacktestConfig explicitly")
     if rebalance_rule is None:
         rebalance_rule = RebalanceRule()
 
@@ -313,7 +313,7 @@ def run_portfolio_backtest(
         >>> print(f"Total P&L: {result.total_pnl:.2f}")
     """
     if config is None:
-        config = PortfolioBacktestConfig()
+        raise ValueError("config is required — pass a PortfolioBacktestConfig explicitly")
     if rebalance_rule is None:
         rebalance_rule = RebalanceRule()
 

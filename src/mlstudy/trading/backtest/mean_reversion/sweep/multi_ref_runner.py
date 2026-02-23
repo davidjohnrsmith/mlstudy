@@ -31,11 +31,36 @@ import pandas as pd
 
 from ..configs.sweep_config import SweepConfig
 from ..configs.utils import _resolve_config
-from .sweep_rank import RankingPlan, SweepRanker
+from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan, SweepRanker
 from .sweep_runner import SweepRunResult, SweepRunner
 from ...metrics.metrics import BacktestMetrics
 
 logger = logging.getLogger(__name__)
+
+
+def partition_instruments(
+    ref_instrument_ids: list[str],
+    num_partitions: int,
+    partition_index: int,
+) -> list[str]:
+    """Return the contiguous subset of *ref_instrument_ids* for *partition_index*.
+
+    Uses ``divmod(N, M)`` so the first ``remainder`` partitions get one extra
+    element.  Order is preserved.  Returns an empty list when
+    *partition_index* >= len(ref_instrument_ids).
+    """
+    n = len(ref_instrument_ids)
+    if partition_index >= n:
+        return []
+    base_size, remainder = divmod(n, num_partitions)
+    # First `remainder` partitions get base_size+1 items
+    if partition_index < remainder:
+        start = partition_index * (base_size + 1)
+        end = start + base_size + 1
+    else:
+        start = remainder * (base_size + 1) + (partition_index - remainder) * base_size
+        end = start + base_size
+    return ref_instrument_ids[start:end]
 
 
 @dataclass
@@ -61,6 +86,8 @@ class MultiRefSweepRunner:
         save: bool = True,
         top_n: int = 10,
         config_map_path: str | Path | None = None,
+        _base_output_dir_override: Path | None = None,
+        _extra_meta: dict[str, Any] | None = None,
         **sweep_kwargs: Any,
     ) -> MultiRefSweepResult:
         """Run a parameter sweep for each ref instrument and produce cross-ref analytics.
@@ -95,10 +122,12 @@ class MultiRefSweepRunner:
 
         # Resolve config once so each per-ref run uses the same object
         cfg = _resolve_config(config, config_map_path)
-        ranking_plan = cfg.ranking_plan
+        ranking_plan = cfg.ranking_plan or RankingPlan()
 
         # Resolve base output directory
-        if output_dir is not None:
+        if _base_output_dir_override is not None:
+            base_output_dir = _base_output_dir_override
+        elif output_dir is not None:
             base_output_dir = Path(output_dir) / cfg.grid_name
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -174,6 +203,7 @@ class MultiRefSweepRunner:
                 ref_instrument_ids,
                 elapsed,
                 cfg,
+                extra_meta=_extra_meta,
             )
         else:
             resolved_output_dir = None
@@ -353,6 +383,7 @@ class MultiRefSweepRunner:
         ref_instrument_ids: list[str],
         elapsed: float,
         cfg: SweepConfig,
+        extra_meta: dict[str, Any] | None = None,
     ) -> None:
         """Write cross-ref CSV files and run metadata."""
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -371,5 +402,263 @@ class MultiRefSweepRunner:
             "elapsed_seconds": round(elapsed, 2),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        if extra_meta:
+            meta.update(extra_meta)
         with open(output_dir / "run_meta.json", "w") as f:
             json.dump(meta, f, indent=2, default=str)
+
+    # ------------------------------------------------------------------
+    # Distributed partition helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def run_partition(
+        config: str | Path | SweepConfig,
+        ref_instrument_ids: list[str],
+        *,
+        num_partitions: int,
+        partition_index: int,
+        data_path: str | Path | None = None,
+        instrument_ids: list[str] | None = None,
+        output_dir: str | Path | None = None,
+        save: bool = True,
+        top_n: int = 10,
+        config_map_path: str | Path | None = None,
+        **sweep_kwargs: Any,
+    ) -> MultiRefSweepResult:
+        """Run a single partition of a distributed multi-ref sweep.
+
+        Parameters
+        ----------
+        config : str, Path, or SweepConfig
+            Sweep configuration.
+        ref_instrument_ids : list[str]
+            The **full** sorted list of reference instruments (same on every
+            machine).  ``partition_instruments`` selects this machine's subset.
+        num_partitions : int
+            Total number of partitions (machines).
+        partition_index : int
+            Zero-based index of this partition.
+        output_dir, data_path, instrument_ids, save, top_n, config_map_path
+            Forwarded to ``run()``.
+        **sweep_kwargs
+            Forwarded to ``SweepRunner.run_sweep_from_config``.
+
+        Returns
+        -------
+        MultiRefSweepResult
+            Result for this partition's subset of refs.  Empty result if the
+            subset is empty (more machines than instruments).
+        """
+        subset = partition_instruments(ref_instrument_ids, num_partitions, partition_index)
+
+        if not subset:
+            return MultiRefSweepResult(
+                output_dir=None,
+                cross_ref_summary=pd.DataFrame(),
+                per_ref_best=pd.DataFrame(),
+                param_leaderboard=pd.DataFrame(),
+                per_ref_results={},
+            )
+
+        cfg = _resolve_config(config, config_map_path)
+        base = Path(output_dir) if output_dir is not None else Path("runs")
+        partition_dir = base / cfg.grid_name / f"partition_{partition_index:03d}"
+
+        extra_meta = {
+            "partition_index": partition_index,
+            "num_partitions": num_partitions,
+            "all_ref_instrument_ids": ref_instrument_ids,
+        }
+
+        return MultiRefSweepRunner.run(
+            cfg,
+            subset,
+            data_path=data_path,
+            instrument_ids=instrument_ids,
+            save=save,
+            top_n=top_n,
+            _base_output_dir_override=partition_dir,
+            _extra_meta=extra_meta,
+            **sweep_kwargs,
+        )
+
+    @staticmethod
+    def _build_cross_ref_averages_from_summary(
+        cross_ref_summary: pd.DataFrame,
+        metric_fields: list[str],
+        ranking_plan: RankingPlan | None,
+        top_n: int,
+        mode: str,
+    ) -> pd.DataFrame:
+        """Compute one-row cross-ref averages from a summary DataFrame.
+
+        This is the CSV-based counterpart of ``_build_cross_ref_averages``,
+        used by ``collect_partitions`` when in-memory ``SweepRunResult``
+        objects are not available.
+
+        Parameters
+        ----------
+        cross_ref_summary : pd.DataFrame
+            Must contain a ``ref_instrument_id`` column.
+        metric_fields : list[str]
+            Metric column names to average.
+        ranking_plan : RankingPlan or None
+            Used to rank within each ref when *mode* is ``"top_n"``.
+        top_n : int
+            How many top scenarios per ref (only used when mode="top_n").
+        mode : str
+            ``"top_n"`` or ``"all"``.
+
+        Returns
+        -------
+        pd.DataFrame
+            One-row DataFrame with averaged metrics.
+        """
+        if cross_ref_summary.empty:
+            return pd.DataFrame()
+
+        available_metrics = [m for m in metric_fields if m in cross_ref_summary.columns]
+        if not available_metrics:
+            return pd.DataFrame()
+
+        ref_avgs: list[dict[str, float]] = []
+        for _ref_id, group in cross_ref_summary.groupby("ref_instrument_id"):
+            ref_data = group.drop(columns=["ref_instrument_id"], errors="ignore")
+            if mode == "top_n":
+                ranked = SweepRanker.rank_dataframe(ref_data, ranking_plan)
+                subset = ranked.head(top_n)
+            else:
+                subset = ref_data
+
+            avg = {m: subset[m].mean() for m in available_metrics if m in subset.columns}
+            if avg:
+                ref_avgs.append(avg)
+
+        if not ref_avgs:
+            return pd.DataFrame()
+
+        final: dict[str, float] = {}
+        for m in available_metrics:
+            vals = [a[m] for a in ref_avgs if m in a]
+            if vals:
+                final[m] = sum(vals) / len(vals)
+
+        return pd.DataFrame([final])
+
+    @staticmethod
+    def collect_partitions(
+        base_output_dir: str | Path,
+        config: str | Path | SweepConfig,
+        *,
+        num_partitions: int,
+        ref_instrument_ids: list[str] | None = None,
+        top_n: int = 10,
+        config_map_path: str | Path | None = None,
+    ) -> MultiRefSweepResult:
+        """Read all partition results and produce combined cross-ref analytics.
+
+        Parameters
+        ----------
+        base_output_dir : str or Path
+            Directory that contains ``partition_000/``, ``partition_001/``, etc.
+        config : str, Path, or SweepConfig
+            Sweep configuration (needed for grid keys / ranking plan).
+        num_partitions : int
+            Expected number of partitions.
+        ref_instrument_ids : list[str], optional
+            Full ordered list of ref instruments.  If *None*, reconstructed
+            from partition ``run_meta.json`` files.
+        top_n : int
+            Number of top scenarios for averages / leaderboard.
+        config_map_path : str or Path, optional
+            Path to config map YAML.
+
+        Returns
+        -------
+        MultiRefSweepResult
+
+        Raises
+        ------
+        FileNotFoundError
+            If any expected partition directory is missing.
+        """
+        import time as _time
+
+        t0 = _time.perf_counter()
+        base_output_dir = Path(base_output_dir)
+        cfg = _resolve_config(config, config_map_path)
+        grid_keys = list(cfg.grid.keys())
+        metric_fields = [f.name for f in fields(BacktestMetrics)]
+        ranking_plan = cfg.ranking_plan or RankingPlan()
+
+        all_summaries: list[pd.DataFrame] = []
+        all_ref_ids: list[str] = []
+
+        for i in range(num_partitions):
+            part_dir = base_output_dir / f"partition_{i:03d}"
+            if not part_dir.is_dir():
+                raise FileNotFoundError(f"Partition directory not found: {part_dir}")
+
+            # Read partition meta for ref ids
+            meta_path = part_dir / "run_meta.json"
+            if meta_path.exists():
+                with open(meta_path) as f:
+                    part_meta = json.load(f)
+                part_refs = part_meta.get("ref_instrument_ids", [])
+            else:
+                part_refs = []
+            all_ref_ids.extend(part_refs)
+
+            # Read partition cross-ref summary
+            csv_path = part_dir / "cross_ref_summary.csv"
+            if csv_path.exists():
+                df = pd.read_csv(csv_path)
+                all_summaries.append(df)
+
+        # Use caller-supplied ref ids if provided
+        if ref_instrument_ids is not None:
+            all_ref_ids = list(ref_instrument_ids)
+
+        # Combine
+        if all_summaries:
+            cross_ref_summary = pd.concat(all_summaries, ignore_index=True)
+        else:
+            cross_ref_summary = pd.DataFrame()
+
+        per_ref_best = MultiRefSweepRunner._build_per_ref_best(
+            cross_ref_summary, ranking_plan,
+        )
+        param_leaderboard = MultiRefSweepRunner._build_param_leaderboard(
+            cross_ref_summary, grid_keys, metric_fields, ranking_plan, top_n,
+        )
+        avg_top_n_refs = MultiRefSweepRunner._build_cross_ref_averages_from_summary(
+            cross_ref_summary, metric_fields, ranking_plan, top_n, mode="top_n",
+        )
+        avg_all_refs = MultiRefSweepRunner._build_cross_ref_averages_from_summary(
+            cross_ref_summary, metric_fields, ranking_plan, top_n, mode="all",
+        )
+
+        elapsed = _time.perf_counter() - t0
+
+        combined_dir = base_output_dir / "combined"
+        MultiRefSweepRunner._save_analytics(
+            combined_dir,
+            cross_ref_summary,
+            per_ref_best,
+            param_leaderboard,
+            avg_top_n_refs,
+            avg_all_refs,
+            all_ref_ids,
+            elapsed,
+            cfg,
+            extra_meta={"source": "collect_partitions"},
+        )
+
+        return MultiRefSweepResult(
+            output_dir=combined_dir,
+            cross_ref_summary=cross_ref_summary,
+            per_ref_best=per_ref_best,
+            param_leaderboard=param_leaderboard,
+            per_ref_results={},
+        )

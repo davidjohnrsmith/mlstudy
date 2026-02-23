@@ -16,6 +16,12 @@ grid_name: "mr_grid_v1"
 base_config:
   ref_leg_idx: 0
   target_notional_ref: 100.0
+  expected_yield_pnl_bps_multiplier: 1.0
+  entry_cost_premium_yield_bps: 0.0
+  tp_cost_premium_yield_bps: 0.0
+  sl_cost_premium_yield_bps: 0.0
+  initial_capital: 0.0
+  close_time: "16:30"
   validate_scope: "REF_ONLY"
   use_jit: true
 

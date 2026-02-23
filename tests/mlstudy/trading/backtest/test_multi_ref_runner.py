@@ -17,17 +17,18 @@ from mlstudy.trading.backtest.mean_reversion.configs.sweep_config import SweepCo
 from mlstudy.trading.backtest.mean_reversion.sweep.multi_ref_runner import (
     MultiRefSweepResult,
     MultiRefSweepRunner,
+    partition_instruments,
 )
 from mlstudy.trading.backtest.mean_reversion.sweep.multi_ref_results_reader import (
     MultiRefResultsReader,
     MultiRefRunData,
 )
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_rank import (
+from mlstudy.trading.backtest.common.sweep.sweep_rank import (
     RankingPlan,
     SweepRanker,
 )
 from mlstudy.trading.backtest.mean_reversion.sweep.sweep_runner import SweepRunResult
-from mlstudy.trading.backtest.mean_reversion.sweep.sweep_types import SweepResultLight, SweepScenario
+from mlstudy.trading.backtest.common.sweep.sweep_types import SweepResultLight, SweepScenario
 from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 
 
@@ -35,15 +36,40 @@ from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 # Helpers
 # =========================================================================
 
+def _mr_cfg(**overrides):
+    """Build an MRBacktestConfig with test defaults."""
+    defaults = dict(
+        target_notional_ref=100.0,
+        ref_leg_idx=0,
+        entry_z_threshold=2.0,
+        take_profit_zscore_soft_threshold=0.5,
+        take_profit_yield_change_soft_threshold=1.0,
+        take_profit_yield_change_hard_threshold=3.0,
+        stop_loss_yield_change_hard_threshold=5.0,
+        max_holding_bars=0,
+        expected_yield_pnl_bps_multiplier=1.0,
+        entry_cost_premium_yield_bps=0.0,
+        tp_cost_premium_yield_bps=0.0,
+        sl_cost_premium_yield_bps=0.0,
+        tp_quarantine_bars=0,
+        sl_quarantine_bars=0,
+        time_quarantine_bars=0,
+        max_levels_to_cross=5,
+        size_haircut=1.0,
+        validate_scope="REF_ONLY",
+        initial_capital=0.0,
+        close_time="none",
+        use_jit=False,
+    )
+    defaults.update(overrides)
+    return MRBacktestConfig(**defaults)
+
+
 def _make_sweep_config(grid: dict | None = None, ranking_plan: RankingPlan | None = None) -> SweepConfig:
     """Create a minimal SweepConfig for testing."""
     return SweepConfig(
         grid_name="test_multi",
-        base_config=MRBacktestConfig(
-            ref_leg_idx=1,
-            target_notional_ref=100.0,
-            entry_z_threshold=2.0,
-        ),
+        base_config=_mr_cfg(ref_leg_idx=1),
         grid=grid or {"entry_z_threshold": [1.5, 2.0, 3.0]},
         sweep_kwargs={"backend": "serial", "mode": "metrics_only"},
         ranking_plan=ranking_plan,
@@ -98,11 +124,7 @@ def _make_fake_sweep_result_lights(
     rng = np.random.default_rng(hash(ref_id) % 2**32)
     results = []
     for i, ez in enumerate(grid["entry_z_threshold"]):
-        cfg = MRBacktestConfig(
-            ref_leg_idx=1,
-            target_notional_ref=100.0,
-            entry_z_threshold=ez,
-        )
+        cfg = _mr_cfg(ref_leg_idx=1, entry_z_threshold=ez)
         scenario = SweepScenario(
             name=f"test_multi_{i:03d}",
             cfg=cfg,
@@ -440,13 +462,13 @@ class TestRankDataframe:
 
     def test_empty_dataframe(self):
         df = pd.DataFrame(columns=["total_pnl", "sharpe_ratio"])
-        ranked = SweepRanker.rank_dataframe(df)
+        ranked = SweepRanker.rank_dataframe(df, RankingPlan())
         assert "rank" in ranked.columns
         assert len(ranked) == 0
 
     def test_default_plan(self):
         df = pd.DataFrame({"total_pnl": [5.0, 15.0, 10.0]})
-        ranked = SweepRanker.rank_dataframe(df)
+        ranked = SweepRanker.rank_dataframe(df, RankingPlan())
         assert ranked.iloc[0]["total_pnl"] == 15.0
 
     def test_missing_columns_skipped(self):
@@ -502,3 +524,196 @@ class TestEdgeCases:
         assert isinstance(result, MultiRefSweepResult)
         assert "rank" in result.per_ref_best.columns
         assert "rank" in result.param_leaderboard.columns
+
+
+# =========================================================================
+# partition_instruments
+# =========================================================================
+
+
+class TestPartitionInstruments:
+    def test_even_split(self):
+        ids = ["A", "B", "C", "D", "E", "F"]
+        assert partition_instruments(ids, 3, 0) == ["A", "B"]
+        assert partition_instruments(ids, 3, 1) == ["C", "D"]
+        assert partition_instruments(ids, 3, 2) == ["E", "F"]
+
+    def test_uneven_split(self):
+        ids = list("ABCDEFGHIJ")  # 10 items
+        p0 = partition_instruments(ids, 3, 0)
+        p1 = partition_instruments(ids, 3, 1)
+        p2 = partition_instruments(ids, 3, 2)
+        assert len(p0) == 4  # first partition gets extra
+        assert len(p1) == 3
+        assert len(p2) == 3
+
+    def test_more_machines_than_instruments(self):
+        ids = ["A", "B"]
+        assert partition_instruments(ids, 5, 0) == ["A"]
+        assert partition_instruments(ids, 5, 1) == ["B"]
+        assert partition_instruments(ids, 5, 2) == []
+        assert partition_instruments(ids, 5, 3) == []
+        assert partition_instruments(ids, 5, 4) == []
+
+    def test_single_partition_returns_all(self):
+        ids = ["A", "B", "C"]
+        assert partition_instruments(ids, 1, 0) == ids
+
+    def test_full_coverage(self):
+        ids = list("ABCDEFGHIJ")
+        num_partitions = 3
+        combined = []
+        for i in range(num_partitions):
+            combined.extend(partition_instruments(ids, num_partitions, i))
+        assert combined == ids
+
+
+# =========================================================================
+# run_partition
+# =========================================================================
+
+
+class TestRunPartition:
+    def test_runs_correct_subset(self, patched_sweep_runner, sweep_config, tmp_path):
+        result = MultiRefSweepRunner.run_partition(
+            sweep_config,
+            REF_IDS,
+            num_partitions=2,
+            partition_index=0,
+            output_dir=tmp_path / "out",
+        )
+        assert isinstance(result, MultiRefSweepResult)
+        # Partition 0 of 3 refs split into 2 partitions -> 2 refs
+        assert len(result.per_ref_results) == 2
+        assert set(result.per_ref_results.keys()) == {"UST_2Y", "UST_5Y"}
+
+    def test_output_in_partition_subdir(self, patched_sweep_runner, sweep_config, tmp_path):
+        out = tmp_path / "out"
+        result = MultiRefSweepRunner.run_partition(
+            sweep_config,
+            REF_IDS,
+            num_partitions=2,
+            partition_index=0,
+            output_dir=out,
+        )
+        expected_dir = out / "test_multi" / "partition_000"
+        assert result.output_dir == expected_dir
+        assert (expected_dir / "cross_ref_summary.csv").exists()
+        assert (expected_dir / "per_ref_best.csv").exists()
+        assert (expected_dir / "param_leaderboard.csv").exists()
+        assert (expected_dir / "run_meta.json").exists()
+
+    def test_run_meta_includes_partition_info(
+        self, patched_sweep_runner, sweep_config, tmp_path,
+    ):
+        out = tmp_path / "out"
+        MultiRefSweepRunner.run_partition(
+            sweep_config,
+            REF_IDS,
+            num_partitions=2,
+            partition_index=1,
+            output_dir=out,
+        )
+        meta_path = out / "test_multi" / "partition_001" / "run_meta.json"
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["partition_index"] == 1
+        assert meta["num_partitions"] == 2
+        assert meta["all_ref_instrument_ids"] == REF_IDS
+
+    def test_empty_partition_returns_empty(self, patched_sweep_runner, sweep_config, tmp_path):
+        # 3 refs, 5 partitions -> partition 4 is empty
+        result = MultiRefSweepRunner.run_partition(
+            sweep_config,
+            REF_IDS,
+            num_partitions=5,
+            partition_index=4,
+            output_dir=tmp_path / "out",
+        )
+        assert result.output_dir is None
+        assert result.cross_ref_summary.empty
+        assert len(result.per_ref_results) == 0
+
+
+# =========================================================================
+# collect_partitions
+# =========================================================================
+
+
+class TestCollectPartitions:
+    def _run_all_partitions(self, patched_sweep_runner, sweep_config, tmp_path, num_partitions=2):
+        """Helper: run all partitions and return the base dir."""
+        out = tmp_path / "out"
+        for i in range(num_partitions):
+            MultiRefSweepRunner.run_partition(
+                sweep_config,
+                REF_IDS,
+                num_partitions=num_partitions,
+                partition_index=i,
+                output_dir=out,
+            )
+        return out / "test_multi"
+
+    def test_combined_has_all_refs(self, patched_sweep_runner, sweep_config, tmp_path):
+        base = self._run_all_partitions(patched_sweep_runner, sweep_config, tmp_path)
+        result = MultiRefSweepRunner.collect_partitions(
+            base, sweep_config, num_partitions=2,
+        )
+        ref_ids_in_summary = set(result.cross_ref_summary["ref_instrument_id"])
+        assert ref_ids_in_summary == set(REF_IDS)
+
+    def test_combined_per_ref_best(self, patched_sweep_runner, sweep_config, tmp_path):
+        base = self._run_all_partitions(patched_sweep_runner, sweep_config, tmp_path)
+        result = MultiRefSweepRunner.collect_partitions(
+            base, sweep_config, num_partitions=2,
+        )
+        assert len(result.per_ref_best) == len(REF_IDS)
+        assert "rank" in result.per_ref_best.columns
+
+    def test_combined_param_leaderboard(self, patched_sweep_runner, sweep_config, tmp_path):
+        base = self._run_all_partitions(patched_sweep_runner, sweep_config, tmp_path)
+        result = MultiRefSweepRunner.collect_partitions(
+            base, sweep_config, num_partitions=2,
+        )
+        assert "rank" in result.param_leaderboard.columns
+
+    def test_combined_dir_has_expected_files(
+        self, patched_sweep_runner, sweep_config, tmp_path,
+    ):
+        base = self._run_all_partitions(patched_sweep_runner, sweep_config, tmp_path)
+        MultiRefSweepRunner.collect_partitions(
+            base, sweep_config, num_partitions=2,
+        )
+        combined = base / "combined"
+        assert (combined / "cross_ref_summary.csv").exists()
+        assert (combined / "per_ref_best.csv").exists()
+        assert (combined / "param_leaderboard.csv").exists()
+        assert (combined / "avg_top_n_refs.csv").exists()
+        assert (combined / "avg_all_refs.csv").exists()
+        assert (combined / "run_meta.json").exists()
+
+    def test_missing_partition_raises(self, patched_sweep_runner, sweep_config, tmp_path):
+        out = tmp_path / "out"
+        # Only run partition 0, but claim 2 partitions exist
+        MultiRefSweepRunner.run_partition(
+            sweep_config,
+            REF_IDS,
+            num_partitions=2,
+            partition_index=0,
+            output_dir=out,
+        )
+        base = out / "test_multi"
+        with pytest.raises(FileNotFoundError):
+            MultiRefSweepRunner.collect_partitions(
+                base, sweep_config, num_partitions=2,
+            )
+
+    def test_load_combined_round_trip(self, patched_sweep_runner, sweep_config, tmp_path):
+        base = self._run_all_partitions(patched_sweep_runner, sweep_config, tmp_path)
+        result = MultiRefSweepRunner.collect_partitions(
+            base, sweep_config, num_partitions=2,
+        )
+        loaded = MultiRefResultsReader.load_combined(base)
+        assert isinstance(loaded, MultiRefRunData)
+        assert len(loaded.cross_ref_summary) == len(result.cross_ref_summary)
+        assert loaded.meta["source"] == "collect_partitions"

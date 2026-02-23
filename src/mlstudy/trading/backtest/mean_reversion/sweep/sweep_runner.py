@@ -30,15 +30,15 @@ from typing import Any
 
 from ..configs.utils import _resolve_config
 from .sweep_persist import SweepPersister
+from ...common.sweep.sweep_build import ScenarioBuilder
 
 logger = logging.getLogger(__name__)
 
 import pandas as pd
 
 from .sweep import SweepExecutor
-from .sweep_build import ScenarioBuilder
 from ..configs.sweep_config import SweepConfig
-from .sweep_types import SweepResultLight, SweepResult, SweepSummary
+from mlstudy.trading.backtest.common.sweep.sweep_types import SweepResultLight, SweepResult, SweepSummary
 
 
 @dataclass
