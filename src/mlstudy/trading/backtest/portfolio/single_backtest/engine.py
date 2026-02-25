@@ -6,8 +6,6 @@ arrays into :class:`PortfolioBacktestResults`.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 
 from mlstudy.trading.backtest.common.single_backtest.engine import ensure_f64, validate_l2_shapes
@@ -29,13 +27,13 @@ def _validate(
     tradable: np.ndarray,
     pos_limits_long: np.ndarray,
     pos_limits_short: np.ndarray,
-    hedge_bid_px: Optional[np.ndarray],
-    hedge_bid_sz: Optional[np.ndarray],
-    hedge_ask_px: Optional[np.ndarray],
-    hedge_ask_sz: Optional[np.ndarray],
-    hedge_mid_px: Optional[np.ndarray],
-    hedge_dv01: Optional[np.ndarray],
-    hedge_ratios: Optional[np.ndarray],
+    hedge_bid_px: np.ndarray,
+    hedge_bid_sz: np.ndarray,
+    hedge_ask_px: np.ndarray,
+    hedge_ask_sz: np.ndarray,
+    hedge_mid_px: np.ndarray,
+    hedge_dv01: np.ndarray,
+    hedge_ratios: np.ndarray,
 ) -> None:
     """Shape and value checks (fail fast)."""
     T, B, L = validate_l2_shapes(bid_px, bid_sz, ask_px, ask_sz, mid_px)
@@ -57,34 +55,23 @@ def _validate(
         if len(arr) != expected_len:
             raise ValueError(f"{name} length {len(arr)} != expected {expected_len}")
 
-    # Hedge arrays: all-or-nothing
-    hedge_arrays = [
+    # Hedge arrays
+    T_h, H, L_h = validate_l2_shapes(
         hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
-        hedge_mid_px, hedge_dv01, hedge_ratios,
-    ]
-    n_provided = sum(a is not None for a in hedge_arrays)
-    if n_provided not in (0, 7):
+        hedge_mid_px, label="hedge_",
+    )
+    if T_h != T:
         raise ValueError(
-            f"Hedge arrays must be all-None or all-provided, got {n_provided}/7"
+            f"hedge T={T_h} != instrument T={T}"
         )
-
-    if n_provided == 7:
-        T_h, H, L_h = validate_l2_shapes(
-            hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
-            hedge_mid_px, label="hedge_",
+    if hedge_dv01.shape != (T, H):
+        raise ValueError(
+            f"hedge_dv01 shape {hedge_dv01.shape} != expected {(T, H)}"
         )
-        if T_h != T:
-            raise ValueError(
-                f"hedge T={T_h} != instrument T={T}"
-            )
-        if hedge_dv01.shape != (T, H):
-            raise ValueError(
-                f"hedge_dv01 shape {hedge_dv01.shape} != expected {(T, H)}"
-            )
-        if hedge_ratios.shape != (T, B, H):
-            raise ValueError(
-                f"hedge_ratios shape {hedge_ratios.shape} != expected {(T, B, H)}"
-            )
+    if hedge_ratios.shape != (T, B, H):
+        raise ValueError(
+            f"hedge_ratios shape {hedge_ratios.shape} != expected {(T, B, H)}"
+        )
 
 
 def run_backtest(
@@ -105,27 +92,27 @@ def run_backtest(
     tradable: np.ndarray,
     pos_limits_long: np.ndarray,
     pos_limits_short: np.ndarray,
-    # -- Optional meta --
-    maturity: Optional[np.ndarray] = None,
-    issuer_bucket: Optional[np.ndarray] = None,
-    maturity_bucket: Optional[np.ndarray] = None,
-    # -- Optional bucket caps --
-    issuer_dv01_caps: Optional[np.ndarray] = None,
-    mat_bucket_dv01_caps: Optional[np.ndarray] = None,
-    # -- Hedge arrays (all-or-nothing) --
-    hedge_bid_px: Optional[np.ndarray] = None,
-    hedge_bid_sz: Optional[np.ndarray] = None,
-    hedge_ask_px: Optional[np.ndarray] = None,
-    hedge_ask_sz: Optional[np.ndarray] = None,
-    hedge_mid_px: Optional[np.ndarray] = None,
-    hedge_dv01: Optional[np.ndarray] = None,
-    hedge_ratios: Optional[np.ndarray] = None,
+    # -- Meta --
+    maturity: np.ndarray,
+    issuer_bucket: np.ndarray,
+    maturity_bucket: np.ndarray,
+    # -- Bucket caps --
+    issuer_dv01_caps: np.ndarray,
+    mat_bucket_dv01_caps: np.ndarray,
+    # -- Hedge arrays --
+    hedge_bid_px: np.ndarray,
+    hedge_bid_sz: np.ndarray,
+    hedge_ask_px: np.ndarray,
+    hedge_ask_sz: np.ndarray,
+    hedge_mid_px: np.ndarray,
+    hedge_dv01: np.ndarray,
+    hedge_ratios: np.ndarray,
     # -- Instrument IDs --
-    instrument_ids: list = None,
+    instrument_ids: list[str],
     # -- Config --
-    cfg: PortfolioBacktestConfig = None,
-    # -- Optional context --
-    datetimes: Optional[np.ndarray] = None,
+    cfg: PortfolioBacktestConfig,
+    # -- Context --
+    datetimes: np.ndarray,
 ) -> PortfolioBacktestResults:
     """Run an LP portfolio backtest.
 
@@ -147,34 +134,35 @@ def run_backtest(
         Boolean/int tradable mask.
     pos_limits_long, pos_limits_short : (B,)
         Position limits per instrument.
-    maturity : (B,) or None
+    maturity : (T, B) or (B,)
         Years to maturity per instrument.
-    issuer_bucket, maturity_bucket : (B,) or None
-        Bucket labels per instrument.
-    issuer_dv01_caps : (n_issuers,) or None
-    mat_bucket_dv01_caps : (n_buckets,) or None
-    hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz : (T, H, L) or None
+    issuer_bucket : (B,)
+        Issuer bucket labels per instrument.
+    maturity_bucket : (T, B) or (B,)
+        Maturity bucket labels per instrument.
+    issuer_dv01_caps : (n_issuers,)
+        Max absolute DV01 per issuer bucket.
+    mat_bucket_dv01_caps : (n_buckets,)
+        Max absolute DV01 per maturity bucket.
+    hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz : (T, H, L)
         L2 order book for hedge instruments.
-    hedge_mid_px : (T, H) or None
-    hedge_dv01 : (T, H) or None
-    hedge_ratios : (T, B, H) or None
+    hedge_mid_px : (T, H)
+        Hedge instrument mid prices.
+    hedge_dv01 : (T, H)
+        Hedge instrument DV01.
+    hedge_ratios : (T, B, H)
+        Hedge ratios per instrument per hedge.
+    instrument_ids : list[str]
+        Instrument ID strings matching B dimension order.
     cfg : PortfolioBacktestConfig
         Scalar parameters.
-    datetimes : (T,) or None
+    datetimes : (T,)
         Bar timestamps for DataFrame output.
 
     Returns
     -------
     PortfolioBacktestResults
     """
-    if cfg is None:
-        raise ValueError("cfg is required — pass a PortfolioBacktestConfig explicitly")
-    if instrument_ids is None:
-        raise ValueError(
-            "instrument_ids is required — pass a list of instrument ID strings "
-            "in the same order as the B dimension of the market data arrays"
-        )
-
     _validate(
         bid_px, bid_sz, ask_px, ask_sz, mid_px,
         dv01, fair_price, zscore, adf_p_value,
@@ -200,19 +188,13 @@ def run_backtest(
     f_fair = ensure_f64(fair_price)
     f_zscore = ensure_f64(zscore)
     f_adf = ensure_f64(adf_p_value)
-
-    # Hedge arrays
-    h_kwargs = {}
-    if hedge_bid_px is not None:
-        h_kwargs = dict(
-            hedge_bid_px=ensure_f64(hedge_bid_px),
-            hedge_bid_sz=ensure_f64(hedge_bid_sz),
-            hedge_ask_px=ensure_f64(hedge_ask_px),
-            hedge_ask_sz=ensure_f64(hedge_ask_sz),
-            hedge_mid_px=ensure_f64(hedge_mid_px),
-            hedge_dv01=ensure_f64(hedge_dv01),
-            hedge_ratios=ensure_f64(hedge_ratios),
-        )
+    f_hedge_bid_px = ensure_f64(hedge_bid_px)
+    f_hedge_bid_sz = ensure_f64(hedge_bid_sz)
+    f_hedge_ask_px = ensure_f64(hedge_ask_px)
+    f_hedge_ask_sz = ensure_f64(hedge_ask_sz)
+    f_hedge_mid_px = ensure_f64(hedge_mid_px)
+    f_hedge_dv01 = ensure_f64(hedge_dv01)
+    f_hedge_ratios = ensure_f64(hedge_ratios)
 
     raw = lp_portfolio_loop(
         f_bid_px, f_bid_sz, f_ask_px, f_ask_sz, f_mid_px,
@@ -239,23 +221,25 @@ def run_backtest(
         cooldown_mode=int(cfg.cooldown_mode),
         min_maturity_inc=float(cfg.min_maturity_inc),
         initial_capital=float(cfg.initial_capital),
-        **h_kwargs,
+        hedge_bid_px=f_hedge_bid_px,
+        hedge_bid_sz=f_hedge_bid_sz,
+        hedge_ask_px=f_hedge_ask_px,
+        hedge_ask_sz=f_hedge_ask_sz,
+        hedge_mid_px=f_hedge_mid_px,
+        hedge_dv01=f_hedge_dv01,
+        hedge_ratios=f_hedge_ratios,
     )
-
-    # Extract top-of-book hedge bid/ask (T, H) from L2 arrays (T, H, L)
-    h_bid_tob = h_kwargs["hedge_bid_px"][:, :, 0] if "hedge_bid_px" in h_kwargs else None
-    h_ask_tob = h_kwargs["hedge_ask_px"][:, :, 0] if "hedge_ask_px" in h_kwargs else None
 
     return PortfolioBacktestResults.from_loop_output(
         raw,
         datetimes=datetimes,
         close_time=cfg.close_time if cfg.close_time != "none" else None,
         mid_px=f_mid_px,
-        hedge_mid_px=h_kwargs.get("hedge_mid_px"),
-        hedge_bid_px=h_bid_tob,
-        hedge_ask_px=h_ask_tob,
-        hedge_ratios=h_kwargs.get("hedge_ratios"),
+        hedge_mid_px=f_hedge_mid_px,
+        hedge_bid_px=f_hedge_bid_px[:, :, 0],
+        hedge_ask_px=f_hedge_ask_px[:, :, 0],
+        hedge_ratios=f_hedge_ratios,
         dv01=f_dv01,
-        hedge_dv01=h_kwargs.get("hedge_dv01"),
+        hedge_dv01=f_hedge_dv01,
         instrument_ids=instrument_ids,
     )

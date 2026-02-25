@@ -126,6 +126,7 @@ def align_and_fill(
     fill_method: str,
     essential_keys: tuple[str, ...] | None = None,
     fillna_defaults: dict[str, float] | None = None,
+    datetime_source_keys: tuple[str, ...] | None = None,
 ) -> tuple[dict[str, pd.DataFrame], pd.DatetimeIndex]:
     """Align multiple DataFrames onto a common datetime index and fill NaNs.
 
@@ -143,6 +144,10 @@ def align_and_fill(
     fillna_defaults : dict[str, float] or None
         After ffill + trim, fill remaining NaN in these sources with
         the given default values (e.g. ``{"dv01": 1.0, "mid": 0.0}``).
+    datetime_source_keys : tuple[str, ...] or None
+        When provided, only collect datetimes from these source keys
+        instead of from all sources.  Other sources are still reindexed
+        onto the resulting datetime index.
 
     Returns
     -------
@@ -150,8 +155,12 @@ def align_and_fill(
     """
     # Build unified datetime index
     all_dts: set = set()
-    for df in sources.values():
-        all_dts.update(df.index)
+    if datetime_source_keys is not None:
+        for key in datetime_source_keys:
+            all_dts.update(sources[key].index)
+    else:
+        for df in sources.values():
+            all_dts.update(df.index)
     all_dts_idx = pd.DatetimeIndex(sorted(all_dts))
 
     # Reindex all sources

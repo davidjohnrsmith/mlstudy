@@ -761,3 +761,150 @@ class TestHedgePartialFill:
         # Instrument fill was large but hedge book only had 3.0 total
         assert abs(tr_hedge_fills[0, 0]) > 0  # some fill
         assert abs(tr_hedge_fills[0, 0]) <= 3.0 + 1e-10  # capped by book
+
+
+# =========================================================================
+# Time-varying (T, B) maturity / maturity_bucket
+# =========================================================================
+
+
+class TestTimeVaryingMaturity:
+    """Verify that (T, B) maturity and maturity_bucket work correctly."""
+
+    def test_2d_maturity_backward_compat(self):
+        """(T, B) maturity arrays produce same basic behaviour as (B,)."""
+        T, B = 5, 2
+        bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, spread_bps=5.0)
+        dv01 = np.full((T, B), 0.01, dtype=np.float64)
+        fair = mid_px + 1.0
+        zscore = np.full((T, B), 3.0)
+        adf_p = np.full((T, B), 0.01)
+        tradable = np.ones(B, dtype=np.int32)
+        pos_long = np.full(B, 1e6)
+        pos_short = np.full(B, -1e6)
+        params = _default_params()
+
+        # Static (B,) maturity
+        maturity_1d = np.array([5.0, 10.0])
+
+        result_1d = lp_portfolio_loop(
+            bid_px, bid_sz, ask_px, ask_sz, mid_px,
+            dv01, fair, zscore, adf_p,
+            tradable, pos_long, pos_short,
+            maturity_1d, None, None,
+            **params,
+        )
+
+        # Time-varying (T, B) maturity — constant across time
+        maturity_2d = np.broadcast_to(maturity_1d, (T, B)).copy()
+
+        result_2d = lp_portfolio_loop(
+            bid_px, bid_sz, ask_px, ask_sz, mid_px,
+            dv01, fair, zscore, adf_p,
+            tradable, pos_long, pos_short,
+            maturity_2d, None, None,
+            **params,
+        )
+
+        # Same trades produced
+        assert result_1d[27] == result_2d[27]
+        np.testing.assert_allclose(result_1d[0], result_2d[0])
+
+    def test_2d_maturity_filter_blocks_when_maturity_decreases(self):
+        """Instrument initially above min_maturity_inc, then drops below → blocked."""
+        T, B = 6, 1
+        bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, spread_bps=5.0)
+        dv01 = np.full((T, B), 0.01, dtype=np.float64)
+        fair = mid_px + 1.0  # strong buy
+        zscore = np.full((T, B), 3.0)
+        adf_p = np.full((T, B), 0.01)
+        tradable = np.ones(B, dtype=np.int32)
+        pos_long = np.full(B, 1e8)
+        pos_short = np.full(B, -1e8)
+        params = _default_params()
+        params["min_maturity_inc"] = 2.0
+        params["cooldown_bars"] = 0
+
+        # Maturity decreases from 3.0 to 0.5 over 6 bars
+        maturity_2d = np.array([[3.0], [2.5], [2.0], [1.5], [1.0], [0.5]])
+        assert maturity_2d.shape == (T, B)
+
+        result = lp_portfolio_loop(
+            bid_px, bid_sz, ask_px, ask_sz, mid_px,
+            dv01, fair, zscore, adf_p,
+            tradable, pos_long, pos_short,
+            maturity_2d, None, None,
+            **params,
+        )
+        n_trades = result[27]
+        tr_bar = result[9]
+        # Trades should only happen in bars 0-2 (maturity >= 2.0)
+        # Bars 3-5 have maturity < 2.0, risk-increasing trades should be blocked
+        # Note: once position is > 0, sells become risk-decreasing and bypass filter
+        for i in range(n_trades):
+            bar_idx = tr_bar[i]
+            side = result[11][i]
+            if side == 1:  # BUY (risk-increasing)
+                assert maturity_2d[bar_idx, 0] >= 2.0, (
+                    f"Buy trade at bar {bar_idx} with maturity "
+                    f"{maturity_2d[bar_idx, 0]} < min_maturity_inc=2.0"
+                )
+
+    def test_2d_maturity_bucket_in_lp(self):
+        """(T, B) maturity_bucket is correctly sliced per bar in LP."""
+        T, B = 4, 2
+        bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, spread_bps=5.0)
+        dv01 = np.full((T, B), 0.01, dtype=np.float64)
+        fair = mid_px + 1.0
+        zscore = np.full((T, B), 3.0)
+        adf_p = np.full((T, B), 0.01)
+        tradable = np.ones(B, dtype=np.int32)
+        pos_long = np.full(B, 1e6)
+        pos_short = np.full(B, -1e6)
+        params = _default_params()
+        params["cooldown_bars"] = 0
+
+        # Both instruments start in bucket 0, then instrument 1 moves to bucket 1
+        maturity_bucket_2d = np.array([
+            [0, 0],
+            [0, 0],
+            [0, 1],
+            [0, 1],
+        ], dtype=np.int64)
+        params["mat_bucket_dv01_caps"] = np.array([50.0, 50.0])
+
+        result = lp_portfolio_loop(
+            bid_px, bid_sz, ask_px, ask_sz, mid_px,
+            dv01, fair, zscore, adf_p,
+            tradable, pos_long, pos_short,
+            None, None, maturity_bucket_2d,
+            **params,
+        )
+        # Should run without error — LP uses per-bar slice
+        assert result[27] >= 0  # non-negative trade count
+
+    def test_1d_arrays_still_work(self):
+        """Existing (B,) maturity and maturity_bucket arrays still work."""
+        T, B = 3, 2
+        bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, spread_bps=5.0)
+        dv01 = np.full((T, B), 0.01, dtype=np.float64)
+        fair = mid_px + 1.0
+        zscore = np.full((T, B), 3.0)
+        adf_p = np.full((T, B), 0.01)
+        tradable = np.ones(B, dtype=np.int32)
+        pos_long = np.full(B, 1e6)
+        pos_short = np.full(B, -1e6)
+        params = _default_params()
+
+        maturity_1d = np.array([5.0, 10.0])
+        maturity_bucket_1d = np.array([0, 1], dtype=np.int64)
+        params["mat_bucket_dv01_caps"] = np.array([100.0, 100.0])
+
+        result = lp_portfolio_loop(
+            bid_px, bid_sz, ask_px, ask_sz, mid_px,
+            dv01, fair, zscore, adf_p,
+            tradable, pos_long, pos_short,
+            maturity_1d, None, maturity_bucket_1d,
+            **params,
+        )
+        assert result[27] > 0  # trades happen

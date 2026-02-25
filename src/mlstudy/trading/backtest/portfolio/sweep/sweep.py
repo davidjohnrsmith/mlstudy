@@ -94,25 +94,25 @@ class PortfolioSweepExecutor:
         tradable,
         pos_limits_long,
         pos_limits_short,
-        # Optional meta
-        maturity=None,
-        issuer_bucket=None,
-        maturity_bucket=None,
-        # Optional bucket caps
-        issuer_dv01_caps=None,
-        mat_bucket_dv01_caps=None,
+        # Meta
+        maturity,
+        issuer_bucket,
+        maturity_bucket,
+        # Bucket caps
+        issuer_dv01_caps,
+        mat_bucket_dv01_caps,
         # Instrument IDs
-        instrument_ids=None,
-        # Hedge arrays (all-or-nothing)
-        hedge_bid_px=None,
-        hedge_bid_sz=None,
-        hedge_ask_px=None,
-        hedge_ask_sz=None,
-        hedge_mid_px=None,
-        hedge_dv01=None,
-        hedge_ratios=None,
-        # Optional context
-        datetimes=None,
+        instrument_ids,
+        # Hedge arrays
+        hedge_bid_px,
+        hedge_bid_sz,
+        hedge_ask_px,
+        hedge_ask_sz,
+        hedge_mid_px,
+        hedge_dv01,
+        hedge_ratios,
+        # Context
+        datetimes,
         # Sweep control
         backend: str = "serial",
         n_workers: int | None = None,
@@ -161,28 +161,21 @@ class PortfolioSweepExecutor:
             tradable=tradable,
             pos_limits_long=pos_limits_long,
             pos_limits_short=pos_limits_short,
+            maturity=maturity,
+            issuer_bucket=issuer_bucket,
+            maturity_bucket=maturity_bucket,
+            issuer_dv01_caps=issuer_dv01_caps,
+            mat_bucket_dv01_caps=mat_bucket_dv01_caps,
+            instrument_ids=instrument_ids,
+            hedge_bid_px=hedge_bid_px,
+            hedge_bid_sz=hedge_bid_sz,
+            hedge_ask_px=hedge_ask_px,
+            hedge_ask_sz=hedge_ask_sz,
+            hedge_mid_px=hedge_mid_px,
+            hedge_dv01=hedge_dv01,
+            hedge_ratios=hedge_ratios,
+            datetimes=datetimes,
         )
-        # instrument_ids (required by run_backtest)
-        if instrument_ids is not None:
-            market_data["instrument_ids"] = instrument_ids
-        # Optional arrays
-        for name, val in [
-            ("maturity", maturity),
-            ("issuer_bucket", issuer_bucket),
-            ("maturity_bucket", maturity_bucket),
-            ("issuer_dv01_caps", issuer_dv01_caps),
-            ("mat_bucket_dv01_caps", mat_bucket_dv01_caps),
-            ("hedge_bid_px", hedge_bid_px),
-            ("hedge_bid_sz", hedge_bid_sz),
-            ("hedge_ask_px", hedge_ask_px),
-            ("hedge_ask_sz", hedge_ask_sz),
-            ("hedge_mid_px", hedge_mid_px),
-            ("hedge_dv01", hedge_dv01),
-            ("hedge_ratios", hedge_ratios),
-            ("datetimes", datetimes),
-        ]:
-            if val is not None:
-                market_data[name] = val
 
         workers = n_workers or os.cpu_count() or 1
 

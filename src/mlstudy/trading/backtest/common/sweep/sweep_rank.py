@@ -43,9 +43,15 @@ class SweepRanker:
 
         i = 0
         while i < n:
-            j = i
-            while j < n and values[indexed[j]] == values[indexed[i]]:
-                j += 1
+            j = i + 1
+            vi = values[indexed[i]]
+            # Group equal values (NaN == NaN is False, so use math.isnan)
+            if vi != vi:  # NaN check
+                while j < n and values[indexed[j]] != values[indexed[j]]:
+                    j += 1
+            else:
+                while j < n and values[indexed[j]] == vi:
+                    j += 1
             avg_rank = (i + 1 + j) / 2.0
             for k in range(i, j):
                 ranks[indexed[k]] = avg_rank
