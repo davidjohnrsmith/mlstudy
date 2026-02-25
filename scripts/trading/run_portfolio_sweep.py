@@ -32,6 +32,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import time
 from pathlib import Path
@@ -40,7 +41,7 @@ import pandas as pd
 
 from mlstudy.trading.backtest.portfolio.sweep.sweep_runner import PortfolioSweepRunner
 
-
+logger = logging.getLogger(__name__)
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run LP portfolio backtest sweep.",
@@ -90,6 +91,12 @@ def _print(msg: str, quiet: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     quiet = args.quiet
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     _print(f"Loading sweep config from {args.config} ...", quiet)
 

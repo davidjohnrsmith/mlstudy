@@ -50,7 +50,20 @@ is performed.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
+
+
+@dataclass(frozen=True)
+class LoopState:
+    """Mutable backtest state that carries across chunks."""
+    pos: np.ndarray           # (B,)
+    hedge_pos: np.ndarray     # (H,)
+    cash: float
+    cooldown_remaining: int
+    prev_equity: float
+    prev_hedge_mtm: float
 
 from mlstudy.trading.backtest.portfolio.single_backtest.state import (
     PortfolioActionCode,
@@ -318,6 +331,9 @@ def lp_portfolio_loop(
     hedge_dv01=None,        # (T, H)    or None
     # -- Hedge ratios --
     hedge_ratios=None,      # (T, B, H) or None
+    # -- Chunked state --
+    initial_state=None,     # LoopState or None — resume from this state
+    return_final_state=False,  # bool — if True, append LoopState to return
 ):
     """LP-based portfolio backtest core loop.
 
@@ -441,12 +457,20 @@ def lp_portfolio_loop(
     out_hedge_pnl = np.zeros(T, dtype=np.float64)
 
     # -- Mutable state --
-    pos = np.zeros(B, dtype=np.float64)     # current notional position per instrument
-    hedge_pos = np.zeros(max(H, 1), dtype=np.float64)  # current hedge positions
-    cash = float(initial_capital)
-    cooldown_remaining = 0
-    prev_equity = float(initial_capital)
-    prev_hedge_mtm = 0.0
+    if initial_state is not None:
+        pos = initial_state.pos.copy()
+        hedge_pos = initial_state.hedge_pos.copy()
+        cash = initial_state.cash
+        cooldown_remaining = initial_state.cooldown_remaining
+        prev_equity = initial_state.prev_equity
+        prev_hedge_mtm = initial_state.prev_hedge_mtm
+    else:
+        pos = np.zeros(B, dtype=np.float64)
+        hedge_pos = np.zeros(max(H, 1), dtype=np.float64)
+        cash = float(initial_capital)
+        cooldown_remaining = 0
+        prev_equity = float(initial_capital)
+        prev_hedge_mtm = 0.0
 
     # Detect whether maturity / maturity_bucket are time-varying (T, B)
     maturity_2d = maturity is not None and maturity.ndim == 2
@@ -877,7 +901,7 @@ def lp_portfolio_loop(
         out_n_trades_bar[t] = bar_n_trades
         out_cooldown[t] = cooldown_remaining
 
-    return (
+    result = (
         # Per-bar arrays (9)
         out_pos,            # 0: (T, B)
         out_cash,           # 1: (T,)
@@ -911,3 +935,16 @@ def lp_portfolio_loop(
         # Scalar
         n_trades_total,     # 27
     )
+
+    if return_final_state:
+        final_state = LoopState(
+            pos=pos.copy(),
+            hedge_pos=hedge_pos.copy(),
+            cash=cash,
+            cooldown_remaining=cooldown_remaining,
+            prev_equity=prev_equity,
+            prev_hedge_mtm=prev_hedge_mtm,
+        )
+        return result + (final_state,)
+
+    return result

@@ -228,4 +228,4 @@ def _save_scenario_plots(
             import matplotlib.pyplot as plt
             plt.close(fig)
         except Exception:
-            logger.debug("Failed to plot scenario %d", rank, exc_info=True)
+            logger.warning("Failed to plot scenario %d", rank, exc_info=True)

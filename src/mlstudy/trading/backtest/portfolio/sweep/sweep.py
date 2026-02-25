@@ -13,7 +13,7 @@ from typing import Any
 import pandas as pd
 
 from mlstudy.trading.backtest.metrics.portfolio_metrics_calculator import PortfolioMetricsCalculator
-from mlstudy.trading.backtest.portfolio.single_backtest.engine import run_backtest
+from mlstudy.trading.backtest.portfolio.single_backtest.engine import run_backtest, run_backtest_chunked
 from mlstudy.trading.backtest.common.sweep.sweep_dispatch import dispatch
 from mlstudy.trading.backtest.common.sweep.sweep_persist import summary_table
 from .sweep_persist import PortfolioSweepPersister
@@ -38,7 +38,15 @@ def _run_one_portfolio(
     mode: str,
 ) -> SweepResultLight | SweepResult:
     try:
-        res = run_backtest(cfg=scenario.cfg, **market_data)
+        chunk_params = market_data.get("_chunk_params")
+        if chunk_params is not None:
+            # Chunked mode: re-create iterator from stored params
+            loader = chunk_params["loader"]
+            chunks_iter = loader.load_chunked(**chunk_params["load_kwargs"])
+            data_chunks = (md.to_dict() for md in chunks_iter)
+            res = run_backtest_chunked(data_chunks=data_chunks, cfg=scenario.cfg)
+        else:
+            res = run_backtest(cfg=scenario.cfg, **market_data)
         bar_df = res.close_bar_df if res.close_bar_df is not None else res.bar_df
         metrics = PortfolioMetricsCalculator(
             bar_df, res.trade_df,
@@ -121,6 +129,7 @@ class PortfolioSweepExecutor:
         keep_top_k_full: int = 0,
         save_top_full_dir: str | Path | None = None,
         ranking_plan: RankingPlan | None = None,
+        chunk_params: dict | None = None,
     ) -> list[SweepResult] | list[SweepResultLight] | SweepSummary:
         """Run a parameter sweep over portfolio backtest scenarios.
 
@@ -176,6 +185,8 @@ class PortfolioSweepExecutor:
             hedge_ratios=hedge_ratios,
             datetimes=datetimes,
         )
+        if chunk_params is not None:
+            market_data["_chunk_params"] = chunk_params
 
         workers = n_workers or os.cpu_count() or 1
 

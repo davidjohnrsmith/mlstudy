@@ -19,6 +19,7 @@ from mlstudy.trading.backtest.portfolio.single_backtest.plots import (
     plot_gross_dv01_on_ax,
     plot_pnl_on_ax,
     plot_n_trades_on_ax,
+    plot_codes_on_ax,
 )
 from mlstudy.trading.backtest.portfolio.sweep.sweep_results_reader import (
     PortfolioFullScenario,
@@ -76,6 +77,7 @@ def plot_scenario(
         panels.append(("dv01", 2))
     panels.append(("pnl", 1))
     panels.append(("trades", 1))
+    panels.append(("codes", 1))
 
     n_panels = len(panels)
     height_ratios = [h for _, h in panels]
@@ -103,6 +105,8 @@ def plot_scenario(
             plot_pnl_on_ax(res, ax=ax)
         elif name == "trades":
             plot_n_trades_on_ax(res, ax=ax)
+        elif name == "codes":
+            plot_codes_on_ax(res, ax=ax)
 
     _add_stats_textbox(fig, scenario)
 
