@@ -58,4 +58,20 @@ class PortfolioBacktestConfig:
     initial_capital: float
 
     # -- Metrics ------------------------------------------------------------
-    close_time: str   # e.g. "16:00:00"; use "none" to disable close filtering
+    close_time: str  # e.g. "16:00:00"; use "none" to disable close filtering
+
+    # -- Maturity bucket bins (empty tuple to disable) -------------------------
+    maturity_bucket_bins: tuple[float, ...] = ()
+
+    # -- Bucket DV01 caps (empty dict/tuple to disable) -----------------------
+    # issuer_dv01_caps: mapping from issuer name → max absolute DV01
+    #   e.g. {"Japan": 50.0, "US": 100.0}
+    issuer_dv01_caps: dict[str, float] = None
+    # mat_bucket_dv01_caps: per-bucket cap, indexed by digitize bucket index
+    #   length must equal len(maturity_bucket_bins) + 1
+    #   e.g. maturity_bucket_bins=[2,5,7,10] → 5 buckets → 5 caps
+    mat_bucket_dv01_caps: tuple[float, ...] = ()
+
+    def __post_init__(self):
+        if self.issuer_dv01_caps is None:
+            object.__setattr__(self, "issuer_dv01_caps", {})

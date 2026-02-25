@@ -5,6 +5,11 @@ base_config:
   min_qty_trade: 0.0
   min_fill_ratio: 0.0
   min_maturity_inc: 0.0
+  maturity_bucket_bins: [2, 5, 7, 10]
+  issuer_dv01_caps:
+    Japan: 50.0
+    US: 100.0
+  mat_bucket_dv01_caps: [50.0, 50.0, 50.0, 50.0, 50.0]  # one per bucket (len = len(bins) + 1)
   initial_capital: 1000000.0
   close_time: "none"
 

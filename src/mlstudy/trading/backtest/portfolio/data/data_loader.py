@@ -55,6 +55,11 @@ class PortfolioMarketData:
     mid_px, dv01 : (T, B)
     fair_price, zscore, adf_p_value : (T, B)
     tradable, pos_limits_long, pos_limits_short : (B,)
+    maturity : (T, B) or (B,)
+    issuer_bucket : (B,)
+    maturity_bucket : (T, B) or (B,)
+    issuer_dv01_caps : (n_issuers,)
+    mat_bucket_dv01_caps : (n_buckets,)
     hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz : (T, H, L_h)
     hedge_mid_px, hedge_dv01 : (T, H)
     hedge_ratios : (T, B, H)
@@ -78,6 +83,13 @@ class PortfolioMarketData:
     tradable: np.ndarray
     pos_limits_long: np.ndarray
     pos_limits_short: np.ndarray
+    # Meta
+    maturity: np.ndarray              # (T, B) or (B,)
+    issuer_bucket: np.ndarray         # (B,)
+    maturity_bucket: np.ndarray       # (T, B) or (B,)
+    # Bucket caps
+    issuer_dv01_caps: np.ndarray      # (n_issuers,)
+    mat_bucket_dv01_caps: np.ndarray  # (n_buckets,)
     # Hedge L2
     hedge_bid_px: np.ndarray
     hedge_bid_sz: np.ndarray
@@ -91,14 +103,10 @@ class PortfolioMarketData:
     datetimes: np.ndarray
     instrument_ids: list[str]
     hedge_ids: list[str]
-    # Optional static meta
-    maturity: np.ndarray | None = None
-    issuer_bucket: np.ndarray | None = None
-    maturity_bucket: np.ndarray | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return dict suitable for ``run_backtest(**md.to_dict())``."""
-        d: dict[str, Any] = {
+        return {
             "bid_px": self.bid_px,
             "bid_sz": self.bid_sz,
             "ask_px": self.ask_px,
@@ -111,6 +119,11 @@ class PortfolioMarketData:
             "tradable": self.tradable,
             "pos_limits_long": self.pos_limits_long,
             "pos_limits_short": self.pos_limits_short,
+            "maturity": self.maturity,
+            "issuer_bucket": self.issuer_bucket,
+            "maturity_bucket": self.maturity_bucket,
+            "issuer_dv01_caps": self.issuer_dv01_caps,
+            "mat_bucket_dv01_caps": self.mat_bucket_dv01_caps,
             "hedge_bid_px": self.hedge_bid_px,
             "hedge_bid_sz": self.hedge_bid_sz,
             "hedge_ask_px": self.hedge_ask_px,
@@ -121,13 +134,6 @@ class PortfolioMarketData:
             "datetimes": self.datetimes,
             "instrument_ids": self.instrument_ids,
         }
-        if self.maturity is not None:
-            d["maturity"] = self.maturity
-        if self.issuer_bucket is not None:
-            d["issuer_bucket"] = self.issuer_bucket
-        if self.maturity_bucket is not None:
-            d["maturity_bucket"] = self.maturity_bucket
-        return d
 
 
 @dataclass
@@ -175,6 +181,9 @@ class PortfolioDataLoader:
         instrument_ids: list[str] | None = None,
         hedge_ids: list[str] | None = None,
         data_path: str | Path | None = None,
+        maturity_bucket_bins: tuple[float, ...] = (),
+        issuer_dv01_caps_map: dict[str, float] | None = None,
+        mat_bucket_dv01_caps: tuple[float, ...] | None = None,
     ) -> PortfolioMarketData:
         """Read parquets, align, pivot, and return ``PortfolioMarketData``.
 
@@ -188,6 +197,16 @@ class PortfolioDataLoader:
             When *None*, auto-detected from the hedge_ratios file.
         data_path : str, Path, or None
             Overrides ``self.data_path`` when supplied.
+        maturity_bucket_bins : tuple[float, ...]
+            Bin edges for ``np.digitize`` to compute time-varying
+            maturity_bucket.  Empty to disable.
+        issuer_dv01_caps_map : dict[str, float] or None
+            Mapping from issuer name → max absolute DV01 cap.  The keys
+            define the canonical issuer ordering and are used to convert
+            string ``issuer_bucket`` values in meta to integer indices.
+        mat_bucket_dv01_caps : tuple[float, ...] or None
+            Per-bucket DV01 cap indexed by ``np.digitize`` bucket index.
+            Length must equal ``len(maturity_bucket_bins) + 1``.
         """
         resolved = data_path or self.data_path
         if resolved is None:
@@ -262,21 +281,49 @@ class PortfolioDataLoader:
         pos_limits_long = meta_indexed["pos_limit_long"].values.astype(np.float64)
         pos_limits_short = meta_indexed["pos_limit_short"].values.astype(np.float64)
 
-        maturity = (
-            meta_indexed["maturity"].values.astype(np.float64)
-            if "maturity" in meta_indexed.columns
-            else None
-        )
-        issuer_bucket = (
-            meta_indexed["issuer_bucket"].values
-            if "issuer_bucket" in meta_indexed.columns
-            else None
-        )
-        maturity_bucket = (
-            meta_indexed["maturity_bucket"].values
-            if "maturity_bucket" in meta_indexed.columns
-            else None
-        )
+        # --- Issuer bucket: map string names → integer indices via caps dict ---
+        if "issuer_bucket" in meta_indexed.columns and issuer_dv01_caps_map:
+            issuer_names = list(issuer_dv01_caps_map.keys())
+            issuer_name_to_idx = {name: idx for idx, name in enumerate(issuer_names)}
+            raw_issuers = meta_indexed["issuer_bucket"].values
+            issuer_bucket = np.array(
+                [issuer_name_to_idx.get(str(v), 0) for v in raw_issuers],
+                dtype=np.int64,
+            )
+            _issuer_dv01_caps = np.array(
+                [issuer_dv01_caps_map[name] for name in issuer_names],
+                dtype=np.float64,
+            )
+        elif "issuer_bucket" in meta_indexed.columns:
+            issuer_bucket = meta_indexed["issuer_bucket"].values.astype(np.int64)
+            _issuer_dv01_caps = np.empty(0, dtype=np.float64)
+        else:
+            issuer_bucket = np.zeros(B, dtype=np.int64)
+            _issuer_dv01_caps = np.empty(0, dtype=np.float64)
+
+        # Maturity: prefer time-varying (T, B) from maturity_date, fall back
+        # to static (B,) from maturity column.
+        if "maturity_date" in meta_indexed.columns:
+            maturity_dates = pd.to_datetime(
+                meta_indexed["maturity_date"]
+            ).values.astype("datetime64[ns]")
+            # datetimes not yet available; computed after alignment (step 9).
+            # Store raw dates and defer computation to after alignment.
+            _maturity_dates_raw = maturity_dates
+            maturity = np.zeros(B, dtype=np.float64)  # placeholder, replaced in 10b
+            maturity_bucket = np.zeros(B, dtype=np.int64)  # placeholder, replaced in 10b
+        else:
+            _maturity_dates_raw = None
+            maturity = (
+                meta_indexed["maturity"].values.astype(np.float64)
+                if "maturity" in meta_indexed.columns
+                else np.zeros(B, dtype=np.float64)
+            )
+            maturity_bucket = (
+                meta_indexed["maturity_bucket"].values.astype(np.int64)
+                if "maturity_bucket" in meta_indexed.columns
+                else np.zeros(B, dtype=np.int64)
+            )
 
         # --- 8. Pivot hedge ratios: (T, B, H) from list-column format -----------
         hedge_ratios_pivoted = _pivot_hedge_ratios_portfolio(
@@ -300,11 +347,8 @@ class PortfolioDataLoader:
         sources, all_dts_idx = align_and_fill(
             sources,
             fill_method=self.fill_method,
-            essential_keys=("fair", "zscore", "adf", "hedge_ratios"),
-            fillna_defaults={
-                "inst_dv01": 1.0, "inst_mid": 0.0, "inst_book": 0.0,
-                "hedge_dv01": 1.0, "hedge_mid": 0.0, "hedge_book": 0.0,
-            },
+            essential_keys=("inst_book", ),
+            datetime_source_keys=("inst_book", ),
         )
 
         T = len(all_dts_idx)
@@ -332,6 +376,23 @@ class PortfolioDataLoader:
 
         datetimes = all_dts_idx.values
 
+        # --- 10b. Compute time-varying maturity (T, B) if maturity_date available
+        if _maturity_dates_raw is not None:
+            dt_ns = datetimes.astype("datetime64[ns]")
+            # (T, 1) - (1, B) → (T, B) timedelta
+            delta = _maturity_dates_raw[np.newaxis, :] - dt_ns[:, np.newaxis]
+            maturity = delta.astype("timedelta64[D]").astype(np.float64) / 365.25
+            if len(maturity_bucket_bins) > 0:
+                bins = np.asarray(maturity_bucket_bins, dtype=np.float64)
+                maturity_bucket = np.digitize(maturity, bins).astype(np.int64)
+            else:
+                # No bins provided; fall back to static maturity_bucket
+                maturity_bucket = (
+                    meta_indexed["maturity_bucket"].values.astype(np.int64)
+                    if "maturity_bucket" in meta_indexed.columns
+                    else np.zeros(B, dtype=np.int64)
+                )
+
         # --- 11. Validate shapes, warn NaNs ------------------------------------
         _validate_shapes(
             bid_px, bid_sz, ask_px, ask_sz, mid_px, dv01,
@@ -351,6 +412,13 @@ class PortfolioDataLoader:
             hedge_ratios=hedge_ratios_arr,
         )
 
+        # _issuer_dv01_caps already computed in step 7 (issuer bucket section)
+        _mat_bucket_dv01_caps = (
+            np.asarray(mat_bucket_dv01_caps, dtype=np.float64)
+            if mat_bucket_dv01_caps
+            else np.empty(0, dtype=np.float64)
+        )
+
         return PortfolioMarketData(
             bid_px=bid_px,
             bid_sz=bid_sz,
@@ -364,6 +432,11 @@ class PortfolioDataLoader:
             tradable=tradable,
             pos_limits_long=pos_limits_long,
             pos_limits_short=pos_limits_short,
+            maturity=maturity,
+            issuer_bucket=issuer_bucket,
+            maturity_bucket=maturity_bucket,
+            issuer_dv01_caps=_issuer_dv01_caps,
+            mat_bucket_dv01_caps=_mat_bucket_dv01_caps,
             hedge_bid_px=hedge_bid_px,
             hedge_bid_sz=hedge_bid_sz,
             hedge_ask_px=hedge_ask_px,
@@ -374,9 +447,6 @@ class PortfolioDataLoader:
             datetimes=datetimes,
             instrument_ids=instrument_ids,
             hedge_ids=hedge_ids,
-            maturity=maturity,
-            issuer_bucket=issuer_bucket,
-            maturity_bucket=maturity_bucket,
         )
 
 

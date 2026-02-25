@@ -279,9 +279,9 @@ def lp_portfolio_loop(
     pos_limits_long,    # (B,)      max long notional per instrument
     pos_limits_short,   # (B,)      max short notional per instrument (negative)
     # -- Optional meta (can be None) --
-    maturity,           # (B,) or None  years to maturity
+    maturity,           # (T, B) or (B,) or None  years to maturity
     issuer_bucket,      # (B,) or None  int issuer label
-    maturity_bucket,    # (B,) or None  int maturity bucket label
+    maturity_bucket,    # (T, B) or (B,) or None  int maturity bucket label
     # -- LP constraint params --
     gross_dv01_cap,     # float     total gross dv01 budget per bar
     issuer_dv01_caps,   # (n_issuers,) or None
@@ -351,11 +351,11 @@ def lp_portfolio_loop(
         Maximum long notional per instrument (positive).
     pos_limits_short : (B,)
         Maximum short notional per instrument (negative number).
-    maturity : (B,) or None
+    maturity : (T, B) or (B,) or None
         Years to maturity per instrument.
     issuer_bucket : (B,) or None
         Integer issuer label per instrument.
-    maturity_bucket : (B,) or None
+    maturity_bucket : (T, B) or (B,) or None
         Integer maturity bucket label per instrument.
     gross_dv01_cap : float
         Maximum total DV01 tradeable per bar.
@@ -447,6 +447,10 @@ def lp_portfolio_loop(
     cooldown_remaining = 0
     prev_equity = float(initial_capital)
     prev_hedge_mtm = 0.0
+
+    # Detect whether maturity / maturity_bucket are time-varying (T, B)
+    maturity_2d = maturity is not None and maturity.ndim == 2
+    maturity_bucket_2d = maturity_bucket is not None and maturity_bucket.ndim == 2
 
     # Pre-compute current bucket dv01 arrays (updated after each bar's trades)
     n_issuers = len(issuer_dv01_caps) if issuer_dv01_caps is not None else 0
@@ -578,7 +582,8 @@ def lp_portfolio_loop(
                     # Maturity filter for risk-increasing
                     if (not is_risk_dec and min_maturity_inc > 0.0
                             and maturity is not None):
-                        if maturity[b] < min_maturity_inc:
+                        mat_val = maturity[t, b] if maturity_2d else maturity[b]
+                        if mat_val < min_maturity_inc:
                             continue
 
                     # Position limits: compute headroom in notional
@@ -652,14 +657,16 @@ def lp_portfolio_loop(
 
                 if n_mat_buckets > 0 and maturity_bucket is not None:
                     current_mat_dv01[:] = 0.0
+                    mat_bkt_t = maturity_bucket[t] if maturity_bucket_2d else maturity_bucket
                     for b in range(B):
-                        bkt = maturity_bucket[b]
+                        bkt = mat_bkt_t[b]
                         if 0 <= bkt < n_mat_buckets:
                             current_mat_dv01[bkt] += pos[b] * dv01[t, b]
 
                 # ==================================================
                 # Step 8: Solve LP / greedy
                 # ==================================================
+                mat_bkt_lp = maturity_bucket[t] if maturity_bucket_2d else maturity_bucket
                 dv01_alloc, used_greedy = _solve_lp(
                     c_alpha,
                     c_dv01_liq,
@@ -668,7 +675,7 @@ def lp_portfolio_loop(
                     c_inst,
                     c_side,
                     issuer_bucket,
-                    maturity_bucket,
+                    mat_bkt_lp,
                     issuer_dv01_caps,
                     mat_bucket_dv01_caps,
                     current_issuer_dv01,

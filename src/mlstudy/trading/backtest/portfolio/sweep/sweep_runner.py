@@ -200,6 +200,9 @@ class PortfolioSweepRunner:
                 instrument_ids=instrument_ids,
                 hedge_ids=hedge_ids,
                 data_path=data_path,
+                maturity_bucket_bins=cfg.base_config.maturity_bucket_bins,
+                issuer_dv01_caps_map=cfg.base_config.issuer_dv01_caps,
+                mat_bucket_dv01_caps=cfg.base_config.mat_bucket_dv01_caps,
             )
             md = loaded.to_dict()
         if not md:
