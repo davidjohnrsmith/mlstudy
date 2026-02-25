@@ -11,14 +11,14 @@ base_config:
   maturity_bucket_bins: [2, 5, 7, 10]
   issuer_dv01_caps:
     Japan: 50.0
-    US: 100.0
-  mat_bucket_dv01_caps: [50.0, 50.0, 50.0, 50.0, 50.0]
-  initial_capital: 1000000.0
+    US: 100000000000000.0
+  mat_bucket_dv01_caps: [50000.0, 500000.0, 50000.0, 500000.0, 5000000.0]
+  initial_capital: 100000.0
   close_time: "none"
 
 grid:
-  z_inc: [2.0, 3.0]
-  z_dec: [1.0]
+  z_inc: [0.5, 1.0]
+  z_dec: [0.1]
   alpha_thr_inc: [1.0]
   alpha_thr_dec: [0.5]
   gross_dv01_cap: [100.0]
@@ -28,12 +28,12 @@ grid:
   top_k: [10]
 
 data:
-  book_filename: "book.parquet"
-  mid_filename: "mid.parquet"
-  dv01_filename: "dv01.parquet"
-  signal_filename: "signal.parquet"
+  book_filename: "book"
+  mid_filename: "mid"
+  dv01_filename: "dv01"
+  signal_filename: "signal"
   meta_filename: "meta.parquet"
-  hedge_ratio_filename: "hedge_ratios.parquet"
+  hedge_ratio_filename: "hedge_ratios"
 
 sweep:
   backend: "serial"
@@ -41,6 +41,9 @@ sweep:
   chunk_size: 50
   mode: "metrics_only"
   keep_top_k_full: 5
+  chunk_freq: "D"
+  start_date: "20260102"
+  end_date: "20260103"
 
 rank:
   primary_metrics:

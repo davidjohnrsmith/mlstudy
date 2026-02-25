@@ -133,6 +133,9 @@ def _build_sweep_kwargs(
         "mode": "mode",
         "keep_top_k_full": "keep_top_k_full",
         "save_top_full_dir": "save_top_full_dir",
+        "chunk_freq": "chunk_freq",
+        "start_date": "start_date",
+        "end_date": "end_date",
     }
     for yaml_key, kwarg_key in key_map.items():
         if yaml_key in raw:

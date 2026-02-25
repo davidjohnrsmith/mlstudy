@@ -17,6 +17,9 @@ import matplotlib.ticker as mticker
 from mlstudy.trading.backtest.portfolio.single_backtest.results import (
     PortfolioBacktestResults,
 )
+from mlstudy.trading.backtest.portfolio.single_backtest.state import (
+    PortfolioActionCode,
+)
 
 if TYPE_CHECKING:
     import matplotlib.figure
@@ -203,6 +206,102 @@ def plot_n_trades_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
     return ax
 
 
+# Code colour mapping: group codes into semantic categories for visual clarity.
+_CODE_COLORS = {
+    PortfolioActionCode.NO_ACTION: ("lightgrey", "No action"),
+    PortfolioActionCode.NO_CANDIDATES: ("silver", "No candidates"),
+    PortfolioActionCode.SKIP_COOLDOWN: ("gold", "Cooldown"),
+    PortfolioActionCode.SKIP_COOLDOWN_RISK_ONLY: ("khaki", "Cooldown (risk)"),
+    PortfolioActionCode.EXEC_OK: ("mediumseagreen", "Exec OK"),
+    PortfolioActionCode.EXEC_PARTIAL: ("yellowgreen", "Exec partial"),
+    PortfolioActionCode.EXEC_NO_LIQUIDITY: ("darkorange", "No liquidity"),
+    PortfolioActionCode.EXEC_GREEDY: ("dodgerblue", "Greedy"),
+    PortfolioActionCode.LP_INFEASIBLE: ("tomato", "LP infeasible"),
+    PortfolioActionCode.LP_NO_CANDIDATES: ("lightsalmon", "LP no cands"),
+    PortfolioActionCode.INVALID_BOOK: ("red", "Invalid book"),
+    PortfolioActionCode.INVALID_DV01: ("darkred", "Invalid DV01"),
+}
+
+
+def plot_codes_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Color-coded bar-level action codes over time."""
+    if ax is None:
+        _, ax = plt.subplots()
+    codes = res.codes
+    T = len(codes)
+    if T == 0:
+        ax.set_ylabel("Code")
+        return ax
+
+    # Map each code to a numeric id for pcolormesh
+    unique_codes = sorted(set(int(c) for c in codes))
+    code_to_idx = {c: i for i, c in enumerate(unique_codes)}
+    mapped = np.array([code_to_idx[int(c)] for c in codes])
+
+    # Build colourmap from known codes
+    from matplotlib.colors import ListedColormap
+    colors = []
+    labels = []
+    for c in unique_codes:
+        try:
+            pac = PortfolioActionCode(c)
+            col, lbl = _CODE_COLORS.get(pac, ("grey", pac.name))
+        except ValueError:
+            col, lbl = "grey", f"Code {c}"
+        colors.append(col)
+        labels.append(lbl)
+
+    cmap = ListedColormap(colors)
+
+    # pcolormesh with shading="flat" needs edges: T+1 x-edges for T cells
+    x_edges = np.arange(T + 1) - 0.5
+    ax.pcolormesh(
+        x_edges, [0, 1], mapped.reshape(1, -1),
+        cmap=cmap, vmin=-0.5, vmax=len(unique_codes) - 0.5,
+        shading="flat",
+    )
+    ax.set_xlim(-0.5, T - 0.5)
+    ax.set_yticks([])
+    ax.set_ylabel("Code")
+    _format_xaxis(ax, res)
+
+    # Legend with code labels
+    from matplotlib.patches import Patch
+    handles = [Patch(facecolor=col, label=lbl) for col, lbl in zip(colors, labels)]
+    ax.legend(handles=handles, **_LEGEND_KW)
+
+    return ax
+
+
+def plot_codes_distribution(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Horizontal bar chart of action code counts."""
+    if ax is None:
+        _, ax = plt.subplots()
+    codes = res.codes
+    unique, counts = np.unique(codes, return_counts=True)
+
+    labels = []
+    colors = []
+    for c in unique:
+        try:
+            pac = PortfolioActionCode(int(c))
+            col, lbl = _CODE_COLORS.get(pac, ("grey", pac.name))
+        except ValueError:
+            col, lbl = "grey", f"Code {int(c)}"
+        labels.append(lbl)
+        colors.append(col)
+
+    y = np.arange(len(labels))
+    ax.barh(y, counts, color=colors, edgecolor="white")
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=7)
+    ax.set_xlabel("Count")
+    ax.set_ylabel("")
+    ax.set_title("Action Code Distribution", fontsize=10)
+    ax.grid(True, alpha=0.3, axis="x")
+    return ax
+
+
 # ---------------------------------------------------------------------------
 # Figure-level plots
 # ---------------------------------------------------------------------------
@@ -235,6 +334,7 @@ def plot_portfolio_dashboard(
         panels.append(("hedges", 2))
     panels.append(("dv01", 2))
     panels.append(("pnl", 1))
+    panels.append(("codes", 1))
 
     n = len(panels)
     height_ratios = [h for _, h in panels]
@@ -260,6 +360,8 @@ def plot_portfolio_dashboard(
             plot_gross_dv01_on_ax(res, ax=ax, cap=gross_dv01_cap)
         elif name == "pnl":
             plot_pnl_on_ax(res, ax=ax)
+        elif name == "codes":
+            plot_codes_on_ax(res, ax=ax)
 
     fig.tight_layout()
     return fig

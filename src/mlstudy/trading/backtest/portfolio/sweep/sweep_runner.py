@@ -195,16 +195,47 @@ class PortfolioSweepRunner:
         if instrument_ids is not None and "instrument_ids" not in md:
             md["instrument_ids"] = instrument_ids
         if not md and cfg.data_loader is not None:
-            logger.info("Loading market data from config data section")
-            loaded = cfg.data_loader.load(
-                instrument_ids=instrument_ids,
-                hedge_ids=hedge_ids,
-                data_path=data_path,
-                maturity_bucket_bins=cfg.base_config.maturity_bucket_bins,
-                issuer_dv01_caps_map=cfg.base_config.issuer_dv01_caps,
-                mat_bucket_dv01_caps=cfg.base_config.mat_bucket_dv01_caps,
-            )
-            md = loaded.to_dict()
+            chunk_freq = cfg.sweep_kwargs.get("chunk_freq")
+            if chunk_freq:
+                logger.info("Using chunked loading with freq=%s", chunk_freq)
+                load_kwargs = dict(
+                    chunk_freq=chunk_freq,
+                    start_date=cfg.sweep_kwargs.get("start_date"),
+                    end_date=cfg.sweep_kwargs.get("end_date"),
+                    instrument_ids=instrument_ids,
+                    hedge_ids=hedge_ids,
+                    data_path=data_path,
+                    maturity_bucket_bins=cfg.base_config.maturity_bucket_bins,
+                    issuer_dv01_caps_map=cfg.base_config.issuer_dv01_caps,
+                    mat_bucket_dv01_caps=cfg.base_config.mat_bucket_dv01_caps,
+                )
+                # Load one chunk to get instrument_ids for scenario building
+                sample_iter = cfg.data_loader.load_chunked(**load_kwargs)
+                first_chunk = next(sample_iter, None)
+                if first_chunk is None:
+                    raise ValueError(
+                        f"load_chunked yielded no data chunks. Check that "
+                        f"data_path={data_path!r} contains date-suffixed "
+                        f"parquet files matching the configured filenames "
+                        f"and that start_date/end_date overlap the file dates."
+                    )
+                # Build md with _chunk_params for sweep workers
+                md = first_chunk.to_dict()
+                md["_chunk_params"] = {
+                    "loader": cfg.data_loader,
+                    "load_kwargs": load_kwargs,
+                }
+            else:
+                logger.info("Loading market data from config data section")
+                loaded = cfg.data_loader.load(
+                    instrument_ids=instrument_ids,
+                    hedge_ids=hedge_ids,
+                    data_path=data_path,
+                    maturity_bucket_bins=cfg.base_config.maturity_bucket_bins,
+                    issuer_dv01_caps_map=cfg.base_config.issuer_dv01_caps,
+                    mat_bucket_dv01_caps=cfg.base_config.mat_bucket_dv01_caps,
+                )
+                md = loaded.to_dict()
         if not md:
             raise ValueError(
                 "No market data provided.  Pass market_data=dict(...), "
@@ -225,7 +256,17 @@ class PortfolioSweepRunner:
 
         # --- 4. Run sweep ---------------------------------------------------------
         t0 = time.perf_counter()
-        raw = PortfolioSweepExecutor.run_sweep(scenarios, **md, **cfg.sweep_kwargs)
+        # Filter out chunking keys that are not valid run_sweep params
+        sweep_kw = {
+            k: v for k, v in cfg.sweep_kwargs.items()
+            if k not in ("chunk_freq", "start_date", "end_date")
+        }
+        # Extract _chunk_params before spreading into run_sweep
+        chunk_params = md.pop("_chunk_params", None)
+        raw = PortfolioSweepExecutor.run_sweep(
+            scenarios, **md, **sweep_kw,
+            chunk_params=chunk_params,
+        )
         elapsed = time.perf_counter() - t0
 
         # --- 5. Build summary table -----------------------------------------------

@@ -28,12 +28,12 @@ grid:
   top_k: [5, 10, 20]
 
 data:
-  book_filename: "book.parquet"
-  mid_filename: "mid.parquet"
-  dv01_filename: "dv01.parquet"
-  signal_filename: "signal.parquet"
+  book_filename: "book"
+  mid_filename: "mid"
+  dv01_filename: "dv01"
+  signal_filename: "signal"
   meta_filename: "meta.parquet"
-  hedge_ratio_filename: "hedge_ratios.parquet"
+  hedge_ratio_filename: "hedge_ratios"
 
 sweep:
   backend: "process"
@@ -42,6 +42,9 @@ sweep:
   mode: "metrics_only"
   keep_top_k_full: 20
   save_top_full_dir: "runs/portfolio_grid_v1/top_full"
+  chunk_freq: "D"
+  start_date: "20240101"
+  end_date: "20251231"
 
 rank:
   primary_metrics:

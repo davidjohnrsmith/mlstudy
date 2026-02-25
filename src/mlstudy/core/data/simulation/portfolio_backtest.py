@@ -101,27 +101,37 @@ def _make_signal_df_for_instruments(
     return signal_df
 
 
+_ISSUER_NAMES = ["US",]
+
+
 def _make_meta_df(
     rng: np.random.Generator,
     instrument_ids: list[str],
+    ref_date: str = "2026-01-01",
 ) -> pd.DataFrame:
     B = len(instrument_ids)
     tradable = (rng.random(B) > 0.05).astype(float)
     pos_limit_long = rng.uniform(1e6, 5e6, size=B)
     pos_limit_short = -rng.uniform(1e6, 5e6, size=B)
 
-    maturity = rng.uniform(0.5, 12.0, size=B)
-    issuer_bucket = rng.integers(0, 10, size=B)
-    maturity_bucket = np.digitize(maturity, bins=[2, 5, 7, 10]).astype(int)
+    # maturity_date: random date 0.5–12 years from ref_date
+    ref = pd.Timestamp(ref_date)
+    days_ahead = rng.uniform(0.5 * 365.25, 12.0 * 365.25, size=B).astype(int)
+    maturity_date = pd.to_datetime(
+        [ref + pd.Timedelta(days=int(d)) for d in days_ahead]
+    )
+
+    # issuer: string names (loader maps these via issuer_dv01_caps_map)
+    issuer_idx = rng.integers(0, len(_ISSUER_NAMES), size=B)
+    issuer = [_ISSUER_NAMES[i] for i in issuer_idx]
 
     return pd.DataFrame({
         "instrument_id": instrument_ids,
         "tradable": tradable,
         "pos_limit_long": pos_limit_long,
         "pos_limit_short": pos_limit_short,
-        "maturity": maturity,
-        "issuer_bucket": issuer_bucket,
-        "maturity_bucket": maturity_bucket,
+        "maturity_date": maturity_date,
+        "issuer_bucket": issuer,
     })
 
 
@@ -169,79 +179,206 @@ def generate_portfolio_parquets(cfg: PortfolioGenConfig) -> None:
 
     dts = _make_datetimes(cfg.start, cfg.periods, cfg.freq)
 
-    # ---- instrument mid / dv01 / book ----
-    instrument_mid_df = _make_mid_df(
-        rng, dts, cfg.instrument_ids, cfg.jitter_bps,
-        base0=100.0, base_step=0.25,
+    instrument_ids = list(cfg.instrument_ids)
+    hedge_ids = list(cfg.hedge_ids)
+    all_ids = instrument_ids + hedge_ids
+
+    # ---- mid / dv01 / book for ALL ids (instruments + hedges) -----------------
+    mid_df = _make_mid_df(
+        rng,
+        dts,
+        all_ids,
+        cfg.jitter_bps,
+        base0=100.0,
+        base_step=0.20,
         id_col="instrument_id",
     )
-    instrument_mid_df = _drop_rows(instrument_mid_df, rng, cfg.missing_prob)
-    instrument_mid_df.to_parquet(cfg.out_dir / "mid.parquet", index=False)
+    mid_df = _drop_rows(mid_df, rng, cfg.missing_prob)
+    mid_df.to_parquet(cfg.out_dir / "mid.parquet", index=False)
 
-    instrument_dv01_df = _make_dv01_df(
-        rng, dts, cfg.instrument_ids,
-        base0=0.05, base_step=0.01, noise=0.001,
+    dv01_df = _make_dv01_df(
+        rng,
+        dts,
+        all_ids,
+        base0=0.05,
+        base_step=0.01,
+        noise=0.001,
         id_col="instrument_id",
     )
-    instrument_dv01_df = _drop_rows(instrument_dv01_df, rng, cfg.missing_prob)
-    instrument_dv01_df.to_parquet(cfg.out_dir / "dv01.parquet", index=False)
+    dv01_df = _drop_rows(dv01_df, rng, cfg.missing_prob)
+    dv01_df.to_parquet(cfg.out_dir / "dv01.parquet", index=False)
 
-    instrument_book_df = _make_book_df(
-        rng, dts, instrument_mid_df, cfg.instrument_ids, cfg.instrument_levels,
-        spread0=0.008, spread_step=0.003,   # similar to your single-instrument generator
-        size0=100.0, size_step=50.0,
+    book_df = _make_book_df(
+        rng,
+        dts,
+        mid_df,
+        all_ids,
+        cfg.instrument_levels,      # one L for everything (loader detects from book columns)
+        spread0=0.008,
+        spread_step=0.003,
+        size0=120.0,
+        size_step=60.0,
         id_col="instrument_id",
     )
-    instrument_book_df = _drop_rows(instrument_book_df, rng, cfg.missing_prob)
-    instrument_book_df.to_parquet(cfg.out_dir / "book.parquet", index=False)
+    book_df = _drop_rows(book_df, rng, cfg.missing_prob)
+    book_df.to_parquet(cfg.out_dir / "book.parquet", index=False)
 
-    # ---- Hedge mid / dv01 / book ----
-    hedge_mid_df = _make_mid_df(
-        rng, dts, cfg.hedge_ids, cfg.jitter_bps * 0.8,
-        base0=100.0, base_step=0.10,
-        id_col="hedge_id",
-    )
-    hedge_mid_df = _drop_rows(hedge_mid_df, rng, cfg.missing_prob)
-    hedge_mid_df.to_parquet(cfg.out_dir / "hedge_mid.parquet", index=False)
-
-    hedge_dv01_df = _make_dv01_df(
-        rng, dts, cfg.hedge_ids,
-        base0=0.06, base_step=0.008, noise=0.001,
-        id_col="hedge_id",
-    )
-    hedge_dv01_df = _drop_rows(hedge_dv01_df, rng, cfg.missing_prob)
-    hedge_dv01_df.to_parquet(cfg.out_dir / "hedge_dv01.parquet", index=False)
-
-    hedge_book_df = _make_book_df(
-        rng, dts, hedge_mid_df, cfg.hedge_ids, cfg.hedge_levels,
-        spread0=0.006, spread_step=0.002,   # a bit tighter for hedges
-        size0=150.0, size_step=60.0,
-        id_col="hedge_id",
-    )
-    hedge_book_df = _drop_rows(hedge_book_df, rng, cfg.missing_prob)
-    hedge_book_df.to_parquet(cfg.out_dir / "hedge_book.parquet", index=False)
-
-    # ---- Signals (for instruments only) ----
-    # IMPORTANT: derived from instrument_mid_df so consistent with book/mid
+    # ---- Signals (for instruments only) --------------------------------------
+    # Must contain: fair_price, zscore, adf_p_value, and be long-format on (datetime, instrument_id)
     signal_df = _make_signal_df_for_instruments(
-        rng, dts, cfg.instrument_ids, instrument_mid_df,
+        rng,
+        dts,
+        instrument_ids,
+        mid_df,                     # use mid_df so signals are aligned with mid
         missing_prob=cfg.missing_prob,
         fair_horizon_bars=cfg.fair_horizon_bars,
     )
     signal_df.to_parquet(cfg.out_dir / "signal.parquet", index=False)
 
-    # ---- Meta (instruments) ----
-    meta_df = _make_meta_df(rng, cfg.instrument_ids)
+    # ---- Meta (instruments only) ---------------------------------------------
+    meta_df = _make_meta_df(
+        rng,
+        instrument_ids,
+        ref_date=cfg.start,
+    )
     meta_df.to_parquet(cfg.out_dir / "meta.parquet", index=False)
 
-    # ---- Hedge ratios list parquet ----
+    # ---- Hedge ratios list parquet (targets are instruments; hedges are hedge_ids) ----
     hedge_ratios_df = _make_hedge_ratios_list_parquet(
-        rng, dts, cfg.instrument_ids, cfg.hedge_ids, missing_prob=cfg.missing_prob,
+        rng,
+        dts,
+        instrument_ids,
+        hedge_ids,
+        missing_prob=cfg.missing_prob,
     )
     hedge_ratios_df.to_parquet(cfg.out_dir / "hedge_ratios.parquet", index=False)
 
     print(f"Wrote synthetic portfolio parquets to: {cfg.out_dir.resolve()}")
     print("Files:", ", ".join(sorted(p.name for p in cfg.out_dir.glob("*.parquet"))))
+
+
+def _split_df_by_date(
+    df: pd.DataFrame,
+    dt_col: str,
+    chunk_boundaries: list[tuple[pd.Timestamp, pd.Timestamp]],
+) -> list[tuple[str, str, pd.DataFrame]]:
+    """Split a DataFrame into chunks by date boundaries.
+
+    Returns list of (start_date_str, end_date_str, chunk_df).
+    """
+    dt_series = pd.to_datetime(df[dt_col])
+    result = []
+    for cs, ce in chunk_boundaries:
+        mask = (dt_series >= cs) & (dt_series <= ce)
+        chunk = df.loc[mask].reset_index(drop=True)
+        if chunk.empty:
+            continue
+        cs_str = cs.strftime("%Y%m%d")
+        ce_str = ce.strftime("%Y%m%d")
+        result.append((cs_str, ce_str, chunk))
+    return result
+
+
+def generate_portfolio_parquets_chunked(
+    cfg: PortfolioGenConfig,
+    chunk_freq: str = "D",
+) -> None:
+    """Generate date-suffixed chunked parquet files.
+
+    Produces files like ``book_20240101_20240101.parquet`` instead of
+    ``book.parquet``.  The ``meta.parquet`` file remains a single file
+    (static metadata doesn't change over time).
+
+    Parameters
+    ----------
+    cfg : PortfolioGenConfig
+        Same config as :func:`generate_portfolio_parquets`.
+    chunk_freq : str
+        Pandas frequency string for chunk boundaries (e.g. ``"D"`` for daily,
+        ``"W"`` for weekly, ``"MS"`` for month-start).
+    """
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(cfg.seed)
+
+    dts = _make_datetimes(cfg.start, cfg.periods, cfg.freq)
+
+    instrument_ids = list(cfg.instrument_ids)
+    hedge_ids = list(cfg.hedge_ids)
+    all_ids = instrument_ids + hedge_ids
+
+    # ---- Generate full DataFrames (same logic as single-file) ----------------
+    mid_df = _make_mid_df(
+        rng, dts, all_ids, cfg.jitter_bps,
+        base0=100.0, base_step=0.20, id_col="instrument_id",
+    )
+    mid_df = _drop_rows(mid_df, rng, cfg.missing_prob)
+
+    dv01_df = _make_dv01_df(
+        rng, dts, all_ids,
+        base0=0.05, base_step=0.01, noise=0.001, id_col="instrument_id",
+    )
+    dv01_df = _drop_rows(dv01_df, rng, cfg.missing_prob)
+
+    book_df = _make_book_df(
+        rng, dts, mid_df, all_ids, cfg.instrument_levels,
+        spread0=0.008, spread_step=0.003,
+        size0=120.0, size_step=60.0, id_col="instrument_id",
+    )
+    book_df = _drop_rows(book_df, rng, cfg.missing_prob)
+
+    signal_df = _make_signal_df_for_instruments(
+        rng, dts, instrument_ids, mid_df,
+        missing_prob=cfg.missing_prob,
+        fair_horizon_bars=cfg.fair_horizon_bars,
+    )
+
+    meta_df = _make_meta_df(rng, instrument_ids, ref_date=cfg.start)
+
+    hedge_ratios_df = _make_hedge_ratios_list_parquet(
+        rng, dts, instrument_ids, hedge_ids,
+        missing_prob=cfg.missing_prob,
+    )
+
+    # ---- Compute chunk boundaries -------------------------------------------
+    start_dt = dts[0].normalize()
+    end_dt = dts[-1].normalize()
+    chunk_starts = pd.date_range(start_dt, end_dt, freq=chunk_freq)
+    if len(chunk_starts) == 0:
+        chunk_starts = pd.DatetimeIndex([start_dt])
+
+    chunk_boundaries = []
+    for i, cs in enumerate(chunk_starts):
+        if i + 1 < len(chunk_starts):
+            ce = chunk_starts[i + 1] - pd.Timedelta(nanoseconds=1)
+        else:
+            ce = end_dt + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+        chunk_boundaries.append((cs, ce))
+
+    # ---- Split and write date-suffixed files --------------------------------
+    dt_col = "datetime"
+    data_map = {
+        "book": book_df,
+        "mid": mid_df,
+        "dv01": dv01_df,
+        "signal": signal_df,
+        "hedge_ratios": hedge_ratios_df,
+    }
+
+    files_written = []
+    for base_name, df in data_map.items():
+        chunks = _split_df_by_date(df, dt_col, chunk_boundaries)
+        for cs_str, ce_str, chunk_df in chunks:
+            fname = f"{base_name}_{cs_str}_{ce_str}.parquet"
+            chunk_df.to_parquet(cfg.out_dir / fname, index=False)
+            files_written.append(fname)
+
+    # ---- Meta is static — single file ---------------------------------------
+    meta_df.to_parquet(cfg.out_dir / "meta.parquet", index=False)
+    files_written.append("meta.parquet")
+
+    print(f"Wrote {len(files_written)} chunked parquet files to: {cfg.out_dir.resolve()}")
+    print(f"Chunk freq: {chunk_freq}, chunks: {len(chunk_boundaries)}")
+    print("Sample files:", ", ".join(sorted(files_written)[:6]), "...")
 
 
 # ----------------------------
@@ -261,6 +398,10 @@ def main() -> None:
     ap.add_argument("--missing-prob", type=float, default=0.02)
     ap.add_argument("--jitter-bps", type=float, default=1.2)
     ap.add_argument("--fair-horizon-bars", type=int, default=None)
+    ap.add_argument("--chunked", action="store_true",
+                    help="Generate date-suffixed chunked files instead of single files")
+    ap.add_argument("--chunk-freq", type=str, default="D",
+                    help="Chunk frequency (D=daily, W=weekly, MS=month-start)")
     args = ap.parse_args()
 
     cfg = PortfolioGenConfig(
@@ -277,7 +418,10 @@ def main() -> None:
         jitter_bps=float(args.jitter_bps),
         fair_horizon_bars=args.fair_horizon_bars,
     )
-    generate_portfolio_parquets(cfg)
+    if args.chunked:
+        generate_portfolio_parquets_chunked(cfg, chunk_freq=args.chunk_freq)
+    else:
+        generate_portfolio_parquets(cfg)
 
 
 if __name__ == "__main__":

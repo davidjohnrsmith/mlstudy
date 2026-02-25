@@ -10,7 +10,7 @@ import numpy as np
 
 from mlstudy.trading.backtest.common.single_backtest.engine import ensure_f64, validate_l2_shapes
 from mlstudy.trading.backtest.portfolio.configs.backtest_config import PortfolioBacktestConfig
-from mlstudy.trading.backtest.portfolio.single_backtest.loop import lp_portfolio_loop
+from mlstudy.trading.backtest.portfolio.single_backtest.loop import lp_portfolio_loop, LoopState
 from mlstudy.trading.backtest.portfolio.single_backtest.results import PortfolioBacktestResults
 
 
@@ -113,7 +113,10 @@ def run_backtest(
     cfg: PortfolioBacktestConfig,
     # -- Context --
     datetimes: np.ndarray,
-) -> PortfolioBacktestResults:
+    # -- Chunked state --
+    initial_state: LoopState | None = None,
+    return_final_state: bool = False,
+) -> PortfolioBacktestResults | tuple[PortfolioBacktestResults, LoopState]:
     """Run an LP portfolio backtest.
 
     Parameters
@@ -228,9 +231,15 @@ def run_backtest(
         hedge_mid_px=f_hedge_mid_px,
         hedge_dv01=f_hedge_dv01,
         hedge_ratios=f_hedge_ratios,
+        initial_state=initial_state,
+        return_final_state=return_final_state,
     )
 
-    return PortfolioBacktestResults.from_loop_output(
+    if return_final_state:
+        final_state = raw[-1]
+        raw = raw[:-1]
+
+    results = PortfolioBacktestResults.from_loop_output(
         raw,
         datetimes=datetimes,
         close_time=cfg.close_time if cfg.close_time != "none" else None,
@@ -242,4 +251,191 @@ def run_backtest(
         dv01=f_dv01,
         hedge_dv01=f_hedge_dv01,
         instrument_ids=instrument_ids,
+    )
+
+    if return_final_state:
+        return results, final_state
+    return results
+
+
+def run_backtest_chunked(
+    *,
+    data_chunks,
+    cfg: PortfolioBacktestConfig,
+) -> PortfolioBacktestResults:
+    """Run a backtest over sequential data chunks, stitching results.
+
+    Parameters
+    ----------
+    data_chunks : Iterable[dict[str, Any]]
+        Each dict contains the keyword arguments for ``run_backtest``
+        (market data arrays + datetimes + instrument_ids).
+    cfg : PortfolioBacktestConfig
+        Scalar parameters for the backtest.
+
+    Returns
+    -------
+    PortfolioBacktestResults
+    """
+    state = None
+    chunk_results = []
+    cumulative_T = 0
+
+    for chunk_data in data_chunks:
+        result, state = run_backtest(
+            **chunk_data,
+            cfg=cfg,
+            initial_state=state,
+            return_final_state=True,
+        )
+        chunk_results.append((result, cumulative_T))
+        cumulative_T += len(result.equity)
+
+    if not chunk_results:
+        raise ValueError("data_chunks yielded no chunks")
+
+    if len(chunk_results) == 1:
+        return chunk_results[0][0]
+
+    # Stitch per-bar arrays
+    first = chunk_results[0][0]
+
+    positions = np.concatenate([r.positions for r, _ in chunk_results], axis=0)
+    cash = np.concatenate([r.cash for r, _ in chunk_results])
+    equity = np.concatenate([r.equity for r, _ in chunk_results])
+    pnl = np.concatenate([r.pnl for r, _ in chunk_results])
+    gross_pnl = np.concatenate([r.gross_pnl for r, _ in chunk_results])
+    codes = np.concatenate([r.codes for r, _ in chunk_results])
+    n_trades_bar = np.concatenate([r.n_trades_bar for r, _ in chunk_results])
+    cooldown = np.concatenate([r.cooldown for r, _ in chunk_results])
+    hedge_positions = np.concatenate([r.hedge_positions for r, _ in chunk_results], axis=0)
+    hedge_pnl = np.concatenate([r.hedge_pnl for r, _ in chunk_results])
+
+    # Stitch per-trade arrays with bar index offset
+    tr_bars = []
+    tr_instruments = []
+    tr_sides = []
+    tr_qty_reqs = []
+    tr_qty_fills = []
+    tr_dv01_reqs = []
+    tr_dv01_fills = []
+    tr_alphas = []
+    tr_fair_types = []
+    tr_vwaps = []
+    tr_mids = []
+    tr_costs = []
+    tr_codes = []
+    tr_hedge_sizes_list = []
+    tr_hedge_vwaps_list = []
+    tr_hedge_fills_list = []
+    tr_hedge_costs = []
+
+    total_trades = 0
+    for r, t_offset in chunk_results:
+        n = r.n_trades
+        if n == 0:
+            continue
+        tr_bars.append(r.tr_bar + t_offset)
+        tr_instruments.append(r.tr_instrument)
+        tr_sides.append(r.tr_side)
+        tr_qty_reqs.append(r.tr_qty_req)
+        tr_qty_fills.append(r.tr_qty_fill)
+        tr_dv01_reqs.append(r.tr_dv01_req)
+        tr_dv01_fills.append(r.tr_dv01_fill)
+        tr_alphas.append(r.tr_alpha)
+        tr_fair_types.append(r.tr_fair_type)
+        tr_vwaps.append(r.tr_vwap)
+        tr_mids.append(r.tr_mid)
+        tr_costs.append(r.tr_cost)
+        tr_codes.append(r.tr_code)
+        tr_hedge_sizes_list.append(r.tr_hedge_sizes)
+        tr_hedge_vwaps_list.append(r.tr_hedge_vwaps)
+        tr_hedge_fills_list.append(r.tr_hedge_fills)
+        tr_hedge_costs.append(r.tr_hedge_cost)
+        total_trades += n
+
+    def _concat_or_empty(arrays, dtype=np.float64):
+        if arrays:
+            return np.concatenate(arrays)
+        return np.empty(0, dtype=dtype)
+
+    def _concat_2d_or_empty(arrays, n_cols, dtype=np.float64):
+        if arrays:
+            return np.concatenate(arrays, axis=0)
+        return np.empty((0, n_cols), dtype=dtype)
+
+    H = first.hedge_positions.shape[1] if first.hedge_positions.ndim == 2 else 1
+
+    # Stitch context arrays
+    datetimes = None
+    if first.datetimes is not None:
+        datetimes = np.concatenate([r.datetimes for r, _ in chunk_results])
+
+    mid_px = None
+    if first.mid_px is not None:
+        mid_px = np.concatenate([r.mid_px for r, _ in chunk_results], axis=0)
+
+    hedge_mid_px = None
+    if first.hedge_mid_px is not None:
+        hedge_mid_px = np.concatenate([r.hedge_mid_px for r, _ in chunk_results], axis=0)
+
+    hedge_bid_px = None
+    if first.hedge_bid_px is not None:
+        hedge_bid_px = np.concatenate([r.hedge_bid_px for r, _ in chunk_results], axis=0)
+
+    hedge_ask_px = None
+    if first.hedge_ask_px is not None:
+        hedge_ask_px = np.concatenate([r.hedge_ask_px for r, _ in chunk_results], axis=0)
+
+    hedge_ratios = None
+    if first.hedge_ratios is not None:
+        hedge_ratios = np.concatenate([r.hedge_ratios for r, _ in chunk_results], axis=0)
+
+    dv01_arr = None
+    if first.dv01 is not None:
+        dv01_arr = np.concatenate([r.dv01 for r, _ in chunk_results], axis=0)
+
+    hedge_dv01 = None
+    if first.hedge_dv01 is not None:
+        hedge_dv01 = np.concatenate([r.hedge_dv01 for r, _ in chunk_results], axis=0)
+
+    return PortfolioBacktestResults(
+        positions=positions,
+        cash=cash,
+        equity=equity,
+        pnl=pnl,
+        gross_pnl=gross_pnl,
+        codes=codes,
+        n_trades_bar=n_trades_bar,
+        cooldown=cooldown,
+        hedge_positions=hedge_positions,
+        hedge_pnl=hedge_pnl,
+        tr_bar=_concat_or_empty(tr_bars, np.int64),
+        tr_instrument=_concat_or_empty(tr_instruments, np.int32),
+        tr_side=_concat_or_empty(tr_sides, np.int32),
+        tr_qty_req=_concat_or_empty(tr_qty_reqs),
+        tr_qty_fill=_concat_or_empty(tr_qty_fills),
+        tr_dv01_req=_concat_or_empty(tr_dv01_reqs),
+        tr_dv01_fill=_concat_or_empty(tr_dv01_fills),
+        tr_alpha=_concat_or_empty(tr_alphas),
+        tr_fair_type=_concat_or_empty(tr_fair_types, np.int32),
+        tr_vwap=_concat_or_empty(tr_vwaps),
+        tr_mid=_concat_or_empty(tr_mids),
+        tr_cost=_concat_or_empty(tr_costs),
+        tr_code=_concat_or_empty(tr_codes, np.int32),
+        tr_hedge_sizes=_concat_2d_or_empty(tr_hedge_sizes_list, H),
+        tr_hedge_vwaps=_concat_2d_or_empty(tr_hedge_vwaps_list, H),
+        tr_hedge_fills=_concat_2d_or_empty(tr_hedge_fills_list, H),
+        tr_hedge_cost=_concat_or_empty(tr_hedge_costs),
+        n_trades=total_trades,
+        instrument_ids=first.instrument_ids,
+        datetimes=datetimes,
+        close_time=first.close_time,
+        mid_px=mid_px,
+        hedge_mid_px=hedge_mid_px,
+        hedge_bid_px=hedge_bid_px,
+        hedge_ask_px=hedge_ask_px,
+        hedge_ratios=hedge_ratios,
+        dv01=dv01_arr,
+        hedge_dv01=hedge_dv01,
     )
