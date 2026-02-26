@@ -6,12 +6,16 @@ arrays into :class:`PortfolioBacktestResults`.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from mlstudy.trading.backtest.common.single_backtest.engine import ensure_f64, validate_l2_shapes
 from mlstudy.trading.backtest.portfolio.configs.backtest_config import PortfolioBacktestConfig
 from mlstudy.trading.backtest.portfolio.single_backtest.loop import lp_portfolio_loop, LoopState
 from mlstudy.trading.backtest.portfolio.single_backtest.results import PortfolioBacktestResults
+
+logger = logging.getLogger(__name__)
 
 
 def _validate(
@@ -166,6 +170,13 @@ def run_backtest(
     -------
     PortfolioBacktestResults
     """
+    T, B, L = bid_px.shape
+    H = hedge_mid_px.shape[1] if hedge_mid_px.ndim >= 2 else 0
+    logger.info(
+        "run_backtest: T=%d, B=%d, L=%d, H=%d, initial_state=%s",
+        T, B, L, H, initial_state is not None,
+    )
+
     _validate(
         bid_px, bid_sz, ask_px, ask_sz, mid_px,
         dv01, fair_price, zscore, adf_p_value,
@@ -253,6 +264,11 @@ def run_backtest(
         instrument_ids=instrument_ids,
     )
 
+    logger.info(
+        "run_backtest done: n_trades=%d, final_equity=%.2f",
+        results.n_trades, results.equity[-1] if len(results.equity) > 0 else 0.0,
+    )
+
     if return_final_state:
         return results, final_state
     return results
@@ -281,7 +297,7 @@ def run_backtest_chunked(
     chunk_results = []
     cumulative_T = 0
 
-    for chunk_data in data_chunks:
+    for chunk_idx, chunk_data in enumerate(data_chunks):
         result, state = run_backtest(
             **chunk_data,
             cfg=cfg,
@@ -290,9 +306,20 @@ def run_backtest_chunked(
         )
         chunk_results.append((result, cumulative_T))
         cumulative_T += len(result.equity)
+        logger.info(
+            "Chunk %d: T=%d, trades=%d, cumulative_T=%d",
+            chunk_idx, len(result.equity), result.n_trades, cumulative_T,
+        )
 
     if not chunk_results:
         raise ValueError("data_chunks yielded no chunks")
+
+    n_chunks = len(chunk_results)
+    total_trades = sum(r.n_trades for r, _ in chunk_results)
+    logger.info(
+        "Stitching %d chunks: total_T=%d, total_trades=%d",
+        n_chunks, cumulative_T, total_trades,
+    )
 
     if len(chunk_results) == 1:
         return chunk_results[0][0]

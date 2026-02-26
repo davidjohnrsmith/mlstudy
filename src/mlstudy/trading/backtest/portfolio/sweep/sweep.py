@@ -6,11 +6,14 @@ Uses ``common.sweep.sweep_dispatch`` for parallel execution and
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from mlstudy.trading.backtest.metrics.portfolio_metrics_calculator import PortfolioMetricsCalculator
 from mlstudy.trading.backtest.portfolio.single_backtest.engine import run_backtest, run_backtest_chunked
@@ -194,6 +197,13 @@ class PortfolioSweepExecutor:
         csize = chunk_size if chunk_size is not None else max(10, n // (10 * workers))
         csize = max(1, csize)
 
+        chunked = chunk_params is not None
+        logger.info(
+            "run_sweep: %d scenarios, backend=%s, workers=%d, chunk_size=%d, "
+            "mode=%s, chunked=%s",
+            n, backend, workers, csize, mode, chunked,
+        )
+
         indexed = list(enumerate(scenarios))
 
         if mode == "full":
@@ -203,6 +213,7 @@ class PortfolioSweepExecutor:
             raise ValueError(f"Unknown mode {mode!r}; choose from 'full', 'metrics_only'")
 
         metrics_results = dispatch(indexed, market_data, _run_one_portfolio, backend, workers, csize, "metrics_only")
+        logger.info("Metrics pass done: %d results", len(metrics_results))
 
         if keep_top_k_full <= 0:
             return metrics_results
@@ -214,6 +225,7 @@ class PortfolioSweepExecutor:
         top_k = ranked[:keep_top_k_full]
 
         top_indexed = [(r.scenario_idx, r.scenario) for r in top_k]
+        logger.info("Re-running top %d scenarios in full mode", len(top_indexed))
         top_full_results = dispatch(top_indexed, market_data, _run_one_portfolio, backend, workers, csize, "full")
 
         rank_order = {r.scenario_idx: i for i, r in enumerate(top_k)}

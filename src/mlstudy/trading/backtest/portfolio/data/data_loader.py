@@ -241,6 +241,7 @@ class PortfolioDataLoader:
         data_path_dir = Path(resolved)
         dt_col = self.datetime_col
         inst_col = self.instrument_col
+        logger.info("Loading single-file market data from %s", data_path_dir)
 
         # --- 1. Read parquets ---------------------------------------------------
         book_df = pd.read_parquet(self._resolve_file(data_path_dir, self.book_filename))
@@ -398,7 +399,13 @@ class PortfolioDataLoader:
                 ce = ed + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
             chunk_boundaries.append((cs, ce))
 
+        logger.info(
+            "Chunked loading: %d chunk boundaries from %s to %s",
+            len(chunk_boundaries), sd, ed,
+        )
+
         # --- 4. Yield one PortfolioMarketData per chunk ------------------------
+        chunks_yielded = 0
         for chunk_start, chunk_end in chunk_boundaries:
             cs_str = chunk_start.strftime("%Y%m%d")
             ce_str = chunk_end.strftime("%Y%m%d")
@@ -408,6 +415,7 @@ class PortfolioDataLoader:
                 dt_col, chunk_start, chunk_end,
             )
             if book_df.empty:
+                logger.info("Chunk %s–%s: no book data, skipping", cs_str, ce_str)
                 continue
 
             mid_df = _read_parquet_date_range(
@@ -429,6 +437,13 @@ class PortfolioDataLoader:
 
             if book_df.empty:
                 continue
+
+            logger.info(
+                "Chunk %s–%s: book=%d rows, mid=%d, dv01=%d, signal=%d, hedge=%d",
+                cs_str, ce_str, len(book_df), len(mid_df), len(dv01_df),
+                len(signal_df), len(hedge_ratio_df),
+            )
+            chunks_yielded += 1
 
             yield _build_market_data(
                 book_df=book_df,

@@ -209,6 +209,7 @@ def _save_scenario_plots(
         return
 
     plots_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Generating plots for %d scenarios in %s", len(results), plots_dir)
 
     for rank, sr in enumerate(results):
         try:
