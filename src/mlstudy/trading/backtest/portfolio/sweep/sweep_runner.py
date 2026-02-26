@@ -187,6 +187,7 @@ class PortfolioSweepRunner:
         """
         # --- 1. Load config -------------------------------------------------------
         cfg = _resolve_config(config, config_map_path)
+        logger.info("Loaded config: grid_name=%s", cfg.grid_name)
 
         # --- 2. Merge market data -------------------------------------------------
         md = dict(market_data or {})
@@ -248,11 +249,13 @@ class PortfolioSweepRunner:
             raise ValueError(f"Missing market data keys: {sorted(missing)}")
 
         # --- 3. Build scenarios ---------------------------------------------------
+        logger.info("Building scenarios from grid: %s", list(cfg.grid.keys()))
         scenarios = ScenarioBuilder.make_scenarios(
             cfg.base_config,
             cfg.grid,
             name_prefix=cfg.grid_name,
         )
+        logger.info("Built %d scenarios", len(scenarios))
 
         # --- 4. Run sweep ---------------------------------------------------------
         t0 = time.perf_counter()
@@ -268,6 +271,7 @@ class PortfolioSweepRunner:
             chunk_params=chunk_params,
         )
         elapsed = time.perf_counter() - t0
+        logger.info("Sweep finished in %.1fs", elapsed)
 
         # --- 5. Build summary table -----------------------------------------------
         if isinstance(raw, SweepSummary):
@@ -282,6 +286,7 @@ class PortfolioSweepRunner:
         )
 
         # --- 7. Persist results ---------------------------------------------------
+        logger.info("Summary table: %d rows", len(table))
         resolved_output_dir = None
         if save:
             resolved_output_dir = PortfolioSweepRunner.resolve_output_dir(

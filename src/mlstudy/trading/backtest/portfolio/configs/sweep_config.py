@@ -18,11 +18,14 @@ Or with the config map::
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 from .backtest_config import PortfolioBacktestConfig
 from mlstudy.trading.backtest.common.sweep.sweep_rank import RankingPlan
@@ -174,6 +177,7 @@ def load_sweep_config(path: str | Path) -> PortfolioSweepConfig:
     PortfolioSweepConfig
     """
     path = Path(path)
+    logger.info("Loading sweep config from %s", path)
     with open(path, "r") as f:
         raw = yaml.safe_load(f)
 
@@ -196,6 +200,14 @@ def load_sweep_config(path: str | Path) -> PortfolioSweepConfig:
     ranking_plan = _build_ranking_plan(raw.get("rank"))
     sweep_kwargs = _build_sweep_kwargs(raw.get("sweep"), ranking_plan)
     data_loader = _build_data_loader(raw.get("data"))
+
+    n_combos = 1
+    for v in grid.values():
+        n_combos *= len(v)
+    logger.info(
+        "Config '%s': %d grid params, %d combinations, data_loader=%s",
+        grid_name, len(grid), n_combos, data_loader is not None,
+    )
 
     return PortfolioSweepConfig(
         grid_name=grid_name,
