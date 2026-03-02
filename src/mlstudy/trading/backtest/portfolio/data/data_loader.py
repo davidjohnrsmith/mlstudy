@@ -88,6 +88,7 @@ class PortfolioMarketData:
     pos_limits_short: np.ndarray
     max_trade_notional_inc: np.ndarray
     max_trade_notional_dec: np.ndarray
+    qty_step: np.ndarray              # (B,) per-instrument notional rounding step
     # Meta
     maturity: np.ndarray              # (T, B) or (B,)
     issuer_bucket: np.ndarray         # (B,)
@@ -104,6 +105,8 @@ class PortfolioMarketData:
     hedge_dv01: np.ndarray
     # Hedge ratios
     hedge_ratios: np.ndarray
+    # Hedge meta
+    hedge_qty_step: np.ndarray        # (H,) per-hedge notional rounding step
     # Context
     datetimes: np.ndarray
     instrument_ids: list[str]
@@ -126,6 +129,7 @@ class PortfolioMarketData:
             "pos_limits_short": self.pos_limits_short,
             "max_trade_notional_inc": self.max_trade_notional_inc,
             "max_trade_notional_dec": self.max_trade_notional_dec,
+            "qty_step": self.qty_step,
             "maturity": self.maturity,
             "issuer_bucket": self.issuer_bucket,
             "maturity_bucket": self.maturity_bucket,
@@ -138,6 +142,7 @@ class PortfolioMarketData:
             "hedge_mid_px": self.hedge_mid_px,
             "hedge_dv01": self.hedge_dv01,
             "hedge_ratios": self.hedge_ratios,
+            "hedge_qty_step": self.hedge_qty_step,
             "datetimes": self.datetimes,
             "instrument_ids": self.instrument_ids,
         }
@@ -177,6 +182,8 @@ class PortfolioDataLoader:
     meta_filename: str
     # Hedge ratios file
     hedge_ratio_filename: str
+    # Hedge meta file (static per-hedge metadata)
+    hedge_meta_filename: str
     # Config
     data_path: str | Path | None = None
     datetime_col: str = "datetime"
@@ -257,6 +264,7 @@ class PortfolioDataLoader:
         hedge_ratio_df = pd.read_parquet(
             self._resolve_file(data_path_dir, self.hedge_ratio_filename)
         )
+        hedge_meta_df = pd.read_parquet(data_path_dir / self.hedge_meta_filename)
 
         # --- 2. Extract meta arrays --------------------------------------------
         meta_indexed, static_arrays = _extract_meta_arrays(
@@ -274,6 +282,7 @@ class PortfolioDataLoader:
             dv01_df=dv01_df,
             signal_df=signal_df,
             hedge_ratio_df=hedge_ratio_df,
+            hedge_meta_df=hedge_meta_df,
             meta_indexed=meta_indexed,
             static_arrays=static_arrays,
             instrument_ids=instrument_ids,
@@ -329,6 +338,7 @@ class PortfolioDataLoader:
 
         # --- 1. Read meta (static, small) once ---------------------------------
         meta_df = pd.read_parquet(data_path_dir / self.meta_filename)
+        hedge_meta_df = pd.read_parquet(data_path_dir / self.hedge_meta_filename)
 
         # We need hedge_ids for meta extraction — read one hedge file to detect
         if hedge_ids is None:
@@ -456,6 +466,7 @@ class PortfolioDataLoader:
                 dv01_df=dv01_df,
                 signal_df=signal_df,
                 hedge_ratio_df=hedge_ratio_df,
+                hedge_meta_df=hedge_meta_df,
                 meta_indexed=meta_indexed,
                 static_arrays=static_arrays,
                 instrument_ids=instrument_ids,
@@ -592,11 +603,12 @@ def _extract_meta_arrays(
     pos_limits_short = meta_indexed["pos_limit_short"].values.astype(np.float64)
 
     # Per-instrument max trade notional
-    for col in ("max_trade_notional_inc", "max_trade_notional_dec"):
+    for col in ("max_trade_notional_inc", "max_trade_notional_dec", "qty_step"):
         if col not in meta_indexed.columns:
             raise ValueError(f"Required column {col!r} not found in meta file")
     max_trade_notional_inc = meta_indexed["max_trade_notional_inc"].values.astype(np.float64)
     max_trade_notional_dec = meta_indexed["max_trade_notional_dec"].values.astype(np.float64)
+    qty_step = meta_indexed["qty_step"].values.astype(np.float64)
 
     # Issuer bucket
     if "issuer_bucket" in meta_indexed.columns and issuer_dv01_caps_map:
@@ -646,6 +658,7 @@ def _extract_meta_arrays(
         "pos_limits_short": pos_limits_short,
         "max_trade_notional_inc": max_trade_notional_inc,
         "max_trade_notional_dec": max_trade_notional_dec,
+        "qty_step": qty_step,
         "issuer_bucket": issuer_bucket,
         "issuer_dv01_caps": issuer_dv01_caps,
         "maturity_dates_raw": maturity_dates_raw,
@@ -659,6 +672,24 @@ def _extract_meta_arrays(
     return meta_indexed, static_arrays
 
 
+def _extract_hedge_meta_arrays(
+    hedge_meta_df: pd.DataFrame,
+    inst_col: str,
+    hedge_ids: list[str],
+) -> np.ndarray:
+    """Extract per-hedge static arrays from hedge meta DataFrame.
+
+    Returns hedge_qty_step (H,) array.
+    """
+    hedge_meta_indexed = hedge_meta_df.set_index(inst_col).reindex(hedge_ids)
+    if "qty_step" not in hedge_meta_indexed.columns:
+        raise ValueError(
+            "Required column 'qty_step' not found in hedge_meta file"
+        )
+    hedge_qty_step = hedge_meta_indexed["qty_step"].values.astype(np.float64)
+    return hedge_qty_step
+
+
 def _build_market_data(
     *,
     book_df: pd.DataFrame,
@@ -666,6 +697,7 @@ def _build_market_data(
     dv01_df: pd.DataFrame,
     signal_df: pd.DataFrame,
     hedge_ratio_df: pd.DataFrame,
+    hedge_meta_df: pd.DataFrame,
     meta_indexed: pd.DataFrame,
     static_arrays: dict[str, Any],
     instrument_ids: list[str],
@@ -771,6 +803,7 @@ def _build_market_data(
     pos_limits_short = static_arrays["pos_limits_short"]
     max_trade_notional_inc = static_arrays["max_trade_notional_inc"]
     max_trade_notional_dec = static_arrays["max_trade_notional_dec"]
+    qty_step_arr = static_arrays["qty_step"]
     issuer_bucket = static_arrays["issuer_bucket"]
     _issuer_dv01_caps = static_arrays["issuer_dv01_caps"]
     _maturity_dates_raw = static_arrays["maturity_dates_raw"]
@@ -817,6 +850,11 @@ def _build_market_data(
         else np.empty(0, dtype=np.float64)
     )
 
+    # Extract hedge_qty_step from hedge_meta
+    hedge_qty_step = _extract_hedge_meta_arrays(
+        hedge_meta_df, inst_col, hedge_ids,
+    )
+
     return PortfolioMarketData(
         bid_px=bid_px,
         bid_sz=bid_sz,
@@ -832,6 +870,7 @@ def _build_market_data(
         pos_limits_short=pos_limits_short,
         max_trade_notional_inc=max_trade_notional_inc,
         max_trade_notional_dec=max_trade_notional_dec,
+        qty_step=qty_step_arr,
         maturity=maturity,
         issuer_bucket=issuer_bucket,
         maturity_bucket=maturity_bucket,
@@ -844,6 +883,7 @@ def _build_market_data(
         hedge_mid_px=hedge_mid_px,
         hedge_dv01=hedge_dv01_arr,
         hedge_ratios=hedge_ratios_arr,
+        hedge_qty_step=hedge_qty_step,
         datetimes=datetimes,
         instrument_ids=instrument_ids,
         hedge_ids=hedge_ids,

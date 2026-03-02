@@ -116,6 +116,8 @@ class PortfolioSweepExecutor:
         mat_bucket_dv01_caps,
         # Instrument IDs
         instrument_ids,
+        # Per-instrument qty_step
+        qty_step,
         # Hedge arrays
         hedge_bid_px,
         hedge_bid_sz,
@@ -124,6 +126,8 @@ class PortfolioSweepExecutor:
         hedge_mid_px,
         hedge_dv01,
         hedge_ratios,
+        # Per-hedge qty_step
+        hedge_qty_step,
         # Context
         datetimes,
         # Sweep control
@@ -183,6 +187,7 @@ class PortfolioSweepExecutor:
             issuer_dv01_caps=issuer_dv01_caps,
             mat_bucket_dv01_caps=mat_bucket_dv01_caps,
             instrument_ids=instrument_ids,
+            qty_step=qty_step,
             hedge_bid_px=hedge_bid_px,
             hedge_bid_sz=hedge_bid_sz,
             hedge_ask_px=hedge_ask_px,
@@ -190,6 +195,7 @@ class PortfolioSweepExecutor:
             hedge_mid_px=hedge_mid_px,
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
+            hedge_qty_step=hedge_qty_step,
             datetimes=datetimes,
         )
         if chunk_params is not None:

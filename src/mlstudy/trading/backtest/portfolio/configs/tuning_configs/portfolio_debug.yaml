@@ -3,7 +3,6 @@ grid_name: "portfolio_grid_debug"
 base_config:
   p_inc: 0.05
   p_dec: 0.10
-  qty_step: 0.0
   min_qty_trade: 0.0
   min_fill_ratio: 0.0
   cooldown_mode: 0
@@ -34,6 +33,7 @@ data:
   signal_filename: "signal"
   meta_filename: "meta.parquet"
   hedge_ratio_filename: "hedge_ratios"
+  hedge_meta_filename: "hedge_meta.parquet"
 
 sweep:
   backend: "serial"

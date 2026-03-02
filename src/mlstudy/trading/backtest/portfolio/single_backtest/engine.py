@@ -33,6 +33,8 @@ def _validate(
     pos_limits_short: np.ndarray,
     max_trade_notional_inc: np.ndarray,
     max_trade_notional_dec: np.ndarray,
+    qty_step: np.ndarray,
+    hedge_qty_step: np.ndarray,
     hedge_bid_px: np.ndarray,
     hedge_bid_sz: np.ndarray,
     hedge_ask_px: np.ndarray,
@@ -59,6 +61,7 @@ def _validate(
         ("pos_limits_short", pos_limits_short, B),
         ("max_trade_notional_inc", max_trade_notional_inc, B),
         ("max_trade_notional_dec", max_trade_notional_dec, B),
+        ("qty_step", qty_step, B),
     ]:
         if len(arr) != expected_len:
             raise ValueError(f"{name} length {len(arr)} != expected {expected_len}")
@@ -79,6 +82,10 @@ def _validate(
     if hedge_ratios.shape != (T, B, H):
         raise ValueError(
             f"hedge_ratios shape {hedge_ratios.shape} != expected {(T, B, H)}"
+        )
+    if hedge_qty_step is not None and len(hedge_qty_step) != H:
+        raise ValueError(
+            f"hedge_qty_step length {len(hedge_qty_step)} != expected H={H}"
         )
 
 
@@ -119,6 +126,10 @@ def run_backtest(
     hedge_ratios: np.ndarray,
     # -- Instrument IDs --
     instrument_ids: list[str],
+    # -- Per-instrument qty_step --
+    qty_step: np.ndarray,           # (B,)
+    # -- Per-hedge qty_step --
+    hedge_qty_step: np.ndarray = None,  # (H,) or None
     # -- Config --
     cfg: PortfolioBacktestConfig,
     # -- Context --
@@ -188,6 +199,7 @@ def run_backtest(
         dv01, fair_price, zscore, adf_p_value,
         tradable, pos_limits_long, pos_limits_short,
         max_trade_notional_inc, max_trade_notional_dec,
+        qty_step, hedge_qty_step,
         hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
         hedge_mid_px, hedge_dv01, hedge_ratios,
     )
@@ -236,7 +248,7 @@ def run_backtest(
         alpha_thr_dec=float(cfg.alpha_thr_dec),
         max_levels=int(cfg.max_levels),
         haircut=float(cfg.haircut),
-        qty_step=float(cfg.qty_step),
+        qty_step=qty_step,
         min_qty_trade=float(cfg.min_qty_trade),
         min_fill_ratio=float(cfg.min_fill_ratio),
         cooldown_bars=int(cfg.cooldown_bars),
@@ -250,6 +262,7 @@ def run_backtest(
         hedge_mid_px=f_hedge_mid_px,
         hedge_dv01=f_hedge_dv01,
         hedge_ratios=f_hedge_ratios,
+        hedge_qty_step=hedge_qty_step,
         initial_state=initial_state,
         return_final_state=return_final_state,
     )

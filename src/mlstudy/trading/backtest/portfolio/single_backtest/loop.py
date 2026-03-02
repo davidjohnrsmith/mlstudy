@@ -315,7 +315,7 @@ def lp_portfolio_loop(
     # -- Execution params --
     max_levels,         # int       L2 levels to walk
     haircut,            # float     fraction of displayed size usable
-    qty_step,          # float     notional rounding step
+    qty_step,          # (B,)      per-instrument notional rounding step
     min_qty_trade,     # float     notional below this → skip
     min_fill_ratio,     # float     if filled/requested < this → skip (0 to disable)
     # -- Cooldown --
@@ -335,6 +335,8 @@ def lp_portfolio_loop(
     hedge_dv01=None,        # (T, H)    or None
     # -- Hedge ratios --
     hedge_ratios=None,      # (T, B, H) or None
+    # -- Hedge execution --
+    hedge_qty_step=None,    # (H,) or None — per-hedge notional rounding step
     # -- Chunked state --
     initial_state=None,     # LoopState or None — resume from this state
     return_final_state=False,  # bool — if True, append LoopState to return
@@ -395,10 +397,10 @@ def lp_portfolio_loop(
         L2 book levels to walk.
     haircut : float
         Fraction of displayed book size usable (0–1).
-    qty_step : float
-        DV01 rounding step for trade sizes.
+    qty_step : (B,) array
+        Per-instrument notional rounding step for trade sizes.
     min_qty_trade : float
-        DV01 below this is zeroed out.
+        Notional below this is zeroed out.
     min_fill_ratio : float
         Minimum filled/requested ratio (0 disables).
     cooldown_bars : int
@@ -419,9 +421,19 @@ def lp_portfolio_loop(
     T = bid_px.shape[0]
     B = bid_px.shape[1]
 
+    # -- Per-instrument qty_step: broadcast scalar to (B,) for compat --
+    if np.isscalar(qty_step) or (isinstance(qty_step, np.ndarray) and qty_step.ndim == 0):
+        qty_step = np.full(B, float(qty_step), dtype=np.float64)
+
     # -- Hedge universe size --
     H = hedge_bid_px.shape[1] if hedge_bid_px is not None else 0
     has_hedge = H > 0
+
+    # -- Per-hedge qty_step --
+    if hedge_qty_step is None and has_hedge:
+        hedge_qty_step = np.zeros(H, dtype=np.float64)
+    elif hedge_qty_step is not None and np.isscalar(hedge_qty_step):
+        hedge_qty_step = np.full(H, float(hedge_qty_step), dtype=np.float64)
 
     # -- Per-bar output arrays --
     out_pos = np.zeros((T, B), dtype=np.float64)
@@ -761,7 +773,7 @@ def lp_portfolio_loop(
 
                     # Convert DV01 to notional quantity, then round size
                     raw_qty = raw_dv01 / dv01_b
-                    qty_req = _round_qty_trade(raw_qty, min_qty_trade, qty_step)
+                    qty_req = _round_qty_trade(raw_qty, min_qty_trade, qty_step[b_idx])
                     if qty_req < 1e-15:
                         continue
 
@@ -848,6 +860,10 @@ def lp_portfolio_loop(
                     bar_hedge_cost = 0.0
                     for h in range(H):
                         hedge_remaining = hedge_target[h] - hedge_pos[h]
+                        # Round hedge trade size using per-hedge qty_step
+                        hedge_remaining = _round_qty_trade(
+                            hedge_remaining, min_qty_trade, hedge_qty_step[h],
+                        )
                         if abs(hedge_remaining) < 1e-15:
                             continue
                         if hedge_remaining > 1e-15:

@@ -23,7 +23,8 @@ class PortfolioBacktestConfig:
     Execution
     ---------
     Trades are sized by the LP solver in DV01 space, converted to notional,
-    rounded via ``qty_step`` and filtered by ``min_qty_trade``.
+    rounded via per-instrument ``qty_step`` (from meta) and filtered by
+    ``min_qty_trade``.
     """
 
     # -- LP constraint params -------------------------------------------------
@@ -43,7 +44,6 @@ class PortfolioBacktestConfig:
     # -- Execution params -----------------------------------------------------
     max_levels: int
     haircut: float
-    qty_step: float
     min_qty_trade: float
     min_fill_ratio: float
 
