@@ -57,6 +57,7 @@ class PortfolioMarketData:
     mid_px, dv01 : (T, B)
     fair_price, zscore, adf_p_value : (T, B)
     tradable, pos_limits_long, pos_limits_short : (B,)
+    max_trade_notional_inc, max_trade_notional_dec : (B,)
     maturity : (T, B) or (B,)
     issuer_bucket : (B,)
     maturity_bucket : (T, B) or (B,)
@@ -85,6 +86,8 @@ class PortfolioMarketData:
     tradable: np.ndarray
     pos_limits_long: np.ndarray
     pos_limits_short: np.ndarray
+    max_trade_notional_inc: np.ndarray
+    max_trade_notional_dec: np.ndarray
     # Meta
     maturity: np.ndarray              # (T, B) or (B,)
     issuer_bucket: np.ndarray         # (B,)
@@ -121,6 +124,8 @@ class PortfolioMarketData:
             "tradable": self.tradable,
             "pos_limits_long": self.pos_limits_long,
             "pos_limits_short": self.pos_limits_short,
+            "max_trade_notional_inc": self.max_trade_notional_inc,
+            "max_trade_notional_dec": self.max_trade_notional_dec,
             "maturity": self.maturity,
             "issuer_bucket": self.issuer_bucket,
             "maturity_bucket": self.maturity_bucket,
@@ -586,6 +591,13 @@ def _extract_meta_arrays(
     pos_limits_long = meta_indexed["pos_limit_long"].values.astype(np.float64)
     pos_limits_short = meta_indexed["pos_limit_short"].values.astype(np.float64)
 
+    # Per-instrument max trade notional
+    for col in ("max_trade_notional_inc", "max_trade_notional_dec"):
+        if col not in meta_indexed.columns:
+            raise ValueError(f"Required column {col!r} not found in meta file")
+    max_trade_notional_inc = meta_indexed["max_trade_notional_inc"].values.astype(np.float64)
+    max_trade_notional_dec = meta_indexed["max_trade_notional_dec"].values.astype(np.float64)
+
     # Issuer bucket
     if "issuer_bucket" in meta_indexed.columns and issuer_dv01_caps_map:
         issuer_names = list(issuer_dv01_caps_map.keys())
@@ -632,6 +644,8 @@ def _extract_meta_arrays(
         "tradable": tradable,
         "pos_limits_long": pos_limits_long,
         "pos_limits_short": pos_limits_short,
+        "max_trade_notional_inc": max_trade_notional_inc,
+        "max_trade_notional_dec": max_trade_notional_dec,
         "issuer_bucket": issuer_bucket,
         "issuer_dv01_caps": issuer_dv01_caps,
         "maturity_dates_raw": maturity_dates_raw,
@@ -755,6 +769,8 @@ def _build_market_data(
     tradable = static_arrays["tradable"]
     pos_limits_long = static_arrays["pos_limits_long"]
     pos_limits_short = static_arrays["pos_limits_short"]
+    max_trade_notional_inc = static_arrays["max_trade_notional_inc"]
+    max_trade_notional_dec = static_arrays["max_trade_notional_dec"]
     issuer_bucket = static_arrays["issuer_bucket"]
     _issuer_dv01_caps = static_arrays["issuer_dv01_caps"]
     _maturity_dates_raw = static_arrays["maturity_dates_raw"]
@@ -814,6 +830,8 @@ def _build_market_data(
         tradable=tradable,
         pos_limits_long=pos_limits_long,
         pos_limits_short=pos_limits_short,
+        max_trade_notional_inc=max_trade_notional_inc,
+        max_trade_notional_dec=max_trade_notional_dec,
         maturity=maturity,
         issuer_bucket=issuer_bucket,
         maturity_bucket=maturity_bucket,

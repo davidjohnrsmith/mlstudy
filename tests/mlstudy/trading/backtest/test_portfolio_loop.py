@@ -181,6 +181,7 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -206,6 +207,7 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -233,6 +235,7 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -259,6 +262,7 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -286,6 +290,7 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -312,6 +317,7 @@ class TestCooldown:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -350,6 +356,7 @@ class TestSignalGating:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -372,6 +379,7 @@ class TestSignalGating:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -397,6 +405,7 @@ class TestPositionLimits:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -423,6 +432,7 @@ class TestNonTradable:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -451,6 +461,7 @@ class TestBookkeeping:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -479,6 +490,7 @@ class TestBookkeeping:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -542,6 +554,7 @@ class TestHedgeExecution:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -578,6 +591,7 @@ class TestHedgeCostInEquity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -593,6 +607,7 @@ class TestHedgeCostInEquity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -632,6 +647,7 @@ class TestHedgeMtmInEquity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -678,6 +694,7 @@ class TestNoHedge:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -708,6 +725,7 @@ class TestNoHedge:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -746,6 +764,7 @@ class TestHedgePartialFill:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -791,6 +810,7 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             maturity_1d, None, None,
             **params,
         )
@@ -802,6 +822,7 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             maturity_2d, None, None,
             **params,
         )
@@ -833,6 +854,7 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             maturity_2d, None, None,
             **params,
         )
@@ -877,6 +899,7 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, maturity_bucket_2d,
             **params,
         )
@@ -904,6 +927,7 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             maturity_1d, None, maturity_bucket_1d,
             **params,
         )

@@ -51,6 +51,7 @@ _REQUIRED_KEYS = {
     "bid_px", "bid_sz", "ask_px", "ask_sz", "mid_px",
     "dv01", "fair_price", "zscore", "adf_p_value",
     "tradable", "pos_limits_long", "pos_limits_short",
+    "max_trade_notional_inc", "max_trade_notional_dec",
     "instrument_ids",
     "hedge_bid_px", "hedge_bid_sz", "hedge_ask_px", "hedge_ask_sz",
     "hedge_mid_px", "hedge_dv01", "hedge_ratios",

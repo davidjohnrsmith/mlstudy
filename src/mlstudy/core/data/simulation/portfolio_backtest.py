@@ -125,11 +125,16 @@ def _make_meta_df(
     issuer_idx = rng.integers(0, len(_ISSUER_NAMES), size=B)
     issuer = [_ISSUER_NAMES[i] for i in issuer_idx]
 
+    max_trade_notional_inc = rng.uniform(5e5, 2e6, size=B)
+    max_trade_notional_dec = rng.uniform(5e5, 2e6, size=B)
+
     return pd.DataFrame({
         "instrument_id": instrument_ids,
         "tradable": tradable,
         "pos_limit_long": pos_limit_long,
         "pos_limit_short": pos_limit_short,
+        "max_trade_notional_inc": max_trade_notional_inc,
+        "max_trade_notional_dec": max_trade_notional_dec,
         "maturity_date": maturity_date,
         "issuer_bucket": issuer,
     })

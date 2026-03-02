@@ -293,6 +293,8 @@ def lp_portfolio_loop(
     tradable,           # (B,)      bool/int tradable mask
     pos_limits_long,    # (B,)      max long notional per instrument
     pos_limits_short,   # (B,)      max short notional per instrument (negative)
+    max_trade_notional_inc,  # (B,) max notional per risk-increasing trade
+    max_trade_notional_dec,  # (B,) max notional per risk-decreasing trade
     # -- Optional meta (can be None) --
     maturity,           # (T, B) or (B,) or None  years to maturity
     issuer_bucket,      # (B,) or None  int issuer label
@@ -633,6 +635,16 @@ def lp_portfolio_loop(
                         headroom_notional = pos_limits_long[b] - pos[b]
                     else:  # SELL → position decreases
                         headroom_notional = pos[b] - pos_limits_short[b]
+
+                    # Risk-decreasing: cap at current position so we don't
+                    # overshoot past flat and flip the position.
+                    if is_risk_dec:
+                        headroom_notional = min(headroom_notional, abs(pos[b]))
+                        headroom_notional = min(
+                            headroom_notional, max_trade_notional_dec[b])
+                    else:
+                        headroom_notional = min(
+                            headroom_notional, max_trade_notional_inc[b])
 
                     if headroom_notional < 1e-15:
                         continue

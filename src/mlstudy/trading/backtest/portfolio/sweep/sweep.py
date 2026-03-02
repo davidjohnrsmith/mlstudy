@@ -105,6 +105,8 @@ class PortfolioSweepExecutor:
         tradable,
         pos_limits_long,
         pos_limits_short,
+        max_trade_notional_inc,
+        max_trade_notional_dec,
         # Meta
         maturity,
         issuer_bucket,
@@ -173,6 +175,8 @@ class PortfolioSweepExecutor:
             tradable=tradable,
             pos_limits_long=pos_limits_long,
             pos_limits_short=pos_limits_short,
+            max_trade_notional_inc=max_trade_notional_inc,
+            max_trade_notional_dec=max_trade_notional_dec,
             maturity=maturity,
             issuer_bucket=issuer_bucket,
             maturity_bucket=maturity_bucket,
