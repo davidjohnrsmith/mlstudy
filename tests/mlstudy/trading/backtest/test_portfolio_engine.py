@@ -51,6 +51,7 @@ def _make_hedge_market(T, H, L=3, mid_base=100.0, spread_bps=10.0):
 def _cfg(**overrides):
     """Build a PortfolioBacktestConfig with test defaults."""
     defaults = dict(
+        use_greedy=False,
         gross_dv01_cap=100.0, top_k=10, z_inc=2.0, p_inc=0.05,
         z_dec=1.0, p_dec=0.10, alpha_thr_inc=1.0, alpha_thr_dec=0.5,
         max_levels=3, haircut=1.0, min_qty_trade=0.0,

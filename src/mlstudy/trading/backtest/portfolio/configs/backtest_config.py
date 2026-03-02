@@ -27,6 +27,9 @@ class PortfolioBacktestConfig:
     ``min_qty_trade``.
     """
 
+    # -- Solver mode (False = LP with greedy fallback, True = greedy only) ----
+    use_greedy: bool
+
     # -- LP constraint params -------------------------------------------------
     gross_dv01_cap: float
     top_k: int

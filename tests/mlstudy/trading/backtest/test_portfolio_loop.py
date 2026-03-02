@@ -64,6 +64,7 @@ def _default_params():
         cooldown_mode=int(CooldownMode.BLOCK_ALL),
         min_maturity_inc=0.0,
         initial_capital=1_000_000.0,
+        use_greedy=False,
     )
 
 

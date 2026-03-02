@@ -181,6 +181,7 @@ def _solve_lp(
     mat_bucket_dv01_caps,  # (n_buckets,) or None
     current_issuer_dv01,   # (n_issuers,) current signed dv01 per issuer
     current_mat_dv01,      # (n_buckets,) current signed dv01 per maturity bucket
+    use_greedy=False,      # bool — skip LP, use greedy only
 ):
     """Solve for optimal dv01 trade sizes.
 
@@ -194,6 +195,21 @@ def _solve_lp(
     # Upper bounds per candidate: min of liquidity cap and position headroom
     ub = np.minimum(dv01_liq_caps, pos_headroom)
     ub = np.maximum(ub, 0.0)
+
+    if use_greedy:
+        # Skip LP entirely — jump straight to greedy allocation
+        order = np.argsort(-alphas)
+        dv01_sizes = np.zeros(K, dtype=np.float64)
+        remaining_budget = gross_dv01_cap
+        for idx in order:
+            if remaining_budget <= 1e-15:
+                break
+            alloc = min(ub[idx], remaining_budget)
+            if alloc <= 1e-15:
+                continue
+            dv01_sizes[idx] = alloc
+            remaining_budget -= alloc
+        return dv01_sizes, True
 
     # Minimise -alpha·x  (maximise alpha·x)
     c = -alphas.copy()
@@ -325,6 +341,8 @@ def lp_portfolio_loop(
     min_maturity_inc,   # float     min years-to-maturity for risk-increasing
     # -- Capital --
     initial_capital,    # float
+    # -- Solver mode --
+    use_greedy,         # bool  True = skip LP, use greedy only
     # -- Hedge market L2 --
     hedge_bid_px=None,      # (T, H, L) or None
     hedge_bid_sz=None,      # (T, H, L) or None
@@ -575,7 +593,7 @@ def lp_portfolio_loop(
 
                 # -- DV01 valid --
                 dv01_b = dv01[t, b]
-                if dv01_b < 1e-15:
+                if not (dv01_b >= 1e-15):   # catches NaN and < 1e-15
                     continue
 
                 # -- Market valid --
@@ -746,6 +764,7 @@ def lp_portfolio_loop(
                     mat_bucket_dv01_caps,
                     current_issuer_dv01,
                     current_mat_dv01,
+                    use_greedy=use_greedy,
                 )
 
                 # ==================================================
@@ -919,11 +938,15 @@ def lp_portfolio_loop(
         # equity = cash + sum(pos[b] * mid[b]) + sum(hedge_pos[h] * hedge_mid[h])
         position_mtm_t = 0.0
         for b in range(B):
-            position_mtm_t += pos[b] * mid_px[t, b]
+            mid_b_t = mid_px[t, b]
+            if not np.isnan(mid_b_t):
+                position_mtm_t += pos[b] * mid_b_t
         hedge_mtm_t_eq = 0.0
         if has_hedge:
             for h in range(H):
-                hedge_mtm_t_eq += hedge_pos[h] * hedge_mid_px[t, h]
+                h_mid_t = hedge_mid_px[t, h]
+                if not np.isnan(h_mid_t):
+                    hedge_mtm_t_eq += hedge_pos[h] * h_mid_t
         equity_t = cash + position_mtm_t + hedge_mtm_t_eq
 
         pnl_t = equity_t - prev_equity

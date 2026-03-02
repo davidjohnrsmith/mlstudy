@@ -1,6 +1,7 @@
 grid_name: "portfolio_grid_debug"
 
 base_config:
+  use_greedy: false
   p_inc: 0.05
   p_dec: 0.10
   min_qty_trade: 0.0

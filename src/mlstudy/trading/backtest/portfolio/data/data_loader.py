@@ -690,6 +690,40 @@ def _extract_hedge_meta_arrays(
     return hedge_qty_step
 
 
+def _disable_allnan_instruments(
+    tradable: np.ndarray,
+    mid_px: np.ndarray,
+    fair_price: np.ndarray,
+    zscore: np.ndarray,
+    adf_p_value: np.ndarray,
+    instrument_ids: list[str],
+) -> None:
+    """Set tradable=0 for instruments whose mid_px or signals are all NaN.
+
+    Modifies *tradable* in place.  Logs a warning for each disabled instrument.
+    """
+    checks = {
+        "mid_px": mid_px,
+        "fair_price": fair_price,
+        "zscore": zscore,
+        "adf_p_value": adf_p_value,
+    }
+    B = len(instrument_ids)
+    for b in range(B):
+        if tradable[b] == 0.0:
+            continue
+        for name, arr in checks.items():
+            if np.all(np.isnan(arr[:, b])):
+                logger.warning(
+                    "Instrument %s has all-NaN %s in this chunk — "
+                    "setting tradable=False",
+                    instrument_ids[b],
+                    name,
+                )
+                tradable[b] = 0.0
+                break
+
+
 def _build_market_data(
     *,
     book_df: pd.DataFrame,
@@ -797,8 +831,8 @@ def _build_market_data(
 
     datetimes = all_dts_idx.values
 
-    # Unpack static arrays
-    tradable = static_arrays["tradable"]
+    # Unpack static arrays (copy tradable — may be mutated per-chunk)
+    tradable = static_arrays["tradable"].copy()
     pos_limits_long = static_arrays["pos_limits_long"]
     pos_limits_short = static_arrays["pos_limits_short"]
     max_trade_notional_inc = static_arrays["max_trade_notional_inc"]
@@ -824,6 +858,11 @@ def _build_market_data(
                 if "maturity_bucket" in meta_indexed.columns
                 else np.zeros(B, dtype=np.int64)
             )
+
+    # Disable tradable for instruments with all-NaN mid_px or signals
+    _disable_allnan_instruments(
+        tradable, mid_px, fair_price, zscore, adf_p_value, instrument_ids,
+    )
 
     # Validate shapes, warn NaNs
     _validate_shapes(

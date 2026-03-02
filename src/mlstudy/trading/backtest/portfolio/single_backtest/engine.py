@@ -255,6 +255,7 @@ def run_backtest(
         cooldown_mode=int(cfg.cooldown_mode),
         min_maturity_inc=float(cfg.min_maturity_inc),
         initial_capital=float(cfg.initial_capital),
+        use_greedy=bool(cfg.use_greedy),
         hedge_bid_px=f_hedge_bid_px,
         hedge_bid_sz=f_hedge_bid_sz,
         hedge_ask_px=f_hedge_ask_px,
