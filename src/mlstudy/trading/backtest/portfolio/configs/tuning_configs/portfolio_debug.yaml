@@ -1,9 +1,9 @@
 grid_name: "portfolio_grid_debug"
 
 base_config:
+  use_greedy: false
   p_inc: 0.05
   p_dec: 0.10
-  qty_step: 0.0
   min_qty_trade: 0.0
   min_fill_ratio: 0.0
   cooldown_mode: 0
@@ -13,7 +13,7 @@ base_config:
     Japan: 50.0
     US: 100000000000000.0
   mat_bucket_dv01_caps: [50000.0, 500000.0, 50000.0, 500000.0, 5000000.0]
-  initial_capital: 100000.0
+  initial_capital: 1000.0
   close_time: "none"
 
 grid:
@@ -34,6 +34,7 @@ data:
   signal_filename: "signal"
   meta_filename: "meta.parquet"
   hedge_ratio_filename: "hedge_ratios"
+  hedge_meta_filename: "hedge_meta.parquet"
 
 sweep:
   backend: "serial"

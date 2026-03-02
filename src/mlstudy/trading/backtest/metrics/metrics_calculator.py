@@ -52,9 +52,9 @@ class MetricsCalculator:
         self._trade_df = trade_df if trade_df is not None else pd.DataFrame()
 
         if annualization_factor is None:
-            annualization_factor = self.infer_annualization_factor(bar_df)
-        elif "datetime" in bar_df.columns:
-            inferred = self.infer_annualization_factor(bar_df)
+            annualization_factor = self.infer_annualization_factor(self._bar_df)
+        elif "datetime" in self._bar_df.columns:
+            inferred = self.infer_annualization_factor(self._bar_df)
             ratio = abs(annualization_factor - inferred) / max(inferred, 1)
             if ratio > 0.2:
                 raise ValueError(
@@ -65,7 +65,7 @@ class MetricsCalculator:
         self.annualization_factor = annualization_factor
 
         # Derive everything from the equity curve
-        equity = bar_df["equity"].values.astype(np.float64)
+        equity = self._bar_df["equity"].values.astype(np.float64)
         self._equity = pd.Series(equity, dtype=np.float64)
 
         # pnl[t] = equity[t] - equity[t-1],  pnl[0] = 0
@@ -81,15 +81,16 @@ class MetricsCalculator:
         lagged[0] = equity[0]
         lagged[1:] = equity[:-1]
         with np.errstate(divide="ignore", invalid="ignore"):
+            abs_lagged = np.abs(lagged)
             rets = np.where(
-                np.abs(lagged) > 1e-10,
-                pnl / lagged,
+                abs_lagged > 1e-10,
+                pnl / abs_lagged,
                 0.0,
             )
         self._returns = pd.Series(rets, dtype=np.float64)
 
         # Position: scalar state indicator for hit_rate / pct_in_market
-        self._state = pd.Series(bar_df["state"].values, dtype=np.float64)
+        self._state = pd.Series(self._bar_df["state"].values, dtype=np.float64)
 
     @staticmethod
     def infer_annualization_factor(bar_df: pd.DataFrame) -> int:

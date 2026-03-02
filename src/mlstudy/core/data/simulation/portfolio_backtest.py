@@ -125,13 +125,33 @@ def _make_meta_df(
     issuer_idx = rng.integers(0, len(_ISSUER_NAMES), size=B)
     issuer = [_ISSUER_NAMES[i] for i in issuer_idx]
 
+    max_trade_notional_inc = rng.uniform(5e5, 2e6, size=B)
+    max_trade_notional_dec = rng.uniform(5e5, 2e6, size=B)
+    qty_step = rng.choice([1000.0, 5000.0, 10000.0], size=B)
+
     return pd.DataFrame({
         "instrument_id": instrument_ids,
         "tradable": tradable,
         "pos_limit_long": pos_limit_long,
         "pos_limit_short": pos_limit_short,
+        "max_trade_notional_inc": max_trade_notional_inc,
+        "max_trade_notional_dec": max_trade_notional_dec,
+        "qty_step": qty_step,
         "maturity_date": maturity_date,
         "issuer_bucket": issuer,
+    })
+
+
+def _make_hedge_meta_df(
+    rng: np.random.Generator,
+    hedge_ids: list[str],
+) -> pd.DataFrame:
+    """Create hedge meta DataFrame with per-hedge qty_step."""
+    H = len(hedge_ids)
+    qty_step = rng.choice([1000.0, 5000.0, 10000.0], size=H)
+    return pd.DataFrame({
+        "instrument_id": hedge_ids,
+        "qty_step": qty_step,
     })
 
 
@@ -253,6 +273,10 @@ def generate_portfolio_parquets(cfg: PortfolioGenConfig) -> None:
     )
     hedge_ratios_df.to_parquet(cfg.out_dir / "hedge_ratios.parquet", index=False)
 
+    # ---- Hedge meta (hedge instruments only) ---------------------------------
+    hedge_meta_df = _make_hedge_meta_df(rng, hedge_ids)
+    hedge_meta_df.to_parquet(cfg.out_dir / "hedge_meta.parquet", index=False)
+
     print(f"Wrote synthetic portfolio parquets to: {cfg.out_dir.resolve()}")
     print("Files:", ", ".join(sorted(p.name for p in cfg.out_dir.glob("*.parquet"))))
 
@@ -339,6 +363,8 @@ def generate_portfolio_parquets_chunked(
         missing_prob=cfg.missing_prob,
     )
 
+    hedge_meta_df = _make_hedge_meta_df(rng, hedge_ids)
+
     # ---- Compute chunk boundaries -------------------------------------------
     start_dt = dts[0].normalize()
     end_dt = dts[-1].normalize()
@@ -375,6 +401,10 @@ def generate_portfolio_parquets_chunked(
     # ---- Meta is static — single file ---------------------------------------
     meta_df.to_parquet(cfg.out_dir / "meta.parquet", index=False)
     files_written.append("meta.parquet")
+
+    # ---- Hedge meta is static — single file ---------------------------------
+    hedge_meta_df.to_parquet(cfg.out_dir / "hedge_meta.parquet", index=False)
+    files_written.append("hedge_meta.parquet")
 
     print(f"Wrote {len(files_written)} chunked parquet files to: {cfg.out_dir.resolve()}")
     print(f"Chunk freq: {chunk_freq}, chunks: {len(chunk_boundaries)}")

@@ -64,6 +64,8 @@ class LoopState:
     cooldown_remaining: int
     prev_equity: float
     prev_hedge_mtm: float
+    cum_instrument_cash_mid: float = 0.0
+    cum_hedge_cash_mid: float = 0.0
 
 from mlstudy.trading.backtest.portfolio.single_backtest.state import (
     PortfolioActionCode,
@@ -179,6 +181,7 @@ def _solve_lp(
     mat_bucket_dv01_caps,  # (n_buckets,) or None
     current_issuer_dv01,   # (n_issuers,) current signed dv01 per issuer
     current_mat_dv01,      # (n_buckets,) current signed dv01 per maturity bucket
+    use_greedy=False,      # bool — skip LP, use greedy only
 ):
     """Solve for optimal dv01 trade sizes.
 
@@ -192,6 +195,21 @@ def _solve_lp(
     # Upper bounds per candidate: min of liquidity cap and position headroom
     ub = np.minimum(dv01_liq_caps, pos_headroom)
     ub = np.maximum(ub, 0.0)
+
+    if use_greedy:
+        # Skip LP entirely — jump straight to greedy allocation
+        order = np.argsort(-alphas)
+        dv01_sizes = np.zeros(K, dtype=np.float64)
+        remaining_budget = gross_dv01_cap
+        for idx in order:
+            if remaining_budget <= 1e-15:
+                break
+            alloc = min(ub[idx], remaining_budget)
+            if alloc <= 1e-15:
+                continue
+            dv01_sizes[idx] = alloc
+            remaining_budget -= alloc
+        return dv01_sizes, True
 
     # Minimise -alpha·x  (maximise alpha·x)
     c = -alphas.copy()
@@ -291,6 +309,8 @@ def lp_portfolio_loop(
     tradable,           # (B,)      bool/int tradable mask
     pos_limits_long,    # (B,)      max long notional per instrument
     pos_limits_short,   # (B,)      max short notional per instrument (negative)
+    max_trade_notional_inc,  # (B,) max notional per risk-increasing trade
+    max_trade_notional_dec,  # (B,) max notional per risk-decreasing trade
     # -- Optional meta (can be None) --
     maturity,           # (T, B) or (B,) or None  years to maturity
     issuer_bucket,      # (B,) or None  int issuer label
@@ -311,7 +331,7 @@ def lp_portfolio_loop(
     # -- Execution params --
     max_levels,         # int       L2 levels to walk
     haircut,            # float     fraction of displayed size usable
-    qty_step,          # float     notional rounding step
+    qty_step,          # (B,)      per-instrument notional rounding step
     min_qty_trade,     # float     notional below this → skip
     min_fill_ratio,     # float     if filled/requested < this → skip (0 to disable)
     # -- Cooldown --
@@ -321,6 +341,8 @@ def lp_portfolio_loop(
     min_maturity_inc,   # float     min years-to-maturity for risk-increasing
     # -- Capital --
     initial_capital,    # float
+    # -- Solver mode --
+    use_greedy,         # bool  True = skip LP, use greedy only
     # -- Hedge market L2 --
     hedge_bid_px=None,      # (T, H, L) or None
     hedge_bid_sz=None,      # (T, H, L) or None
@@ -331,6 +353,8 @@ def lp_portfolio_loop(
     hedge_dv01=None,        # (T, H)    or None
     # -- Hedge ratios --
     hedge_ratios=None,      # (T, B, H) or None
+    # -- Hedge execution --
+    hedge_qty_step=None,    # (H,) or None — per-hedge notional rounding step
     # -- Chunked state --
     initial_state=None,     # LoopState or None — resume from this state
     return_final_state=False,  # bool — if True, append LoopState to return
@@ -391,10 +415,10 @@ def lp_portfolio_loop(
         L2 book levels to walk.
     haircut : float
         Fraction of displayed book size usable (0–1).
-    qty_step : float
-        DV01 rounding step for trade sizes.
+    qty_step : (B,) array
+        Per-instrument notional rounding step for trade sizes.
     min_qty_trade : float
-        DV01 below this is zeroed out.
+        Notional below this is zeroed out.
     min_fill_ratio : float
         Minimum filled/requested ratio (0 disables).
     cooldown_bars : int
@@ -415,9 +439,19 @@ def lp_portfolio_loop(
     T = bid_px.shape[0]
     B = bid_px.shape[1]
 
+    # -- Per-instrument qty_step: broadcast scalar to (B,) for compat --
+    if np.isscalar(qty_step) or (isinstance(qty_step, np.ndarray) and qty_step.ndim == 0):
+        qty_step = np.full(B, float(qty_step), dtype=np.float64)
+
     # -- Hedge universe size --
     H = hedge_bid_px.shape[1] if hedge_bid_px is not None else 0
     has_hedge = H > 0
+
+    # -- Per-hedge qty_step --
+    if hedge_qty_step is None and has_hedge:
+        hedge_qty_step = np.zeros(H, dtype=np.float64)
+    elif hedge_qty_step is not None and np.isscalar(hedge_qty_step):
+        hedge_qty_step = np.full(H, float(hedge_qty_step), dtype=np.float64)
 
     # -- Per-bar output arrays --
     out_pos = np.zeros((T, B), dtype=np.float64)
@@ -456,6 +490,16 @@ def lp_portfolio_loop(
     out_hedge_pos = np.zeros((T, max(H, 1)), dtype=np.float64)
     out_hedge_pnl = np.zeros(T, dtype=np.float64)
 
+    # -- Per-bar MTM and cost breakdown --
+    out_instrument_position_mtm = np.zeros(T, dtype=np.float64)
+    out_hedge_position_mtm = np.zeros(T, dtype=np.float64)
+    out_instrument_cash_mtm = np.zeros(T, dtype=np.float64)
+    out_hedge_cash_mtm = np.zeros(T, dtype=np.float64)
+    out_portfolio_mtm = np.zeros(T, dtype=np.float64)
+    out_instrument_cost = np.zeros(T, dtype=np.float64)
+    out_hedge_cost_bar = np.zeros(T, dtype=np.float64)
+    out_portfolio_cost = np.zeros(T, dtype=np.float64)
+
     # -- Mutable state --
     if initial_state is not None:
         pos = initial_state.pos.copy()
@@ -464,6 +508,8 @@ def lp_portfolio_loop(
         cooldown_remaining = initial_state.cooldown_remaining
         prev_equity = initial_state.prev_equity
         prev_hedge_mtm = initial_state.prev_hedge_mtm
+        cum_instrument_cash_mid = initial_state.cum_instrument_cash_mid
+        cum_hedge_cash_mid = initial_state.cum_hedge_cash_mid
     else:
         pos = np.zeros(B, dtype=np.float64)
         hedge_pos = np.zeros(max(H, 1), dtype=np.float64)
@@ -471,6 +517,8 @@ def lp_portfolio_loop(
         cooldown_remaining = 0
         prev_equity = float(initial_capital)
         prev_hedge_mtm = 0.0
+        cum_instrument_cash_mid = 0.0
+        cum_hedge_cash_mid = 0.0
 
     # Detect whether maturity / maturity_bucket are time-varying (T, B)
     maturity_2d = maturity is not None and maturity.ndim == 2
@@ -485,6 +533,8 @@ def lp_portfolio_loop(
     for t in range(T):
         code = _NO_ACTION
         bar_cost = 0.0
+        bar_position_cost = 0.0
+        bar_hedge_cost_t = 0.0
         bar_n_trades = 0
         hedge_trade_cash = 0.0  # sum of h_signed * h_vwap for hedge trades this bar
 
@@ -543,7 +593,7 @@ def lp_portfolio_loop(
 
                 # -- DV01 valid --
                 dv01_b = dv01[t, b]
-                if dv01_b < 1e-15:
+                if not (dv01_b >= 1e-15):   # catches NaN and < 1e-15
                     continue
 
                 # -- Market valid --
@@ -615,6 +665,16 @@ def lp_portfolio_loop(
                         headroom_notional = pos_limits_long[b] - pos[b]
                     else:  # SELL → position decreases
                         headroom_notional = pos[b] - pos_limits_short[b]
+
+                    # Risk-decreasing: cap at current position so we don't
+                    # overshoot past flat and flip the position.
+                    if is_risk_dec:
+                        headroom_notional = min(headroom_notional, abs(pos[b]))
+                        headroom_notional = min(
+                            headroom_notional, max_trade_notional_dec[b])
+                    else:
+                        headroom_notional = min(
+                            headroom_notional, max_trade_notional_inc[b])
 
                     if headroom_notional < 1e-15:
                         continue
@@ -704,6 +764,7 @@ def lp_portfolio_loop(
                     mat_bucket_dv01_caps,
                     current_issuer_dv01,
                     current_mat_dv01,
+                    use_greedy=use_greedy,
                 )
 
                 # ==================================================
@@ -731,7 +792,7 @@ def lp_portfolio_loop(
 
                     # Convert DV01 to notional quantity, then round size
                     raw_qty = raw_dv01 / dv01_b
-                    qty_req = _round_qty_trade(raw_qty, min_qty_trade, qty_step)
+                    qty_req = _round_qty_trade(raw_qty, min_qty_trade, qty_step[b_idx])
                     if qty_req < 1e-15:
                         continue
 
@@ -793,7 +854,10 @@ def lp_portfolio_loop(
                         # SELL: cash += qty * vwap, pos -= qty
                         cash -= signed_qty * vwap
                         pos[b_idx] += signed_qty
-                        bar_cost += abs(vwap - mid_px[t, b_idx]) * filled
+                        cum_instrument_cash_mid -= signed_qty * mid_px[t, b_idx]
+                        pos_exec_cost = abs(vwap - mid_px[t, b_idx]) * filled
+                        bar_cost += pos_exec_cost
+                        bar_position_cost += pos_exec_cost
                         any_executed = True
                         bar_n_trades += 1
 
@@ -815,6 +879,10 @@ def lp_portfolio_loop(
                     bar_hedge_cost = 0.0
                     for h in range(H):
                         hedge_remaining = hedge_target[h] - hedge_pos[h]
+                        # Round hedge trade size using per-hedge qty_step
+                        hedge_remaining = _round_qty_trade(
+                            hedge_remaining, min_qty_trade, hedge_qty_step[h],
+                        )
                         if abs(hedge_remaining) < 1e-15:
                             continue
                         if hedge_remaining > 1e-15:
@@ -832,10 +900,12 @@ def lp_portfolio_loop(
                         h_signed = np.sign(hedge_remaining) * h_filled
                         cash -= h_signed * h_vwap
                         hedge_trade_cash += h_signed * h_vwap
+                        cum_hedge_cash_mid -= h_signed * hedge_mid_px[t, h]
                         hedge_pos[h] += h_signed
                         h_exec_cost = abs(h_vwap - hedge_mid_px[t, h]) * h_filled
                         bar_cost += h_exec_cost
                         bar_hedge_cost += h_exec_cost
+                        bar_hedge_cost_t += h_exec_cost
                         # Record in the last trade's hedge arrays
                         last_trade = n_trades_total - 1
                         if last_trade >= 0 and last_trade < max_trades:
@@ -866,12 +936,18 @@ def lp_portfolio_loop(
         # End-of-bar bookkeeping
         # ==============================================================
         # equity = cash + sum(pos[b] * mid[b]) + sum(hedge_pos[h] * hedge_mid[h])
-        equity_t = cash
+        position_mtm_t = 0.0
         for b in range(B):
-            equity_t += pos[b] * mid_px[t, b]
+            mid_b_t = mid_px[t, b]
+            if not np.isnan(mid_b_t):
+                position_mtm_t += pos[b] * mid_b_t
+        hedge_mtm_t_eq = 0.0
         if has_hedge:
             for h in range(H):
-                equity_t += hedge_pos[h] * hedge_mid_px[t, h]
+                h_mid_t = hedge_mid_px[t, h]
+                if not np.isnan(h_mid_t):
+                    hedge_mtm_t_eq += hedge_pos[h] * h_mid_t
+        equity_t = cash + position_mtm_t + hedge_mtm_t_eq
 
         pnl_t = equity_t - prev_equity
         gross_pnl_t = pnl_t + bar_cost
@@ -880,11 +956,8 @@ def lp_portfolio_loop(
         # Hedge PnL: MTM change minus cash outflows for hedge trades
         hedge_pnl_t = 0.0
         if has_hedge:
-            hedge_mtm_t = 0.0
-            for h in range(H):
-                hedge_mtm_t += hedge_pos[h] * hedge_mid_px[t, h]
-            hedge_pnl_t = hedge_mtm_t - prev_hedge_mtm - hedge_trade_cash
-            prev_hedge_mtm = hedge_mtm_t
+            hedge_pnl_t = hedge_mtm_t_eq - prev_hedge_mtm - hedge_trade_cash
+            prev_hedge_mtm = hedge_mtm_t_eq
 
         # Write output arrays
         for b in range(B):
@@ -900,6 +973,15 @@ def lp_portfolio_loop(
         out_codes[t] = code
         out_n_trades_bar[t] = bar_n_trades
         out_cooldown[t] = cooldown_remaining
+        out_instrument_position_mtm[t] = position_mtm_t
+        out_hedge_position_mtm[t] = hedge_mtm_t_eq
+        out_instrument_cash_mtm[t] = cum_instrument_cash_mid
+        out_hedge_cash_mtm[t] = cum_hedge_cash_mid
+        out_portfolio_mtm[t] = (cum_instrument_cash_mid + cum_hedge_cash_mid
+                                + position_mtm_t + hedge_mtm_t_eq)
+        out_instrument_cost[t] = bar_position_cost
+        out_hedge_cost_bar[t] = bar_hedge_cost_t
+        out_portfolio_cost[t] = bar_position_cost + bar_hedge_cost_t
 
     result = (
         # Per-bar arrays (9)
@@ -932,8 +1014,17 @@ def lp_portfolio_loop(
         tr_hedge_cost,      # 25: (max_trades,)
         # Per-bar hedge PnL
         out_hedge_pnl,      # 26: (T,)
+        # Per-bar MTM and cost breakdown
+        out_instrument_position_mtm,  # 27: (T,)
+        out_hedge_position_mtm,       # 28: (T,)
+        out_instrument_cash_mtm,      # 29: (T,) cumulative cash from instrument trades at mid
+        out_hedge_cash_mtm,           # 30: (T,) cumulative cash from hedge trades at mid
+        out_portfolio_mtm,            # 31: (T,) sum of 27-30
+        out_instrument_cost,          # 32: (T,)
+        out_hedge_cost_bar,           # 33: (T,)
+        out_portfolio_cost,           # 34: (T,) instrument + hedge cost
         # Scalar
-        n_trades_total,     # 27
+        n_trades_total,               # 35
     )
 
     if return_final_state:
@@ -944,6 +1035,8 @@ def lp_portfolio_loop(
             cooldown_remaining=cooldown_remaining,
             prev_equity=prev_equity,
             prev_hedge_mtm=prev_hedge_mtm,
+            cum_instrument_cash_mid=cum_instrument_cash_mid,
+            cum_hedge_cash_mid=cum_hedge_cash_mid,
         )
         return result + (final_state,)
 

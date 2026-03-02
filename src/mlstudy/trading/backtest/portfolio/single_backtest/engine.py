@@ -31,6 +31,10 @@ def _validate(
     tradable: np.ndarray,
     pos_limits_long: np.ndarray,
     pos_limits_short: np.ndarray,
+    max_trade_notional_inc: np.ndarray,
+    max_trade_notional_dec: np.ndarray,
+    qty_step: np.ndarray,
+    hedge_qty_step: np.ndarray,
     hedge_bid_px: np.ndarray,
     hedge_bid_sz: np.ndarray,
     hedge_ask_px: np.ndarray,
@@ -55,6 +59,9 @@ def _validate(
         ("tradable", tradable, B),
         ("pos_limits_long", pos_limits_long, B),
         ("pos_limits_short", pos_limits_short, B),
+        ("max_trade_notional_inc", max_trade_notional_inc, B),
+        ("max_trade_notional_dec", max_trade_notional_dec, B),
+        ("qty_step", qty_step, B),
     ]:
         if len(arr) != expected_len:
             raise ValueError(f"{name} length {len(arr)} != expected {expected_len}")
@@ -76,6 +83,10 @@ def _validate(
         raise ValueError(
             f"hedge_ratios shape {hedge_ratios.shape} != expected {(T, B, H)}"
         )
+    if hedge_qty_step is not None and len(hedge_qty_step) != H:
+        raise ValueError(
+            f"hedge_qty_step length {len(hedge_qty_step)} != expected H={H}"
+        )
 
 
 def run_backtest(
@@ -96,6 +107,8 @@ def run_backtest(
     tradable: np.ndarray,
     pos_limits_long: np.ndarray,
     pos_limits_short: np.ndarray,
+    max_trade_notional_inc: np.ndarray,
+    max_trade_notional_dec: np.ndarray,
     # -- Meta --
     maturity: np.ndarray,
     issuer_bucket: np.ndarray,
@@ -113,6 +126,10 @@ def run_backtest(
     hedge_ratios: np.ndarray,
     # -- Instrument IDs --
     instrument_ids: list[str],
+    # -- Per-instrument qty_step --
+    qty_step: np.ndarray,           # (B,)
+    # -- Per-hedge qty_step --
+    hedge_qty_step: np.ndarray = None,  # (H,) or None
     # -- Config --
     cfg: PortfolioBacktestConfig,
     # -- Context --
@@ -181,6 +198,8 @@ def run_backtest(
         bid_px, bid_sz, ask_px, ask_sz, mid_px,
         dv01, fair_price, zscore, adf_p_value,
         tradable, pos_limits_long, pos_limits_short,
+        max_trade_notional_inc, max_trade_notional_dec,
+        qty_step, hedge_qty_step,
         hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
         hedge_mid_px, hedge_dv01, hedge_ratios,
     )
@@ -214,6 +233,7 @@ def run_backtest(
         f_bid_px, f_bid_sz, f_ask_px, f_ask_sz, f_mid_px,
         f_dv01, f_fair, f_zscore, f_adf,
         tradable, pos_limits_long, pos_limits_short,
+        max_trade_notional_inc, max_trade_notional_dec,
         maturity, issuer_bucket, maturity_bucket,
         # Config scalars
         gross_dv01_cap=float(cfg.gross_dv01_cap),
@@ -228,13 +248,14 @@ def run_backtest(
         alpha_thr_dec=float(cfg.alpha_thr_dec),
         max_levels=int(cfg.max_levels),
         haircut=float(cfg.haircut),
-        qty_step=float(cfg.qty_step),
+        qty_step=qty_step,
         min_qty_trade=float(cfg.min_qty_trade),
         min_fill_ratio=float(cfg.min_fill_ratio),
         cooldown_bars=int(cfg.cooldown_bars),
         cooldown_mode=int(cfg.cooldown_mode),
         min_maturity_inc=float(cfg.min_maturity_inc),
         initial_capital=float(cfg.initial_capital),
+        use_greedy=bool(cfg.use_greedy),
         hedge_bid_px=f_hedge_bid_px,
         hedge_bid_sz=f_hedge_bid_sz,
         hedge_ask_px=f_hedge_ask_px,
@@ -242,6 +263,7 @@ def run_backtest(
         hedge_mid_px=f_hedge_mid_px,
         hedge_dv01=f_hedge_dv01,
         hedge_ratios=f_hedge_ratios,
+        hedge_qty_step=hedge_qty_step,
         initial_state=initial_state,
         return_final_state=return_final_state,
     )
@@ -337,6 +359,14 @@ def run_backtest_chunked(
     cooldown = np.concatenate([r.cooldown for r, _ in chunk_results])
     hedge_positions = np.concatenate([r.hedge_positions for r, _ in chunk_results], axis=0)
     hedge_pnl = np.concatenate([r.hedge_pnl for r, _ in chunk_results])
+    instrument_position_mtm = np.concatenate([r.instrument_position_mtm for r, _ in chunk_results])
+    hedge_position_mtm = np.concatenate([r.hedge_position_mtm for r, _ in chunk_results])
+    instrument_cash_mtm = np.concatenate([r.instrument_cash_mtm for r, _ in chunk_results])
+    hedge_cash_mtm = np.concatenate([r.hedge_cash_mtm for r, _ in chunk_results])
+    portfolio_mtm = np.concatenate([r.portfolio_mtm for r, _ in chunk_results])
+    instrument_cost = np.concatenate([r.instrument_cost for r, _ in chunk_results])
+    hedge_cost_bar = np.concatenate([r.hedge_cost_bar for r, _ in chunk_results])
+    portfolio_cost = np.concatenate([r.portfolio_cost for r, _ in chunk_results])
 
     # Stitch per-trade arrays with bar index offset
     tr_bars = []
@@ -437,6 +467,14 @@ def run_backtest_chunked(
         cooldown=cooldown,
         hedge_positions=hedge_positions,
         hedge_pnl=hedge_pnl,
+        instrument_position_mtm=instrument_position_mtm,
+        hedge_position_mtm=hedge_position_mtm,
+        instrument_cash_mtm=instrument_cash_mtm,
+        hedge_cash_mtm=hedge_cash_mtm,
+        portfolio_mtm=portfolio_mtm,
+        instrument_cost=instrument_cost,
+        hedge_cost_bar=hedge_cost_bar,
+        portfolio_cost=portfolio_cost,
         tr_bar=_concat_or_empty(tr_bars, np.int64),
         tr_instrument=_concat_or_empty(tr_instruments, np.int32),
         tr_side=_concat_or_empty(tr_sides, np.int32),

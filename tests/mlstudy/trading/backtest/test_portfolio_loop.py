@@ -64,6 +64,7 @@ def _default_params():
         cooldown_mode=int(CooldownMode.BLOCK_ALL),
         min_maturity_inc=0.0,
         initial_capital=1_000_000.0,
+        use_greedy=False,
     )
 
 
@@ -181,10 +182,11 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades == 0
 
     def test_buy_signal_executes(self):
@@ -206,10 +208,11 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         # Check that trades are buys
         tr_side = result[11]
@@ -233,10 +236,11 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         tr_side = result[11]
         for i in range(n_trades):
@@ -259,6 +263,7 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -286,6 +291,7 @@ class TestLpPortfolioLoopBasic:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -312,6 +318,7 @@ class TestCooldown:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -350,10 +357,11 @@ class TestSignalGating:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
-        assert result[27] == 0  # no trades
+        assert result[35] == 0  # no trades
 
     def test_high_adf_pvalue_no_fair(self):
         """ADF p-value above threshold should block fair price activation."""
@@ -372,10 +380,11 @@ class TestSignalGating:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
-        assert result[27] == 0
+        assert result[35] == 0
 
 
 class TestPositionLimits:
@@ -397,6 +406,7 @@ class TestPositionLimits:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -423,10 +433,11 @@ class TestNonTradable:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         tr_instrument = result[10]
         for i in range(n_trades):
             assert tr_instrument[i] != 1  # instrument 1 should never be traded
@@ -451,6 +462,7 @@ class TestBookkeeping:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -479,6 +491,7 @@ class TestBookkeeping:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -542,6 +555,7 @@ class TestHedgeExecution:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -550,7 +564,7 @@ class TestHedgeExecution:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # Instrument buy with negative hedge_ratio → hedge sells → hedge_pos < 0
@@ -578,6 +592,7 @@ class TestHedgeCostInEquity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
@@ -593,6 +608,7 @@ class TestHedgeCostInEquity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -632,6 +648,7 @@ class TestHedgeMtmInEquity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -678,6 +695,7 @@ class TestNoHedge:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -708,10 +726,11 @@ class TestNoHedge:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # H=0 → out_hedge_pos is (T, 1) of zeros
@@ -746,6 +765,7 @@ class TestHedgePartialFill:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair_price, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, None,
             **params,
             hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
@@ -754,7 +774,7 @@ class TestHedgePartialFill:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         tr_hedge_fills = result[24]
         # Hedge should be partially filled (limited by book size)
@@ -791,6 +811,7 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             maturity_1d, None, None,
             **params,
         )
@@ -802,12 +823,13 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             maturity_2d, None, None,
             **params,
         )
 
         # Same trades produced
-        assert result_1d[27] == result_2d[27]
+        assert result_1d[35] == result_2d[35]
         np.testing.assert_allclose(result_1d[0], result_2d[0])
 
     def test_2d_maturity_filter_blocks_when_maturity_decreases(self):
@@ -833,10 +855,11 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             maturity_2d, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         tr_bar = result[9]
         # Trades should only happen in bars 0-2 (maturity >= 2.0)
         # Bars 3-5 have maturity < 2.0, risk-increasing trades should be blocked
@@ -877,11 +900,12 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             None, None, maturity_bucket_2d,
             **params,
         )
         # Should run without error — LP uses per-bar slice
-        assert result[27] >= 0  # non-negative trade count
+        assert result[35] >= 0  # non-negative trade count
 
     def test_1d_arrays_still_work(self):
         """Existing (B,) maturity and maturity_bucket arrays still work."""
@@ -904,7 +928,8 @@ class TestTimeVaryingMaturity:
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
             dv01, fair, zscore, adf_p,
             tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
             maturity_1d, None, maturity_bucket_1d,
             **params,
         )
-        assert result[27] > 0  # trades happen
+        assert result[35] > 0  # trades happen

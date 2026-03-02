@@ -1,7 +1,7 @@
 grid_name: "portfolio_grid_v1"
 
 base_config:
-  qty_step: 0.0
+  use_greedy: false
   min_qty_trade: 0.0
   min_fill_ratio: 0.0
   min_maturity_inc: 0.0
@@ -34,6 +34,7 @@ data:
   signal_filename: "signal"
   meta_filename: "meta.parquet"
   hedge_ratio_filename: "hedge_ratios"
+  hedge_meta_filename: "hedge_meta.parquet"
 
 sweep:
   backend: "process"

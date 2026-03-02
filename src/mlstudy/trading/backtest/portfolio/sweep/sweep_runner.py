@@ -51,9 +51,12 @@ _REQUIRED_KEYS = {
     "bid_px", "bid_sz", "ask_px", "ask_sz", "mid_px",
     "dv01", "fair_price", "zscore", "adf_p_value",
     "tradable", "pos_limits_long", "pos_limits_short",
+    "max_trade_notional_inc", "max_trade_notional_dec",
+    "qty_step",
     "instrument_ids",
     "hedge_bid_px", "hedge_bid_sz", "hedge_ask_px", "hedge_ask_sz",
     "hedge_mid_px", "hedge_dv01", "hedge_ratios",
+    "hedge_qty_step",
 }
 
 
@@ -104,6 +107,12 @@ class SweepRunResult:
             "total_pnl", "sharpe_ratio", "sortino_ratio", "max_drawdown",
             "calmar_ratio", "hit_rate", "profit_factor", "n_trades",
             "avg_holding_period",
+            "inst_traded_notional", "inst_traded_dv01",
+            "gross_pnl_per_inst_traded_dv01_bps",
+            "net_pnl_per_inst_traded_dv01_bps",
+            "inst_cost_per_inst_traded_dv01_bps",
+            "hedge_cost_per_inst_traded_dv01_bps",
+            "total_cost_per_inst_traded_dv01_bps",
         ]
 
         lb = self.param_leaderboard.head(top_n)

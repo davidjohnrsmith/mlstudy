@@ -345,6 +345,16 @@ class PortfolioMetricsCalculator(MetricsCalculator):
 
         _zero_stats = _pnl_trade_stats(np.array([]))
 
+        _zero_cost_eff = {
+            "inst_traded_notional": 0.0,
+            "inst_traded_dv01": 0.0,
+            "gross_pnl_per_inst_traded_dv01_bps": 0.0,
+            "net_pnl_per_inst_traded_dv01_bps": 0.0,
+            "inst_cost_per_inst_traded_dv01_bps": 0.0,
+            "hedge_cost_per_inst_traded_dv01_bps": 0.0,
+            "total_cost_per_inst_traded_dv01_bps": 0.0,
+        }
+
         if trade_df.empty:
             result = {
                 "turnover_annual": 0.0,
@@ -355,6 +365,7 @@ class PortfolioMetricsCalculator(MetricsCalculator):
             result.update(_zero_stats)
             result.update({f"{k}_unhedged": v for k, v in _zero_stats.items()})
             result.update({f"{k}_theo_hedged": v for k, v in _zero_stats.items()})
+            result.update(_zero_cost_eff)
             return result
 
         # --- FIFO round-trip matching ---
@@ -406,13 +417,49 @@ class PortfolioMetricsCalculator(MetricsCalculator):
         if pos_cols:
             positions = bar_df[pos_cols].values
             pos_delta = np.abs(np.diff(positions, axis=0, prepend=0.0))
-            traded_notional = pd.Series(np.sum(pos_delta, axis=1), dtype=np.float64)
+            inst_traded_notional = pd.Series(np.sum(pos_delta, axis=1), dtype=np.float64)
             gross_notional = pd.Series(
                 np.sum(np.abs(positions), axis=1), dtype=np.float64
             )
-            turnover = compute_turnover(traded_notional, gross_notional, self.annualization_factor)
+            turnover = compute_turnover(inst_traded_notional, gross_notional, self.annualization_factor)
         else:
             turnover = 0.0
+
+        # --- Cost efficiency metrics ---
+        inst_traded_notional = float(trade_df["qty_fill"].abs().sum())
+        inst_traded_dv01 = (
+            float(trade_df["dv01_fill"].abs().sum())
+            if "dv01_fill" in trade_df.columns
+            else 0.0
+        )
+
+        if inst_traded_dv01 > 1e-15:
+            total_gross_pnl = float(bar_df["gross_pnl"].sum()) if "gross_pnl" in bar_df.columns else 0.0
+            total_net_pnl = float(bar_df["pnl"].sum()) if "pnl" in bar_df.columns else 0.0
+            total_inst_cost = float(bar_df["instrument_cost"].sum()) if "instrument_cost" in bar_df.columns else 0.0
+            total_hedge_cost = float(bar_df["hedge_cost"].sum()) if "hedge_cost" in bar_df.columns else 0.0
+            total_cost = total_inst_cost + total_hedge_cost
+
+            bps = 1e4 / inst_traded_dv01
+            cost_eff = {
+                "inst_traded_notional": inst_traded_notional,
+                "inst_traded_dv01": inst_traded_dv01,
+                "gross_pnl_per_inst_traded_dv01_bps": total_gross_pnl * bps,
+                "net_pnl_per_inst_traded_dv01_bps": total_net_pnl * bps,
+                "inst_cost_per_inst_traded_dv01_bps": total_inst_cost * bps,
+                "hedge_cost_per_inst_traded_dv01_bps": total_hedge_cost * bps,
+                "total_cost_per_inst_traded_dv01_bps": total_cost * bps,
+            }
+        else:
+            cost_eff = {
+                "inst_traded_notional": inst_traded_notional,
+                "inst_traded_dv01": inst_traded_dv01,
+                "gross_pnl_per_inst_traded_dv01_bps": 0.0,
+                "net_pnl_per_inst_traded_dv01_bps": 0.0,
+                "inst_cost_per_inst_traded_dv01_bps": 0.0,
+                "hedge_cost_per_inst_traded_dv01_bps": 0.0,
+                "total_cost_per_inst_traded_dv01_bps": 0.0,
+            }
 
         result = {
             "turnover_annual": turnover,
@@ -423,4 +470,5 @@ class PortfolioMetricsCalculator(MetricsCalculator):
         result.update(stats_net)
         result.update({f"{k}_unhedged": v for k, v in stats_unhedged.items()})
         result.update({f"{k}_theo_hedged": v for k, v in stats_theo.items()})
+        result.update(cost_eff)
         return result
