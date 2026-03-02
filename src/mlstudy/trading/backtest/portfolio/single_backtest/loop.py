@@ -64,6 +64,8 @@ class LoopState:
     cooldown_remaining: int
     prev_equity: float
     prev_hedge_mtm: float
+    cum_instrument_cash_mid: float = 0.0
+    cum_hedge_cash_mid: float = 0.0
 
 from mlstudy.trading.backtest.portfolio.single_backtest.state import (
     PortfolioActionCode,
@@ -456,6 +458,16 @@ def lp_portfolio_loop(
     out_hedge_pos = np.zeros((T, max(H, 1)), dtype=np.float64)
     out_hedge_pnl = np.zeros(T, dtype=np.float64)
 
+    # -- Per-bar MTM and cost breakdown --
+    out_instrument_position_mtm = np.zeros(T, dtype=np.float64)
+    out_hedge_position_mtm = np.zeros(T, dtype=np.float64)
+    out_instrument_cash_mtm = np.zeros(T, dtype=np.float64)
+    out_hedge_cash_mtm = np.zeros(T, dtype=np.float64)
+    out_portfolio_mtm = np.zeros(T, dtype=np.float64)
+    out_instrument_cost = np.zeros(T, dtype=np.float64)
+    out_hedge_cost_bar = np.zeros(T, dtype=np.float64)
+    out_portfolio_cost = np.zeros(T, dtype=np.float64)
+
     # -- Mutable state --
     if initial_state is not None:
         pos = initial_state.pos.copy()
@@ -464,6 +476,8 @@ def lp_portfolio_loop(
         cooldown_remaining = initial_state.cooldown_remaining
         prev_equity = initial_state.prev_equity
         prev_hedge_mtm = initial_state.prev_hedge_mtm
+        cum_instrument_cash_mid = initial_state.cum_instrument_cash_mid
+        cum_hedge_cash_mid = initial_state.cum_hedge_cash_mid
     else:
         pos = np.zeros(B, dtype=np.float64)
         hedge_pos = np.zeros(max(H, 1), dtype=np.float64)
@@ -471,6 +485,8 @@ def lp_portfolio_loop(
         cooldown_remaining = 0
         prev_equity = float(initial_capital)
         prev_hedge_mtm = 0.0
+        cum_instrument_cash_mid = 0.0
+        cum_hedge_cash_mid = 0.0
 
     # Detect whether maturity / maturity_bucket are time-varying (T, B)
     maturity_2d = maturity is not None and maturity.ndim == 2
@@ -485,6 +501,8 @@ def lp_portfolio_loop(
     for t in range(T):
         code = _NO_ACTION
         bar_cost = 0.0
+        bar_position_cost = 0.0
+        bar_hedge_cost_t = 0.0
         bar_n_trades = 0
         hedge_trade_cash = 0.0  # sum of h_signed * h_vwap for hedge trades this bar
 
@@ -793,7 +811,10 @@ def lp_portfolio_loop(
                         # SELL: cash += qty * vwap, pos -= qty
                         cash -= signed_qty * vwap
                         pos[b_idx] += signed_qty
-                        bar_cost += abs(vwap - mid_px[t, b_idx]) * filled
+                        cum_instrument_cash_mid -= signed_qty * mid_px[t, b_idx]
+                        pos_exec_cost = abs(vwap - mid_px[t, b_idx]) * filled
+                        bar_cost += pos_exec_cost
+                        bar_position_cost += pos_exec_cost
                         any_executed = True
                         bar_n_trades += 1
 
@@ -832,10 +853,12 @@ def lp_portfolio_loop(
                         h_signed = np.sign(hedge_remaining) * h_filled
                         cash -= h_signed * h_vwap
                         hedge_trade_cash += h_signed * h_vwap
+                        cum_hedge_cash_mid -= h_signed * hedge_mid_px[t, h]
                         hedge_pos[h] += h_signed
                         h_exec_cost = abs(h_vwap - hedge_mid_px[t, h]) * h_filled
                         bar_cost += h_exec_cost
                         bar_hedge_cost += h_exec_cost
+                        bar_hedge_cost_t += h_exec_cost
                         # Record in the last trade's hedge arrays
                         last_trade = n_trades_total - 1
                         if last_trade >= 0 and last_trade < max_trades:
@@ -866,12 +889,14 @@ def lp_portfolio_loop(
         # End-of-bar bookkeeping
         # ==============================================================
         # equity = cash + sum(pos[b] * mid[b]) + sum(hedge_pos[h] * hedge_mid[h])
-        equity_t = cash
+        position_mtm_t = 0.0
         for b in range(B):
-            equity_t += pos[b] * mid_px[t, b]
+            position_mtm_t += pos[b] * mid_px[t, b]
+        hedge_mtm_t_eq = 0.0
         if has_hedge:
             for h in range(H):
-                equity_t += hedge_pos[h] * hedge_mid_px[t, h]
+                hedge_mtm_t_eq += hedge_pos[h] * hedge_mid_px[t, h]
+        equity_t = cash + position_mtm_t + hedge_mtm_t_eq
 
         pnl_t = equity_t - prev_equity
         gross_pnl_t = pnl_t + bar_cost
@@ -880,11 +905,8 @@ def lp_portfolio_loop(
         # Hedge PnL: MTM change minus cash outflows for hedge trades
         hedge_pnl_t = 0.0
         if has_hedge:
-            hedge_mtm_t = 0.0
-            for h in range(H):
-                hedge_mtm_t += hedge_pos[h] * hedge_mid_px[t, h]
-            hedge_pnl_t = hedge_mtm_t - prev_hedge_mtm - hedge_trade_cash
-            prev_hedge_mtm = hedge_mtm_t
+            hedge_pnl_t = hedge_mtm_t_eq - prev_hedge_mtm - hedge_trade_cash
+            prev_hedge_mtm = hedge_mtm_t_eq
 
         # Write output arrays
         for b in range(B):
@@ -900,6 +922,15 @@ def lp_portfolio_loop(
         out_codes[t] = code
         out_n_trades_bar[t] = bar_n_trades
         out_cooldown[t] = cooldown_remaining
+        out_instrument_position_mtm[t] = position_mtm_t
+        out_hedge_position_mtm[t] = hedge_mtm_t_eq
+        out_instrument_cash_mtm[t] = cum_instrument_cash_mid
+        out_hedge_cash_mtm[t] = cum_hedge_cash_mid
+        out_portfolio_mtm[t] = (cum_instrument_cash_mid + cum_hedge_cash_mid
+                                + position_mtm_t + hedge_mtm_t_eq)
+        out_instrument_cost[t] = bar_position_cost
+        out_hedge_cost_bar[t] = bar_hedge_cost_t
+        out_portfolio_cost[t] = bar_position_cost + bar_hedge_cost_t
 
     result = (
         # Per-bar arrays (9)
@@ -932,8 +963,17 @@ def lp_portfolio_loop(
         tr_hedge_cost,      # 25: (max_trades,)
         # Per-bar hedge PnL
         out_hedge_pnl,      # 26: (T,)
+        # Per-bar MTM and cost breakdown
+        out_instrument_position_mtm,  # 27: (T,)
+        out_hedge_position_mtm,       # 28: (T,)
+        out_instrument_cash_mtm,      # 29: (T,) cumulative cash from instrument trades at mid
+        out_hedge_cash_mtm,           # 30: (T,) cumulative cash from hedge trades at mid
+        out_portfolio_mtm,            # 31: (T,) sum of 27-30
+        out_instrument_cost,          # 32: (T,)
+        out_hedge_cost_bar,           # 33: (T,)
+        out_portfolio_cost,           # 34: (T,) instrument + hedge cost
         # Scalar
-        n_trades_total,     # 27
+        n_trades_total,               # 35
     )
 
     if return_final_state:
@@ -944,6 +984,8 @@ def lp_portfolio_loop(
             cooldown_remaining=cooldown_remaining,
             prev_equity=prev_equity,
             prev_hedge_mtm=prev_hedge_mtm,
+            cum_instrument_cash_mid=cum_instrument_cash_mid,
+            cum_hedge_cash_mid=cum_hedge_cash_mid,
         )
         return result + (final_state,)
 

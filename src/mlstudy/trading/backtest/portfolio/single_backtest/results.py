@@ -24,6 +24,14 @@ class PortfolioBacktestResults:
     cooldown      : (T,)    remaining cooldown bars.
     hedge_positions : (T, H)  hedge instrument positions at end of each bar.
     hedge_pnl     : (T,)    hedge PnL per bar (MTM change minus cash outflows).
+    instrument_position_mtm : (T,) mark-to-market of instrument positions.
+    hedge_position_mtm      : (T,) mark-to-market of hedge positions.
+    instrument_cash_mtm     : (T,) cumulative cash from instrument trades at mid.
+    hedge_cash_mtm          : (T,) cumulative cash from hedge trades at mid.
+    portfolio_mtm           : (T,) sum of instrument/hedge position + cash MTMs.
+    instrument_cost         : (T,) execution cost of instrument trades per bar.
+    hedge_cost_bar          : (T,) execution cost of hedge trades per bar.
+    portfolio_cost          : (T,) total execution cost (instrument + hedge) per bar.
 
     Per-trade arrays (length *n_trades*)
     ------------------------------------
@@ -57,6 +65,14 @@ class PortfolioBacktestResults:
     cooldown: np.ndarray
     hedge_positions: np.ndarray
     hedge_pnl: np.ndarray
+    instrument_position_mtm: np.ndarray
+    hedge_position_mtm: np.ndarray
+    instrument_cash_mtm: np.ndarray
+    hedge_cash_mtm: np.ndarray
+    portfolio_mtm: np.ndarray
+    instrument_cost: np.ndarray
+    hedge_cost_bar: np.ndarray
+    portfolio_cost: np.ndarray
 
     # per-trade
     tr_bar: np.ndarray
@@ -124,7 +140,7 @@ class PortfolioBacktestResults:
         hedge_dv01: np.ndarray | None = None,
     ) -> "PortfolioBacktestResults":
         """Construct from the raw tuple returned by :func:`lp_portfolio_loop`."""
-        n = int(out[27])
+        n = int(out[35])
         return PortfolioBacktestResults(
             positions=out[0],
             cash=out[1],
@@ -136,6 +152,14 @@ class PortfolioBacktestResults:
             cooldown=out[7],
             hedge_positions=out[8],
             hedge_pnl=out[26],
+            instrument_position_mtm=out[27],
+            hedge_position_mtm=out[28],
+            instrument_cash_mtm=out[29],
+            hedge_cash_mtm=out[30],
+            portfolio_mtm=out[31],
+            instrument_cost=out[32],
+            hedge_cost_bar=out[33],
+            portfolio_cost=out[34],
             tr_bar=out[9][:n],
             tr_instrument=out[10][:n],
             tr_side=out[11][:n],
@@ -190,6 +214,14 @@ class PortfolioBacktestResults:
                 "state": self.codes[:T],
                 "n_trades": self.n_trades_bar[:T],
                 "cooldown": self.cooldown[:T],
+                "instrument_position_mtm": self.instrument_position_mtm[:T],
+                "hedge_position_mtm": self.hedge_position_mtm[:T],
+                "instrument_cash_mtm": self.instrument_cash_mtm[:T],
+                "hedge_cash_mtm": self.hedge_cash_mtm[:T],
+                "portfolio_mtm": self.portfolio_mtm[:T],
+                "instrument_cost": self.instrument_cost[:T],
+                "hedge_cost": self.hedge_cost_bar[:T],
+                "portfolio_cost": self.portfolio_cost[:T],
             }
         )
 

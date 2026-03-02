@@ -184,7 +184,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades == 0
 
     def test_buy_signal_executes(self):
@@ -209,7 +209,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         # Check that trades are buys
         tr_side = result[11]
@@ -236,7 +236,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         tr_side = result[11]
         for i in range(n_trades):
@@ -353,7 +353,7 @@ class TestSignalGating:
             None, None, None,
             **params,
         )
-        assert result[27] == 0  # no trades
+        assert result[35] == 0  # no trades
 
     def test_high_adf_pvalue_no_fair(self):
         """ADF p-value above threshold should block fair price activation."""
@@ -375,7 +375,7 @@ class TestSignalGating:
             None, None, None,
             **params,
         )
-        assert result[27] == 0
+        assert result[35] == 0
 
 
 class TestPositionLimits:
@@ -426,7 +426,7 @@ class TestNonTradable:
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         tr_instrument = result[10]
         for i in range(n_trades):
             assert tr_instrument[i] != 1  # instrument 1 should never be traded
@@ -550,7 +550,7 @@ class TestHedgeExecution:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # Instrument buy with negative hedge_ratio → hedge sells → hedge_pos < 0
@@ -711,7 +711,7 @@ class TestNoHedge:
             None, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # H=0 → out_hedge_pos is (T, 1) of zeros
@@ -754,7 +754,7 @@ class TestHedgePartialFill:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         assert n_trades > 0
         tr_hedge_fills = result[24]
         # Hedge should be partially filled (limited by book size)
@@ -807,7 +807,7 @@ class TestTimeVaryingMaturity:
         )
 
         # Same trades produced
-        assert result_1d[27] == result_2d[27]
+        assert result_1d[35] == result_2d[35]
         np.testing.assert_allclose(result_1d[0], result_2d[0])
 
     def test_2d_maturity_filter_blocks_when_maturity_decreases(self):
@@ -836,7 +836,7 @@ class TestTimeVaryingMaturity:
             maturity_2d, None, None,
             **params,
         )
-        n_trades = result[27]
+        n_trades = result[35]
         tr_bar = result[9]
         # Trades should only happen in bars 0-2 (maturity >= 2.0)
         # Bars 3-5 have maturity < 2.0, risk-increasing trades should be blocked
@@ -881,7 +881,7 @@ class TestTimeVaryingMaturity:
             **params,
         )
         # Should run without error — LP uses per-bar slice
-        assert result[27] >= 0  # non-negative trade count
+        assert result[35] >= 0  # non-negative trade count
 
     def test_1d_arrays_still_work(self):
         """Existing (B,) maturity and maturity_bucket arrays still work."""
@@ -907,4 +907,4 @@ class TestTimeVaryingMaturity:
             maturity_1d, None, maturity_bucket_1d,
             **params,
         )
-        assert result[27] > 0  # trades happen
+        assert result[35] > 0  # trades happen
