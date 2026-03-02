@@ -55,6 +55,13 @@ class BacktestMetrics:
         avg_win_theo_hedged: Average win using theoretical-hedged PnL.
         avg_loss_theo_hedged: Average loss using theoretical-hedged PnL.
         win_loss_ratio_theo_hedged: Win/loss ratio using theoretical-hedged PnL.
+        inst_traded_notional: Total traded instrument notional (sum of abs fills).
+        inst_traded_dv01: Total traded instrument DV01 (sum of abs dv01 fills).
+        gross_pnl_per_inst_traded_dv01_bps: MTM PnL in bps per traded DV01.
+        net_pnl_per_inst_traded_dv01_bps: PnL after costs in bps per traded DV01.
+        inst_cost_per_inst_traded_dv01_bps: Instrument cost in bps per traded DV01.
+        hedge_cost_per_inst_traded_dv01_bps: Hedge cost in bps per traded DV01.
+        total_cost_per_inst_traded_dv01_bps: Total cost in bps per traded DV01.
         skewness: Skewness of daily returns.
         kurtosis: Excess kurtosis of daily returns.
         var_95: 5% Value at Risk (daily).
@@ -91,6 +98,14 @@ class BacktestMetrics:
     avg_win_theo_hedged: float = 0.0
     avg_loss_theo_hedged: float = 0.0
     win_loss_ratio_theo_hedged: float = 0.0
+    # Traded volume and cost efficiency
+    inst_traded_notional: float = 0.0
+    inst_traded_dv01: float = 0.0
+    gross_pnl_per_inst_traded_dv01_bps: float = 0.0
+    net_pnl_per_inst_traded_dv01_bps: float = 0.0
+    inst_cost_per_inst_traded_dv01_bps: float = 0.0
+    hedge_cost_per_inst_traded_dv01_bps: float = 0.0
+    total_cost_per_inst_traded_dv01_bps: float = 0.0
     skewness: float = 0.0
     kurtosis: float = 0.0
     var_95: float = 0.0
@@ -126,6 +141,13 @@ class BacktestMetrics:
             "avg_win_theo_hedged": self.avg_win_theo_hedged,
             "avg_loss_theo_hedged": self.avg_loss_theo_hedged,
             "win_loss_ratio_theo_hedged": self.win_loss_ratio_theo_hedged,
+            "inst_traded_notional": self.inst_traded_notional,
+            "inst_traded_dv01": self.inst_traded_dv01,
+            "gross_pnl_per_inst_traded_dv01_bps": self.gross_pnl_per_inst_traded_dv01_bps,
+            "net_pnl_per_inst_traded_dv01_bps": self.net_pnl_per_inst_traded_dv01_bps,
+            "inst_cost_per_inst_traded_dv01_bps": self.inst_cost_per_inst_traded_dv01_bps,
+            "hedge_cost_per_inst_traded_dv01_bps": self.hedge_cost_per_inst_traded_dv01_bps,
+            "total_cost_per_inst_traded_dv01_bps": self.total_cost_per_inst_traded_dv01_bps,
             "skewness": self.skewness,
             "kurtosis": self.kurtosis,
             "var_95": self.var_95,

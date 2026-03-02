@@ -107,6 +107,12 @@ class SweepRunResult:
             "total_pnl", "sharpe_ratio", "sortino_ratio", "max_drawdown",
             "calmar_ratio", "hit_rate", "profit_factor", "n_trades",
             "avg_holding_period",
+            "inst_traded_notional", "inst_traded_dv01",
+            "gross_pnl_per_inst_traded_dv01_bps",
+            "net_pnl_per_inst_traded_dv01_bps",
+            "inst_cost_per_inst_traded_dv01_bps",
+            "hedge_cost_per_inst_traded_dv01_bps",
+            "total_cost_per_inst_traded_dv01_bps",
         ]
 
         lb = self.param_leaderboard.head(top_n)
