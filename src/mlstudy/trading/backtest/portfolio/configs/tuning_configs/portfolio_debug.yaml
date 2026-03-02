@@ -13,7 +13,7 @@ base_config:
     Japan: 50.0
     US: 100000000000000.0
   mat_bucket_dv01_caps: [50000.0, 500000.0, 50000.0, 500000.0, 5000000.0]
-  initial_capital: 0.0
+  initial_capital: 1000.0
   close_time: "none"
 
 grid:

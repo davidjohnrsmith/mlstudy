@@ -109,11 +109,14 @@ class PortfolioBacktestResults:
     bar_df: pd.DataFrame = None
     trade_df: pd.DataFrame = None
     close_bar_df: pd.DataFrame = None
+    instrument_pnl_df: pd.DataFrame = None
 
     def __post_init__(self):
         self.bar_df = self.to_bar_df()
         self.trade_df = self.to_trade_df()
         self.close_bar_df = self._build_close_bar_df()
+        if self.mid_px is not None:
+            self.instrument_pnl_df = self.to_instrument_pnl_df()
 
     def _build_close_bar_df(self) -> pd.DataFrame | None:
         if self.close_time is None or self.datetimes is None:
@@ -216,9 +219,12 @@ class PortfolioBacktestResults:
                 "cooldown": self.cooldown[:T],
                 "instrument_position_mtm": self.instrument_position_mtm[:T],
                 "hedge_position_mtm": self.hedge_position_mtm[:T],
+                "instrument_mtm": self.instrument_position_mtm[:T] + self.instrument_cash_mtm[:T],
+                "hedge_mtm": self.hedge_position_mtm[:T] + self.hedge_cash_mtm[:T],
                 "instrument_cash_mtm": self.instrument_cash_mtm[:T],
                 "hedge_cash_mtm": self.hedge_cash_mtm[:T],
                 "portfolio_mtm": self.portfolio_mtm[:T],
+                "portfolio_mtm_with_cost": self.portfolio_mtm[:T] - np.cumsum(self.portfolio_cost[:T]),
                 "instrument_cost": self.instrument_cost[:T],
                 "hedge_cost": self.hedge_cost_bar[:T],
                 "portfolio_cost": self.portfolio_cost[:T],
@@ -285,3 +291,119 @@ class PortfolioBacktestResults:
             rows.append(row)
 
         return pd.DataFrame(rows)
+
+    def to_instrument_pnl_df(self) -> pd.DataFrame:
+        """Per-instrument PnL summary sorted by total_pnl (worst first).
+
+        Columns
+        -------
+        instrument        : instrument id.
+        final_position    : position at last bar.
+        instrument_pnl    : direct PnL from instrument (position MTM + trade cash).
+        instrument_cost   : execution cost on instrument trades.
+        hedge_cost        : hedge execution cost attributed to this instrument.
+        hedge_pnl         : hedge position PnL attributed to this instrument.
+        total_pnl         : instrument_pnl + hedge_pnl.
+        total_cost        : instrument_cost + hedge_cost.
+        n_trades          : number of trades on this instrument.
+
+        Requires *mid_px* and (for hedge attribution) *hedge_mid_px* to have
+        been passed to :meth:`from_loop_output`.
+        """
+        T, B = self.positions.shape
+        if self.mid_px is None:
+            raise ValueError(
+                "mid_px is required for per-instrument PnL; "
+                "pass mid_px to from_loop_output"
+            )
+
+        H = self.tr_hedge_fills.shape[1] if self.n_trades > 0 else 0
+
+        if self.n_trades > 0:
+            inst_idx = self.tr_instrument.astype(np.intp)
+            signed_qty = self.tr_side * self.tr_qty_fill
+
+            # Trade cash per instrument: -Σ(signed_qty * vwap)
+            trade_cash = np.zeros(B, dtype=np.float64)
+            np.add.at(trade_cash, inst_idx, -signed_qty * self.tr_vwap)
+
+            # Instrument execution cost per instrument
+            inst_cost = np.zeros(B, dtype=np.float64)
+            np.add.at(inst_cost, inst_idx, self.tr_cost)
+
+            # Hedge execution cost per instrument
+            hedge_cost = np.zeros(B, dtype=np.float64)
+            np.add.at(hedge_cost, inst_idx, self.tr_hedge_cost)
+
+            # Trade count per instrument
+            n_trades_per = np.zeros(B, dtype=np.int64)
+            np.add.at(n_trades_per, inst_idx, 1)
+
+            # Hedge position contributed by each instrument: (B, H)
+            hedge_pos_from_inst = np.zeros((B, max(H, 1)), dtype=np.float64)
+            for h in range(H):
+                np.add.at(hedge_pos_from_inst[:, h], inst_idx,
+                          self.tr_hedge_fills[:, h])
+        else:
+            trade_cash = np.zeros(B, dtype=np.float64)
+            inst_cost = np.zeros(B, dtype=np.float64)
+            hedge_cost = np.zeros(B, dtype=np.float64)
+            n_trades_per = np.zeros(B, dtype=np.int64)
+            hedge_pos_from_inst = np.zeros((B, max(H, 1)), dtype=np.float64)
+
+        # Direct instrument PnL = final position MTM + trade cash
+        final_pos_mtm = self.positions[-1] * self.mid_px[-1]
+        instrument_pnl = final_pos_mtm + trade_cash
+
+        # -- Hedge PnL attribution --
+        hedge_pnl_attr = np.zeros(B, dtype=np.float64)
+        if H > 0 and self.hedge_mid_px is not None and self.n_trades > 0:
+            # Reconstruct cash per hedge instrument from trade data
+            hedge_cash_per_h = np.zeros(H, dtype=np.float64)
+            for h in range(H):
+                fills_h = self.tr_hedge_fills[:, h]
+                vwaps_h = self.tr_hedge_vwaps[:, h]
+                mask = np.abs(fills_h) > 1e-15
+                if mask.any():
+                    hedge_cash_per_h[h] = -np.sum(fills_h[mask] * vwaps_h[mask])
+
+            # PnL per hedge instrument h = final MTM + cumulative cash
+            hedge_pnl_per_h = (
+                self.hedge_positions[-1, :H] * self.hedge_mid_px[-1, :H]
+                + hedge_cash_per_h
+            )
+
+            # Attribute each hedge h's PnL to instruments proportionally
+            for h in range(H):
+                contribs = hedge_pos_from_inst[:, h]
+                total_pos = self.hedge_positions[-1, h]
+                if abs(total_pos) < 1e-15:
+                    # Hedge fully unwound — attribute by absolute contribution
+                    total_abs = np.sum(np.abs(contribs))
+                    if total_abs < 1e-15:
+                        continue
+                    weights = np.abs(contribs) / total_abs
+                else:
+                    weights = contribs / total_pos
+                hedge_pnl_attr += weights * hedge_pnl_per_h[h]
+
+        # MTM = PnL as if traded at mid (no slippage)
+        instrument_mtm = instrument_pnl + inst_cost
+        hedge_mtm = hedge_pnl_attr + hedge_cost
+        total_mtm = instrument_mtm + hedge_mtm
+        total_cost = inst_cost + hedge_cost
+        total_mtm_with_cost = total_mtm - total_cost
+
+        df = pd.DataFrame({
+            "instrument": self.instrument_ids,
+            "final_position": self.positions[-1],
+            "instrument_mtm": instrument_mtm,
+            "instrument_cost": inst_cost,
+            "hedge_mtm": hedge_mtm,
+            "hedge_cost": hedge_cost,
+            "total_mtm": total_mtm,
+            "total_mtm_with_cost": total_mtm_with_cost,
+            "n_trades": n_trades_per,
+        })
+
+        return df.sort_values("total_mtm_with_cost").reset_index(drop=True)
