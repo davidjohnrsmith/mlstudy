@@ -229,12 +229,21 @@ class PortfolioSweepRunner:
                         f"parquet files matching the configured filenames "
                         f"and that start_date/end_date overlap the file dates."
                     )
-                # Build md with _chunk_params for sweep workers
+                # Build md with _chunk_params for sweep workers.
+                # Only keep lightweight metadata; drop heavy arrays to avoid
+                # holding the first chunk in memory for the entire sweep.
                 md = first_chunk.to_dict()
                 md["_chunk_params"] = {
                     "loader": cfg.data_loader,
                     "load_kwargs": load_kwargs,
                 }
+                # Workers reload all data via _chunk_params, so null out
+                # the large arrays (keep keys for _REQUIRED_KEYS validation).
+                import numpy as np
+                for key in list(md):
+                    v = md[key]
+                    if isinstance(v, np.ndarray) and v.ndim >= 2:
+                        md[key] = None
             else:
                 logger.info("Loading market data from config data section")
                 loaded = cfg.data_loader.load(
