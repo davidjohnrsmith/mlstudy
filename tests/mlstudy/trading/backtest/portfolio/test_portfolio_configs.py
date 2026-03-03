@@ -23,7 +23,7 @@ from mlstudy.trading.backtest.portfolio.configs.utils import (
     _resolve_config,
 )
 
-_CONFIGS_DIR = Path(__file__).resolve().parents[4] / (
+_CONFIGS_DIR = Path(__file__).resolve().parents[5] / (
     "src/mlstudy/trading/backtest/portfolio/configs"
 )
 _TUNING_DIR = _CONFIGS_DIR / "tuning_configs"

@@ -78,7 +78,13 @@ def _base_inputs(T=3, B=2):
         max_trade_notional_inc=np.full(B, np.inf),
         max_trade_notional_dec=np.full(B, np.inf),
         qty_step=np.zeros(B, dtype=np.float64),
+        maturity=np.full((T, B), 5.0, dtype=np.float64),
+        issuer_bucket=np.zeros(B, dtype=np.int64),
+        maturity_bucket=np.zeros((T, B), dtype=np.int64),
+        issuer_dv01_caps=np.empty(0, dtype=np.float64),
+        mat_bucket_dv01_caps=np.empty(0, dtype=np.float64),
         instrument_ids=[f"INST_{i}" for i in range(B)],
+        datetimes=np.array(["2024-01-01"], dtype="datetime64[D]") + np.arange(T),
     )
 
 
@@ -171,10 +177,18 @@ class TestConfig:
 # =========================================================================
 
 
+def _validate_inputs(**kwargs):
+    """Strip keys not accepted by _validate."""
+    for key in ("instrument_ids", "maturity", "issuer_bucket",
+                "maturity_bucket", "issuer_dv01_caps",
+                "mat_bucket_dv01_caps", "datetimes"):
+        kwargs.pop(key, None)
+    return kwargs
+
+
 class TestValidation:
     def test_shape_mismatch_dv01(self):
-        inputs = _base_inputs()
-        inputs.pop("instrument_ids", None)
+        inputs = _validate_inputs(**_base_inputs())
         inputs["dv01"] = np.zeros((10, 10))  # wrong shape
         with pytest.raises(ValueError, match="dv01"):
             _validate(**inputs,
@@ -186,8 +200,7 @@ class TestValidation:
 
     def test_partial_hedge_arrays_rejected(self):
         T, B, H = 3, 2, 1
-        inputs = _base_inputs(T, B)
-        inputs.pop("instrument_ids", None)
+        inputs = _validate_inputs(**_base_inputs(T, B))
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H)
         with pytest.raises(ValueError, match="all-None or all-provided"):
             _validate(**inputs,
@@ -199,8 +212,7 @@ class TestValidation:
 
     def test_hedge_ratios_shape_mismatch(self):
         T, B, H = 3, 2, 1
-        inputs = _base_inputs(T, B)
-        inputs.pop("instrument_ids", None)
+        inputs = _validate_inputs(**_base_inputs(T, B))
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H)
         hedge_dv01 = np.full((T, H), 0.01)
         hedge_ratios = np.zeros((T, B + 1, H))  # wrong B dimension
@@ -214,8 +226,7 @@ class TestValidation:
 
     def test_valid_inputs_pass(self):
         T, B, H = 3, 2, 1
-        inputs = _base_inputs(T, B)
-        inputs.pop("instrument_ids", None)
+        inputs = _validate_inputs(**_base_inputs(T, B))
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H)
         hedge_dv01 = np.full((T, H), 0.01)
         hedge_ratios = np.zeros((T, B, H))
@@ -328,7 +339,8 @@ class TestResults:
         inputs = _base_inputs(T=3, B=1)
         dts = np.array(["2024-01-01", "2024-01-02", "2024-01-03"],
                         dtype="datetime64[D]")
-        res = run_backtest(**inputs, cfg=_cfg(), datetimes=dts)
+        inputs["datetimes"] = dts
+        res = run_backtest(**inputs, cfg=_cfg())
         assert "datetime" in res.bar_df.columns
 
     def test_hedge_positions_in_bar_df(self):

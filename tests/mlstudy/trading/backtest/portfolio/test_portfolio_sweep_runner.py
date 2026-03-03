@@ -117,6 +117,7 @@ def market_data():
 _FULL_MODE_YAML = {
     "grid_name": "test_portfolio_full",
     "base_config": {
+        "use_greedy": False,
         "gross_dv01_cap": 100.0,
         "top_k": 10,
         "p_inc": 0.05,

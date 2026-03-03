@@ -66,9 +66,17 @@ def save_config_snapshot(
     """Snapshot the parsed config as YAML for reproducibility."""
     import yaml
 
+    def _to_yaml_safe(obj):
+        """Recursively convert tuples to lists for yaml.safe_load compat."""
+        if isinstance(obj, dict):
+            return {k: _to_yaml_safe(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_to_yaml_safe(x) for x in obj]
+        return obj
+
     snapshot: dict[str, Any] = {
         "grid_name": grid_name,
-        "base_config": asdict(base_config),
+        "base_config": _to_yaml_safe(asdict(base_config)),
         "grid": {k: list(v) for k, v in grid.items()},
     }
     if ranking_plan is not None:
