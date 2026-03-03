@@ -183,7 +183,7 @@ class PortfolioDataLoader:
     # Hedge ratios file
     hedge_ratio_filename: str
     # Hedge meta file (static per-hedge metadata)
-    hedge_meta_filename: str
+    hedge_meta_filename: str = "hedge_meta.parquet"
     # Config
     data_path: str | Path | None = None
     datetime_col: str = "datetime"

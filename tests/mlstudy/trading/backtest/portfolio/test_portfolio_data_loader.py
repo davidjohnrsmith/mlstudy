@@ -47,10 +47,10 @@ def _make_book_df(datetimes, inst_ids, n_levels):
         for inst in inst_ids:
             row = {"datetime": dt, "instrument_id": inst}
             for lvl in range(n_levels):
-                row[f"bid_price_l{lvl}"] = 99.0 - lvl * 0.01
-                row[f"bid_size_l{lvl}"] = 1_000_000.0
-                row[f"ask_price_l{lvl}"] = 101.0 + lvl * 0.01
-                row[f"ask_size_l{lvl}"] = 1_000_000.0
+                row[f"bid_px_l{lvl}"] = 99.0 - lvl * 0.01
+                row[f"bid_sz_l{lvl}"] = 1_000_000.0
+                row[f"ask_px_l{lvl}"] = 101.0 + lvl * 0.01
+                row[f"ask_sz_l{lvl}"] = 1_000_000.0
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -99,6 +99,10 @@ def _make_meta_df(inst_ids):
             "tradable": 1.0,
             "pos_limit_long": 5_000_000.0,
             "pos_limit_short": -5_000_000.0,
+            "max_trade_notional_inc": float("inf"),
+            "max_trade_notional_dec": float("inf"),
+            "qty_step": 0.0,
+            "maturity_date": pd.Timestamp("2030-01-01"),
         })
     return pd.DataFrame(rows)
 
@@ -112,6 +116,10 @@ def _make_meta_df_with_optional(inst_ids):
             "tradable": 1.0,
             "pos_limit_long": 5_000_000.0,
             "pos_limit_short": -5_000_000.0,
+            "max_trade_notional_inc": float("inf"),
+            "max_trade_notional_dec": float("inf"),
+            "qty_step": 0.0,
+            "maturity_date": pd.Timestamp("2030-01-01"),
             "maturity": 5.0 + i,
             "issuer_bucket": i,
             "maturity_bucket": i % 2,
@@ -133,6 +141,17 @@ def _make_hedge_ratio_df(datetimes, inst_ids, hedge_ids):
     return pd.DataFrame(rows)
 
 
+def _make_hedge_meta_df(hedge_ids):
+    """Create a static hedge metadata DataFrame with qty_step."""
+    rows = []
+    for inst in hedge_ids:
+        rows.append({
+            "instrument_id": inst,
+            "qty_step": 0.0,
+        })
+    return pd.DataFrame(rows)
+
+
 @pytest.fixture
 def data_dir(tmp_path):
     """Write synthetic parquet files and return the directory.
@@ -145,6 +164,7 @@ def data_dir(tmp_path):
     signal = _make_signal_df(DATETIMES, INST_IDS)
     meta = _make_meta_df(INST_IDS)
     hedge_ratios = _make_hedge_ratio_df(DATETIMES, INST_IDS, HEDGE_IDS)
+    hedge_meta = _make_hedge_meta_df(HEDGE_IDS)
 
     book.to_parquet(tmp_path / "book.parquet")
     mid.to_parquet(tmp_path / "mid.parquet")
@@ -152,6 +172,7 @@ def data_dir(tmp_path):
     signal.to_parquet(tmp_path / "signal.parquet")
     meta.to_parquet(tmp_path / "meta.parquet")
     hedge_ratios.to_parquet(tmp_path / "hedge_ratios.parquet")
+    hedge_meta.to_parquet(tmp_path / "hedge_meta.parquet")
 
     return tmp_path
 
@@ -177,13 +198,13 @@ class TestDetectBookLevels:
     def test_two_levels(self):
         cols = pd.Index([
             "datetime", "instrument_id",
-            "bid_price_l0", "bid_size_l0", "ask_price_l0", "ask_size_l0",
-            "bid_price_l1", "bid_size_l1", "ask_price_l1", "ask_size_l1",
+            "bid_px_l0", "bid_sz_l0", "ask_px_l0", "ask_sz_l0",
+            "bid_px_l1", "bid_sz_l1", "ask_px_l1", "ask_sz_l1",
         ])
         assert detect_book_levels(cols) == 2
 
     def test_one_level(self):
-        cols = pd.Index(["bid_price_l0", "bid_size_l0", "ask_price_l0", "ask_size_l0"])
+        cols = pd.Index(["bid_px_l0", "bid_sz_l0", "ask_px_l0", "ask_sz_l0"])
         assert detect_book_levels(cols) == 1
 
     def test_no_levels_raises(self):
@@ -192,7 +213,7 @@ class TestDetectBookLevels:
             detect_book_levels(cols)
 
     def test_non_contiguous_raises(self):
-        cols = pd.Index(["bid_price_l0", "bid_price_l2"])
+        cols = pd.Index(["bid_px_l0", "bid_px_l2"])
         with pytest.raises(ValueError, match="not contiguous"):
             detect_book_levels(cols)
 
@@ -292,6 +313,14 @@ class TestPortfolioMarketDataToDict:
             tradable=np.ones(B),
             pos_limits_long=np.ones(B) * 5e6,
             pos_limits_short=np.ones(B) * -5e6,
+            max_trade_notional_inc=np.full(B, np.inf),
+            max_trade_notional_dec=np.full(B, np.inf),
+            qty_step=np.zeros(B),
+            maturity=np.full((T, B), 5.0),
+            issuer_bucket=np.zeros(B, dtype=np.int64),
+            maturity_bucket=np.zeros((T, B), dtype=np.int64),
+            issuer_dv01_caps=np.empty(0),
+            mat_bucket_dv01_caps=np.empty(0),
             hedge_bid_px=np.zeros((T, H, L)),
             hedge_bid_sz=np.zeros((T, H, L)),
             hedge_ask_px=np.zeros((T, H, L)),
@@ -299,6 +328,7 @@ class TestPortfolioMarketDataToDict:
             hedge_mid_px=np.zeros((T, H)),
             hedge_dv01=np.zeros((T, H)),
             hedge_ratios=np.zeros((T, B, H)),
+            hedge_qty_step=np.zeros(H),
             datetimes=DATETIMES.values,
             instrument_ids=INST_IDS,
             hedge_ids=HEDGE_IDS,
@@ -308,8 +338,12 @@ class TestPortfolioMarketDataToDict:
             "bid_px", "bid_sz", "ask_px", "ask_sz", "mid_px", "dv01",
             "fair_price", "zscore", "adf_p_value",
             "tradable", "pos_limits_long", "pos_limits_short",
+            "max_trade_notional_inc", "max_trade_notional_dec", "qty_step",
+            "maturity", "issuer_bucket", "maturity_bucket",
+            "issuer_dv01_caps", "mat_bucket_dv01_caps",
             "hedge_bid_px", "hedge_bid_sz", "hedge_ask_px", "hedge_ask_sz",
-            "hedge_mid_px", "hedge_dv01", "hedge_ratios", "datetimes",
+            "hedge_mid_px", "hedge_dv01", "hedge_ratios", "hedge_qty_step",
+            "datetimes", "instrument_ids",
         }
         assert set(d.keys()) == expected_keys
 
@@ -327,6 +361,14 @@ class TestPortfolioMarketDataToDict:
             tradable=np.ones(B),
             pos_limits_long=np.ones(B) * 5e6,
             pos_limits_short=np.ones(B) * -5e6,
+            max_trade_notional_inc=np.full(B, np.inf),
+            max_trade_notional_dec=np.full(B, np.inf),
+            qty_step=np.zeros(B),
+            maturity=np.array([5.0, 6.0, 7.0]),
+            issuer_bucket=np.array([0, 1, 2]),
+            maturity_bucket=np.zeros(B, dtype=np.int64),
+            issuer_dv01_caps=np.empty(0),
+            mat_bucket_dv01_caps=np.empty(0),
             hedge_bid_px=np.zeros((T, H, L)),
             hedge_bid_sz=np.zeros((T, H, L)),
             hedge_ask_px=np.zeros((T, H, L)),
@@ -334,16 +376,15 @@ class TestPortfolioMarketDataToDict:
             hedge_mid_px=np.zeros((T, H)),
             hedge_dv01=np.zeros((T, H)),
             hedge_ratios=np.zeros((T, B, H)),
+            hedge_qty_step=np.zeros(H),
             datetimes=DATETIMES.values,
             instrument_ids=INST_IDS,
             hedge_ids=HEDGE_IDS,
-            maturity=np.array([5.0, 6.0, 7.0]),
-            issuer_bucket=np.array([0, 1, 2]),
         )
         d = md.to_dict()
         assert "maturity" in d
         assert "issuer_bucket" in d
-        assert "maturity_bucket" not in d  # None not included
+        assert "maturity_bucket" in d
 
 
 # =========================================================================
@@ -461,11 +502,13 @@ class TestFfillMethod:
         signal = _make_signal_df(dts_signal, INST_IDS)
         meta = _make_meta_df(INST_IDS)
         hedge_ratios = _make_hedge_ratio_df(dts_inst, INST_IDS, HEDGE_IDS)
+        hedge_meta = _make_hedge_meta_df(HEDGE_IDS)
 
         for name, df in [
             ("book", book), ("mid", mid),
             ("dv01", dv01), ("signal", signal),
             ("meta", meta), ("hedge_ratios", hedge_ratios),
+            ("hedge_meta", hedge_meta),
         ]:
             df.to_parquet(tmp_path / f"{name}.parquet")
 
@@ -479,9 +522,11 @@ class TestFfillMethod:
             fill_method="ffill",
         )
         md = loader.load(instrument_ids=INST_IDS, hedge_ids=HEDGE_IDS, data_path=tmp_path)
-        # Should have dropped the first 2 leading rows where signal is NaN
-        assert md.datetimes.shape[0] == 3
-        assert not np.any(np.isnan(md.fair_price))
+        # Essential key is inst_book which has all 5 rows, so all survive.
+        # Signal (fair_price) at t=0,1 will have NaN since there's nothing to ffill from.
+        assert md.datetimes.shape[0] == 5
+        # From t=2 onward, fair_price should be non-NaN
+        assert not np.any(np.isnan(md.fair_price[2:]))
 
 
 class TestDropMethod:
@@ -496,11 +541,13 @@ class TestDropMethod:
         signal = _make_signal_df(dts_signal, INST_IDS)
         meta = _make_meta_df(INST_IDS)
         hedge_ratios = _make_hedge_ratio_df(dts_inst, INST_IDS, HEDGE_IDS)
+        hedge_meta = _make_hedge_meta_df(HEDGE_IDS)
 
         for name, df in [
             ("book", book), ("mid", mid),
             ("dv01", dv01), ("signal", signal),
             ("meta", meta), ("hedge_ratios", hedge_ratios),
+            ("hedge_meta", hedge_meta),
         ]:
             df.to_parquet(tmp_path / f"{name}.parquet")
 
@@ -542,11 +589,13 @@ class TestOptionalMeta:
         signal = _make_signal_df(DATETIMES, INST_IDS)
         meta = _make_meta_df_with_optional(INST_IDS)
         hedge_ratios = _make_hedge_ratio_df(DATETIMES, INST_IDS, HEDGE_IDS)
+        hedge_meta = _make_hedge_meta_df(HEDGE_IDS)
 
         for name, df in [
             ("book", book), ("mid", mid),
             ("dv01", dv01), ("signal", signal),
             ("meta", meta), ("hedge_ratios", hedge_ratios),
+            ("hedge_meta", hedge_meta),
         ]:
             df.to_parquet(tmp_path / f"{name}.parquet")
 
@@ -560,17 +609,22 @@ class TestOptionalMeta:
         )
         md = loader.load(instrument_ids=INST_IDS, hedge_ids=HEDGE_IDS, data_path=tmp_path)
         assert md.maturity is not None
-        assert md.maturity.shape == (B,)
+        assert md.maturity.shape == (T, B)
         assert md.issuer_bucket is not None
         assert md.maturity_bucket is not None
 
-    def test_optional_meta_none_when_absent(self, data_dir, loader):
+    def test_meta_defaults_when_absent(self, data_dir, loader):
         md = loader.load(
             instrument_ids=INST_IDS, hedge_ids=HEDGE_IDS, data_path=data_dir,
         )
-        assert md.maturity is None
-        assert md.issuer_bucket is None
-        assert md.maturity_bucket is None
+        # maturity is always computed from maturity_date
+        assert md.maturity is not None
+        assert md.maturity.shape == (T, B)
+        # issuer_bucket defaults to zeros
+        assert md.issuer_bucket is not None
+        assert md.issuer_bucket.shape == (B,)
+        # maturity_bucket defaults to zeros
+        assert md.maturity_bucket is not None
 
 
 # =========================================================================
@@ -578,12 +632,29 @@ class TestOptionalMeta:
 # =========================================================================
 
 
+_BASE_CFG_DICT = {
+    "use_greedy": False,
+    "gross_dv01_cap": 100.0, "top_k": 10,
+    "z_inc": 2.0, "p_inc": 0.05,
+    "z_dec": 1.0, "p_dec": 0.10,
+    "alpha_thr_inc": 1.0, "alpha_thr_dec": 0.5,
+    "max_levels": 3, "haircut": 1.0,
+    "min_qty_trade": 0.0, "min_fill_ratio": 0.0,
+    "cooldown_bars": 0, "cooldown_mode": 0,
+    "min_maturity_inc": 0.0,
+    "initial_capital": 1_000_000.0,
+    "close_time": "none",
+}
+
+
 class TestSweepConfigWithDataLoader:
     def test_yaml_round_trip(self, tmp_path):
         """YAML with data section round-trips correctly."""
+        base = dict(_BASE_CFG_DICT)
+        base.pop("z_inc")  # z_inc is in grid
         config = {
             "grid_name": "test_grid",
-            "base_config": {},
+            "base_config": base,
             "grid": {"z_inc": [1.5, 2.0]},
             "data": {
                 "book_filename": "book.parquet",
@@ -592,6 +663,7 @@ class TestSweepConfigWithDataLoader:
                 "signal_filename": "signal.parquet",
                 "meta_filename": "meta.parquet",
                 "hedge_ratio_filename": "hedge_ratios.parquet",
+                "hedge_meta_filename": "hedge_meta.parquet",
                 "data_path": "/data/test",
             },
         }
@@ -607,9 +679,11 @@ class TestSweepConfigWithDataLoader:
 
     def test_no_data_section(self, tmp_path):
         """Config without data section has data_loader=None."""
+        base = dict(_BASE_CFG_DICT)
+        base.pop("z_inc")  # z_inc is in grid
         config = {
             "grid_name": "test_grid",
-            "base_config": {},
+            "base_config": base,
             "grid": {"z_inc": [1.5, 2.0]},
         }
         yaml_path = tmp_path / "test.yaml"
@@ -630,6 +704,7 @@ class TestSweepConfigWithDataLoader:
             "signal_filename": "d.parquet",
             "meta_filename": "e.parquet",
             "hedge_ratio_filename": "i.parquet",
+            "hedge_meta_filename": "j.parquet",
         }
         dl = _build_data_loader(raw)
         assert isinstance(dl, PortfolioDataLoader)

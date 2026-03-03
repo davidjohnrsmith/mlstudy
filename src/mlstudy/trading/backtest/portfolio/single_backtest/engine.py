@@ -66,27 +66,35 @@ def _validate(
         if len(arr) != expected_len:
             raise ValueError(f"{name} length {len(arr)} != expected {expected_len}")
 
-    # Hedge arrays
-    T_h, H, L_h = validate_l2_shapes(
-        hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
-        hedge_mid_px, label="hedge_",
-    )
-    if T_h != T:
+    # Hedge arrays — must be all-None or all-provided
+    hedge_arrs = [hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
+                  hedge_mid_px, hedge_dv01, hedge_ratios]
+    n_none = sum(a is None for a in hedge_arrs)
+    if 0 < n_none < len(hedge_arrs):
         raise ValueError(
-            f"hedge T={T_h} != instrument T={T}"
+            "Hedge arrays must be all-None or all-provided"
         )
-    if hedge_dv01.shape != (T, H):
-        raise ValueError(
-            f"hedge_dv01 shape {hedge_dv01.shape} != expected {(T, H)}"
+    if n_none == 0:
+        T_h, H, L_h = validate_l2_shapes(
+            hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
+            hedge_mid_px, label="hedge_",
         )
-    if hedge_ratios.shape != (T, B, H):
-        raise ValueError(
-            f"hedge_ratios shape {hedge_ratios.shape} != expected {(T, B, H)}"
-        )
-    if hedge_qty_step is not None and len(hedge_qty_step) != H:
-        raise ValueError(
-            f"hedge_qty_step length {len(hedge_qty_step)} != expected H={H}"
-        )
+        if T_h != T:
+            raise ValueError(
+                f"hedge T={T_h} != instrument T={T}"
+            )
+        if hedge_dv01.shape != (T, H):
+            raise ValueError(
+                f"hedge_dv01 shape {hedge_dv01.shape} != expected {(T, H)}"
+            )
+        if hedge_ratios.shape != (T, B, H):
+            raise ValueError(
+                f"hedge_ratios shape {hedge_ratios.shape} != expected {(T, B, H)}"
+            )
+        if hedge_qty_step is not None and len(hedge_qty_step) != H:
+            raise ValueError(
+                f"hedge_qty_step length {len(hedge_qty_step)} != expected H={H}"
+            )
 
 
 def run_backtest(
@@ -116,24 +124,24 @@ def run_backtest(
     # -- Bucket caps --
     issuer_dv01_caps: np.ndarray,
     mat_bucket_dv01_caps: np.ndarray,
-    # -- Hedge arrays --
-    hedge_bid_px: np.ndarray,
-    hedge_bid_sz: np.ndarray,
-    hedge_ask_px: np.ndarray,
-    hedge_ask_sz: np.ndarray,
-    hedge_mid_px: np.ndarray,
-    hedge_dv01: np.ndarray,
-    hedge_ratios: np.ndarray,
+    # -- Hedge arrays (all-None or all-provided) --
+    hedge_bid_px: np.ndarray = None,
+    hedge_bid_sz: np.ndarray = None,
+    hedge_ask_px: np.ndarray = None,
+    hedge_ask_sz: np.ndarray = None,
+    hedge_mid_px: np.ndarray = None,
+    hedge_dv01: np.ndarray = None,
+    hedge_ratios: np.ndarray = None,
     # -- Instrument IDs --
-    instrument_ids: list[str],
+    instrument_ids: list[str] = None,
     # -- Per-instrument qty_step --
-    qty_step: np.ndarray,           # (B,)
+    qty_step: np.ndarray = None,     # (B,)
     # -- Per-hedge qty_step --
     hedge_qty_step: np.ndarray = None,  # (H,) or None
     # -- Config --
-    cfg: PortfolioBacktestConfig,
+    cfg: PortfolioBacktestConfig = None,
     # -- Context --
-    datetimes: np.ndarray,
+    datetimes: np.ndarray = None,
     # -- Chunked state --
     initial_state: LoopState | None = None,
     return_final_state: bool = False,
@@ -188,7 +196,7 @@ def run_backtest(
     PortfolioBacktestResults
     """
     T, B, L = bid_px.shape
-    H = hedge_mid_px.shape[1] if hedge_mid_px.ndim >= 2 else 0
+    H = hedge_mid_px.shape[1] if hedge_mid_px is not None and hedge_mid_px.ndim >= 2 else 0
     logger.info(
         "run_backtest: T=%d, B=%d, L=%d, H=%d, initial_state=%s",
         T, B, L, H, initial_state is not None,
@@ -221,13 +229,13 @@ def run_backtest(
     f_fair = ensure_f64(fair_price)
     f_zscore = ensure_f64(zscore)
     f_adf = ensure_f64(adf_p_value)
-    f_hedge_bid_px = ensure_f64(hedge_bid_px)
-    f_hedge_bid_sz = ensure_f64(hedge_bid_sz)
-    f_hedge_ask_px = ensure_f64(hedge_ask_px)
-    f_hedge_ask_sz = ensure_f64(hedge_ask_sz)
-    f_hedge_mid_px = ensure_f64(hedge_mid_px)
-    f_hedge_dv01 = ensure_f64(hedge_dv01)
-    f_hedge_ratios = ensure_f64(hedge_ratios)
+    f_hedge_bid_px = ensure_f64(hedge_bid_px) if hedge_bid_px is not None else None
+    f_hedge_bid_sz = ensure_f64(hedge_bid_sz) if hedge_bid_sz is not None else None
+    f_hedge_ask_px = ensure_f64(hedge_ask_px) if hedge_ask_px is not None else None
+    f_hedge_ask_sz = ensure_f64(hedge_ask_sz) if hedge_ask_sz is not None else None
+    f_hedge_mid_px = ensure_f64(hedge_mid_px) if hedge_mid_px is not None else None
+    f_hedge_dv01 = ensure_f64(hedge_dv01) if hedge_dv01 is not None else None
+    f_hedge_ratios = ensure_f64(hedge_ratios) if hedge_ratios is not None else None
 
     raw = lp_portfolio_loop(
         f_bid_px, f_bid_sz, f_ask_px, f_ask_sz, f_mid_px,
@@ -278,8 +286,8 @@ def run_backtest(
         close_time=cfg.close_time if cfg.close_time != "none" else None,
         mid_px=f_mid_px,
         hedge_mid_px=f_hedge_mid_px,
-        hedge_bid_px=f_hedge_bid_px[:, :, 0],
-        hedge_ask_px=f_hedge_ask_px[:, :, 0],
+        hedge_bid_px=f_hedge_bid_px[:, :, 0] if f_hedge_bid_px is not None else None,
+        hedge_ask_px=f_hedge_ask_px[:, :, 0] if f_hedge_ask_px is not None else None,
         hedge_ratios=f_hedge_ratios,
         dv01=f_dv01,
         hedge_dv01=f_hedge_dv01,
