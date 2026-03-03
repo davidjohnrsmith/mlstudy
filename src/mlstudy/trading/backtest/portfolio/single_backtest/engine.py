@@ -292,6 +292,7 @@ def run_backtest(
         dv01=f_dv01,
         hedge_dv01=f_hedge_dv01,
         instrument_ids=instrument_ids,
+        initial_capital=float(cfg.initial_capital),
     )
 
     logger.info(
@@ -502,6 +503,7 @@ def run_backtest_chunked(
         tr_hedge_cost=_concat_or_empty(tr_hedge_costs),
         n_trades=total_trades,
         instrument_ids=first.instrument_ids,
+        initial_capital=first.initial_capital,
         datetimes=datetimes,
         close_time=first.close_time,
         mid_px=mid_px,

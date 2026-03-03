@@ -47,6 +47,7 @@ class MetricsCalculator:
         trade_df: pd.DataFrame | None = None,
         *,
         annualization_factor: int | None = None,
+        initial_equity: float | None = None,
     ):
         self._bar_df = bar_df
         self._trade_df = trade_df if trade_df is not None else pd.DataFrame()
@@ -68,17 +69,20 @@ class MetricsCalculator:
         equity = self._bar_df["equity"].values.astype(np.float64)
         self._equity = pd.Series(equity, dtype=np.float64)
 
-        # pnl[t] = equity[t] - equity[t-1],  pnl[0] = 0
-        pnl = np.diff(equity, prepend=equity[0])
-        pnl[0] = 0.0
+        # Use initial_equity when provided (e.g. initial_capital for close_bar_df),
+        # otherwise fall back to equity[0] for backwards compatibility.
+        eq0 = initial_equity if initial_equity is not None else equity[0]
+
+        # pnl[t] = equity[t] - equity[t-1],  pnl[0] = equity[0] - eq0
+        pnl = np.diff(equity, prepend=eq0)
         self._pnl = pd.Series(pnl, dtype=np.float64)
 
-        # cumulative_pnl[t] = equity[t] - equity[0]
-        self._cumulative_pnl = pd.Series(equity - equity[0], dtype=np.float64)
+        # cumulative_pnl[t] = equity[t] - eq0
+        self._cumulative_pnl = pd.Series(equity - eq0, dtype=np.float64)
 
-        # percentage returns: ret[t] = (equity[t] - equity[t-1]) / equity[t-1]
+        # percentage returns: ret[t] = (equity[t] - equity[t-1]) / |equity[t-1]|
         lagged = np.empty_like(equity)
-        lagged[0] = equity[0]
+        lagged[0] = eq0
         lagged[1:] = equity[:-1]
         with np.errstate(divide="ignore", invalid="ignore"):
             abs_lagged = np.abs(lagged)

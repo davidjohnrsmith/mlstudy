@@ -50,9 +50,12 @@ def _run_one_portfolio(
             res = run_backtest_chunked(data_chunks=data_chunks, cfg=scenario.cfg)
         else:
             res = run_backtest(cfg=scenario.cfg, **market_data)
-        bar_df = res.close_bar_df if res.close_bar_df is not None else res.bar_df
+        use_close = res.close_bar_df is not None
+        bar_df = res.close_bar_df if use_close else res.bar_df
+        init_eq = res.initial_capital if use_close else None
         metrics = PortfolioMetricsCalculator(
             bar_df, res.trade_df,
+            initial_equity=init_eq,
             hedge_ratios=res.hedge_ratios,
             dv01=res.dv01,
             hedge_dv01=res.hedge_dv01,

@@ -316,6 +316,7 @@ class PortfolioMetricsCalculator(MetricsCalculator):
         trade_df: pd.DataFrame | None = None,
         *,
         annualization_factor: int | None = None,
+        initial_equity: float | None = None,
         hedge_ratios: np.ndarray | None = None,
         dv01: np.ndarray | None = None,
         hedge_dv01: np.ndarray | None = None,
@@ -324,7 +325,7 @@ class PortfolioMetricsCalculator(MetricsCalculator):
         hedge_ask_px: np.ndarray | None = None,
         instrument_ids: list | None = None,
     ):
-        super().__init__(bar_df, trade_df, annualization_factor=annualization_factor)
+        super().__init__(bar_df, trade_df, annualization_factor=annualization_factor, initial_equity=initial_equity)
         self._hedge_ratios = hedge_ratios
         self._dv01 = dv01
         self._hedge_dv01 = hedge_dv01

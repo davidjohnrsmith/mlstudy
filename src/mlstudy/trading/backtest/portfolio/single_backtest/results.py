@@ -106,6 +106,8 @@ class PortfolioBacktestResults:
     dv01: np.ndarray | None = field(default=None, repr=False)          # (T, B)
     hedge_dv01: np.ndarray | None = field(default=None, repr=False)    # (T, H)
 
+    initial_capital: float = 0.0
+
     bar_df: pd.DataFrame = None
     trade_df: pd.DataFrame = None
     close_bar_df: pd.DataFrame = None
@@ -118,6 +120,17 @@ class PortfolioBacktestResults:
         if self.mid_px is not None:
             self.instrument_pnl_df = self.to_instrument_pnl_df()
 
+    # Columns that are per-bar flows (must be aggregated when downsampling)
+    _FLOW_COLS = frozenset({
+        "pnl", "gross_pnl", "instrument_cost", "hedge_cost",
+        "portfolio_cost", "n_trades", "hedge_pnl",
+    })
+
+    # Columns that are recomputed from aggregated flows
+    _DERIVED_COLS = frozenset({
+        "cumulative_pnl", "cumulative_gross_pnl", "portfolio_mtm_with_cost",
+    })
+
     def _build_close_bar_df(self) -> pd.DataFrame | None:
         if self.close_time is None or self.datetimes is None:
             return None
@@ -125,7 +138,36 @@ class PortfolioBacktestResults:
         dt = pd.to_datetime(df["datetime"])
         target = pd.Timestamp(self.close_time).time()
         mask = dt.dt.time == target
-        return df[mask].reset_index(drop=True)
+        close_idx = np.where(mask.values)[0]
+        if len(close_idx) == 0:
+            return None
+
+        # Start with close-bar rows (snapshot columns are correct as-is)
+        close_df = df.iloc[close_idx].copy()
+
+        # Aggregate flow columns over the period between consecutive close bars
+        for col in self._FLOW_COLS:
+            if col not in df.columns:
+                continue
+            vals = df[col].values
+            agg = np.empty(len(close_idx), dtype=np.float64)
+            for i, ci in enumerate(close_idx):
+                start = (close_idx[i - 1] + 1) if i > 0 else 0
+                agg[i] = vals[start: ci + 1].sum()
+            close_df[col] = agg
+
+        # Recompute derived cumulative columns from aggregated flows
+        if "pnl" in close_df.columns:
+            close_df["cumulative_pnl"] = close_df["pnl"].cumsum()
+        if "gross_pnl" in close_df.columns:
+            close_df["cumulative_gross_pnl"] = close_df["gross_pnl"].cumsum()
+        if "portfolio_mtm" in close_df.columns and "portfolio_cost" in close_df.columns:
+            close_df["portfolio_mtm_with_cost"] = (
+                close_df["portfolio_mtm"].values
+                - close_df["portfolio_cost"].cumsum().values
+            )
+
+        return close_df.reset_index(drop=True)
 
     @staticmethod
     def from_loop_output(
@@ -141,6 +183,7 @@ class PortfolioBacktestResults:
         hedge_ratios: np.ndarray | None = None,
         dv01: np.ndarray | None = None,
         hedge_dv01: np.ndarray | None = None,
+        initial_capital: float = 0.0,
     ) -> "PortfolioBacktestResults":
         """Construct from the raw tuple returned by :func:`lp_portfolio_loop`."""
         n = int(out[35])
@@ -191,6 +234,7 @@ class PortfolioBacktestResults:
             dv01=dv01,
             hedge_dv01=hedge_dv01,
             instrument_ids=instrument_ids,
+            initial_capital=initial_capital,
         )
 
     # -------------------------------------------------------------------

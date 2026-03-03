@@ -14,7 +14,7 @@ base_config:
     US: 100000000000000.0
   mat_bucket_dv01_caps: [50000.0, 500000.0, 50000.0, 500000.0, 5000000.0]
   initial_capital: 1000.0
-  close_time: "none"
+  close_time: "17:00"
 
 grid:
   z_inc: [0.5, 1.0]
@@ -43,8 +43,8 @@ sweep:
   mode: "metrics_only"
   keep_top_k_full: 5
   chunk_freq: "D"
-  start_date: "20260102"
-  end_date: "20260103"
+  start_date: "20260101"
+  end_date: "20260104"
 
 rank:
   primary_metrics:

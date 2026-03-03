@@ -420,7 +420,7 @@ def main() -> None:
     ap.add_argument("--instruments", type=str, default="instrument_000,instrument_001,instrument_002,instrument_003,instrument_004")
     ap.add_argument("--hedges", type=str, default="HEDGE_00,HEDGE_01,HEDGE_02")
     ap.add_argument("--start", type=str, default="2026-01-01 09:00:00")
-    ap.add_argument("--periods", type=int, default=1000)
+    ap.add_argument("--periods", type=int, default=5000)
     ap.add_argument("--freq", type=str, default="1min")
     ap.add_argument("--instrument-levels", type=int, default=5)
     ap.add_argument("--hedge-levels", type=int, default=5)
