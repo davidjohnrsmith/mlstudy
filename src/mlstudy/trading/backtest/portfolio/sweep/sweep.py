@@ -89,56 +89,59 @@ class PortfolioSweepExecutor:
     def run_sweep(
         scenarios: list[SweepScenario],
         *,
-        # Instrument market L2
-        bid_px,
-        bid_sz,
-        ask_px,
-        ask_sz,
-        mid_px,
+        # -- Market data (shared across all scenarios) -----------------
+        # Instrument L2 book
+        bid_px,             # (T, B, L)
+        bid_sz,             # (T, B, L)
+        ask_px,             # (T, B, L)
+        ask_sz,             # (T, B, L)
+        mid_px,             # (T, B)
         # Risk
-        dv01,
+        dv01,               # (T, B)
         # Signals
-        fair_price,
-        zscore,
-        adf_p_value,
-        # Static meta
-        tradable,
-        pos_limits_long,
-        pos_limits_short,
-        max_trade_notional_inc,
-        max_trade_notional_dec,
-        # Meta
-        maturity,
-        issuer_bucket,
-        maturity_bucket,
+        fair_price,         # (T, B)
+        zscore,             # (T, B)
+        adf_p_value,        # (T, B)
+        # Static instrument meta
+        tradable,           # (B,)
+        pos_limits_long,    # (B,)
+        pos_limits_short,   # (B,)
+        max_trade_notional_inc,  # (B,)
+        max_trade_notional_dec,  # (B,)
+        # Time-varying / static meta
+        maturity,           # (T, B) or (B,) or None
+        issuer_bucket,      # (B,) or None
+        maturity_bucket,    # (T, B) or (B,) or None
         # Bucket caps
-        issuer_dv01_caps,
-        mat_bucket_dv01_caps,
-        # Instrument IDs
+        issuer_dv01_caps,   # (n_issuers,) or None
+        mat_bucket_dv01_caps,  # (n_buckets,) or None
+        # Instrument identifiers
         instrument_ids,
-        # Per-instrument qty_step
-        qty_step,
-        # Hedge arrays
-        hedge_bid_px,
-        hedge_bid_sz,
-        hedge_ask_px,
-        hedge_ask_sz,
-        hedge_mid_px,
-        hedge_dv01,
-        hedge_ratios,
-        # Per-hedge qty_step
-        hedge_qty_step,
-        # Context
+        # Per-instrument execution
+        qty_step,           # (B,) or scalar
+        # Hedge L2 book
+        hedge_bid_px,       # (T, H, L) or None
+        hedge_bid_sz,       # (T, H, L) or None
+        hedge_ask_px,       # (T, H, L) or None
+        hedge_ask_sz,       # (T, H, L) or None
+        hedge_mid_px,       # (T, H) or None
+        # Hedge risk / ratios
+        hedge_dv01,         # (T, H) or None
+        hedge_ratios,       # (T, B, H) or None
+        # Per-hedge execution
+        hedge_qty_step,     # (H,) or None
+        # Timestamps
         datetimes,
-        # Sweep control
+        # -- Sweep control (parallel dispatch of scenarios) -------------
         backend: str = "serial",
         n_workers: int | None = None,
-        chunk_size: int | None = None,
+        chunk_size: int | None = None,   # scenarios per dispatch batch
         mode: str = "full",
         keep_top_k_full: int = 0,
         save_top_full_dir: str | Path | None = None,
         ranking_plan: RankingPlan | None = None,
-        chunk_params: dict | None = None,
+        # -- Data chunking (load market data in chunks) ----------------
+        chunk_params: dict | None = None,  # passed to loader.load_chunked()
     ) -> list[SweepResult] | list[SweepResultLight] | SweepSummary:
         """Run a parameter sweep over portfolio backtest scenarios.
 
