@@ -288,6 +288,411 @@ def _solve_lp(
 
 
 # ======================================================================
+# Extracted loop-step helpers
+# ======================================================================
+
+
+def _gate_fair_prices(zscore_t, adf_t, z_inc, p_inc, z_dec, p_dec, B):
+    """Gate fair prices by (zscore, adf_p_value) thresholds.
+
+    Returns (fair_inc_active, fair_dec_active) — two bool arrays of length B.
+    """
+    fair_inc_active = np.zeros(B, dtype=np.bool_)
+    fair_dec_active = np.zeros(B, dtype=np.bool_)
+    for b in range(B):
+        az = abs(zscore_t[b])
+        ap = adf_t[b]
+        if az > z_inc and ap < p_inc:
+            fair_inc_active[b] = True
+        if az > z_dec and ap < p_dec:
+            fair_dec_active[b] = True
+    return fair_inc_active, fair_dec_active
+
+
+def _build_candidates(
+    t, B, tradable, dv01, bid_px, ask_px, mid_px, bid_sz, ask_sz,
+    fair_price, fair_inc_active, fair_dec_active, pos,
+    pos_limits_long, pos_limits_short,
+    max_trade_notional_inc, max_trade_notional_dec,
+    alpha_thr_inc, alpha_thr_dec,
+    max_levels, haircut, allow_risk_reducing_only,
+    maturity, maturity_2d, min_maturity_inc,
+):
+    """Build trade candidates from all instruments (Steps 2-5).
+
+    Returns (c_inst, c_side, c_alpha, c_fair_type, c_dv01_liq,
+             c_pos_hr, n_cand).
+    """
+    cand_inst = np.empty(B, dtype=np.int32)
+    cand_side = np.empty(B, dtype=np.int32)
+    cand_alpha = np.empty(B, dtype=np.float64)
+    cand_fair_type = np.empty(B, dtype=np.int32)
+    cand_dv01_liq = np.empty(B, dtype=np.float64)
+    cand_pos_headroom = np.empty(B, dtype=np.float64)
+    n_cand = 0
+
+    for b in range(B):
+        # -- Eligibility: tradable --
+        if not tradable[b]:
+            continue
+
+        # -- DV01 valid --
+        dv01_b = dv01[t, b]
+        if not (dv01_b >= 1e-15):   # catches NaN and < 1e-15
+            continue
+
+        # -- Market valid --
+        bid0 = bid_px[t, b, 0]
+        ask0 = ask_px[t, b, 0]
+        mid_b = mid_px[t, b]
+        if not _check_market_valid(bid0, ask0, mid_b):
+            continue
+
+        fair_b = fair_price[t, b]
+        if np.isnan(fair_b):
+            continue
+
+        # -- Determine candidate directions --
+        # Check both BUY and SELL opportunities for this instrument
+        for side in (1, -1):
+            # Risk classification
+            if side == 1:  # BUY
+                is_risk_dec = pos[b] < -1e-15  # closing/reducing short
+            else:  # SELL
+                is_risk_dec = pos[b] > 1e-15   # closing/reducing long
+
+            # In cooldown with risk-reducing only: skip risk-increasing
+            if allow_risk_reducing_only and not is_risk_dec:
+                continue
+
+            # Choose fair based on risk type
+            if is_risk_dec:
+                if not fair_dec_active[b]:
+                    continue
+                chosen_fair = fair_b  # fair_price is the base
+                fair_tp = _FAIR_DEC
+                alpha_thr = alpha_thr_dec
+            else:
+                if not fair_inc_active[b]:
+                    continue
+                chosen_fair = fair_b
+                fair_tp = _FAIR_INC
+                alpha_thr = alpha_thr_inc
+
+            # Executable alpha (bps)
+            if side == 1:  # BUY
+                # Opportunity: fair > ask
+                alpha_bps = (chosen_fair - ask0) / dv01_b
+            else:  # SELL
+                # Opportunity: fair < bid  => bid - fair > 0
+                alpha_bps = (bid0 - chosen_fair) / dv01_b
+
+            if alpha_bps <= alpha_thr:
+                continue
+
+            # Liquidity check: must have depth on required side
+            if side == 1:
+                if ask_sz[t, b, 0] <= 1e-15:
+                    continue
+            else:
+                if bid_sz[t, b, 0] <= 1e-15:
+                    continue
+
+            # Maturity filter for risk-increasing
+            if (not is_risk_dec and min_maturity_inc > 0.0
+                    and maturity is not None):
+                mat_val = maturity[t, b] if maturity_2d else maturity[b]
+                if mat_val < min_maturity_inc:
+                    continue
+
+            # Position limits: compute headroom in notional
+            if side == 1:  # BUY → position increases
+                headroom_notional = pos_limits_long[b] - pos[b]
+            else:  # SELL → position decreases
+                headroom_notional = pos[b] - pos_limits_short[b]
+
+            # Risk-decreasing: cap at current position so we don't
+            # overshoot past flat and flip the position.
+            if is_risk_dec:
+                headroom_notional = min(headroom_notional, abs(pos[b]))
+                headroom_notional = min(
+                    headroom_notional, max_trade_notional_dec[b])
+            else:
+                headroom_notional = min(
+                    headroom_notional, max_trade_notional_inc[b])
+
+            if headroom_notional < 1e-15:
+                continue
+
+            # Convert headroom to DV01
+            headroom_dv01 = headroom_notional * dv01_b
+
+            # Liquidity cap in DV01: walk the book to find max fillable
+            total_avail = 0.0
+            if side == 1:
+                book_px = ask_px[t, b]
+                book_sz = ask_sz[t, b]
+            else:
+                book_px = bid_px[t, b]
+                book_sz = bid_sz[t, b]
+            nl = min(max_levels, len(book_px))
+            for lev in range(nl):
+                total_avail += book_sz[lev] * haircut
+            dv01_liq = total_avail * dv01_b
+
+            # Store candidate
+            cand_inst[n_cand] = b
+            cand_side[n_cand] = side
+            cand_alpha[n_cand] = alpha_bps
+            cand_fair_type[n_cand] = fair_tp
+            cand_dv01_liq[n_cand] = dv01_liq
+            cand_pos_headroom[n_cand] = headroom_dv01
+            n_cand += 1
+
+    return (cand_inst, cand_side, cand_alpha, cand_fair_type,
+            cand_dv01_liq, cand_pos_headroom, n_cand)
+
+
+def _select_top_k(n_cand, top_k, c_inst, c_side, c_alpha,
+                   c_fair_type, c_dv01_liq, c_pos_hr):
+    """Keep top_k candidates by descending alpha (Step 6).
+
+    Returns trimmed (c_alpha, c_dv01_liq, c_pos_hr, c_inst, c_side,
+                      c_fair_type, n_cand).
+    """
+    if n_cand > top_k:
+        top_idx = np.argsort(-c_alpha)[:top_k]
+        c_inst = c_inst[top_idx]
+        c_side = c_side[top_idx]
+        c_alpha = c_alpha[top_idx]
+        c_fair_type = c_fair_type[top_idx]
+        c_dv01_liq = c_dv01_liq[top_idx]
+        c_pos_hr = c_pos_hr[top_idx]
+        n_cand = top_k
+    return c_alpha, c_dv01_liq, c_pos_hr, c_inst, c_side, c_fair_type, n_cand
+
+
+def _compute_bucket_exposures(pos, dv01_t, B, issuer_bucket,
+                               maturity_bucket_t, n_issuers, n_mat_buckets):
+    """Compute current issuer and maturity bucket DV01 exposures (Step 7).
+
+    Returns (current_issuer_dv01, current_mat_dv01).
+    """
+    current_issuer_dv01 = np.zeros(max(n_issuers, 1), dtype=np.float64)
+    current_mat_dv01 = np.zeros(max(n_mat_buckets, 1), dtype=np.float64)
+
+    if n_issuers > 0 and issuer_bucket is not None:
+        for b in range(B):
+            iss = issuer_bucket[b]
+            if 0 <= iss < n_issuers:
+                current_issuer_dv01[iss] += pos[b] * dv01_t[b]
+
+    if n_mat_buckets > 0 and maturity_bucket_t is not None:
+        for b in range(B):
+            bkt = maturity_bucket_t[b]
+            if 0 <= bkt < n_mat_buckets:
+                current_mat_dv01[bkt] += pos[b] * dv01_t[b]
+
+    return current_issuer_dv01, current_mat_dv01
+
+
+def _execute_instrument_trades(
+    t, n_cand, dv01_alloc, c_inst, c_side, c_alpha, c_fair_type,
+    bid_px, ask_px, bid_sz, ask_sz, mid_px, dv01,
+    qty_step, min_qty_trade, min_fill_ratio, max_levels, haircut,
+    pos, cash, cum_instrument_cash_mid,
+    has_hedge, hedge_ratios, hedge_dv01, hedge_pos, H,
+):
+    """Round LP allocations and execute via L2 book walking (Step 9).
+
+    Mutates *pos* in-place.  Returns (fills_list, any_executed, any_partial,
+    any_failed, bar_n_trades, bar_position_cost, hedge_target, cash,
+    cum_instrument_cash_mid) where *fills_list* is a list of per-fill tuples
+    to be recorded into the output arrays by the caller.
+    """
+    any_executed = False
+    any_partial = False
+    any_failed = False
+    bar_n_trades = 0
+    bar_position_cost = 0.0
+    fills_list = []
+
+    if has_hedge:
+        hedge_target = hedge_pos.copy()
+    else:
+        hedge_target = None
+
+    for k in range(n_cand):
+        raw_dv01 = dv01_alloc[k]
+        if raw_dv01 < 1e-15:
+            continue
+
+        b_idx = int(c_inst[k])
+        side_k = int(c_side[k])
+        dv01_b = dv01[t, b_idx]
+
+        if dv01_b < 1e-15:
+            continue
+
+        # Convert DV01 to notional quantity, then round size
+        raw_qty = raw_dv01 / dv01_b
+        qty_req = _round_qty_trade(raw_qty, min_qty_trade, qty_step[b_idx])
+        if qty_req < 1e-15:
+            continue
+
+        # Execute via book walking
+        if side_k == 1:  # BUY → lift ask
+            filled, vwap = _walk_book(
+                ask_px[t, b_idx], ask_sz[t, b_idx],
+                qty_req, max_levels, haircut,
+            )
+        else:  # SELL → hit bid
+            filled, vwap = _walk_book(
+                bid_px[t, b_idx], bid_sz[t, b_idx],
+                qty_req, max_levels, haircut,
+            )
+
+        # Check fill ratio
+        fill_ratio = filled / qty_req if qty_req > 1e-15 else 0.0
+
+        if filled < 1e-15:
+            # No fill at all
+            tr_code_k = _FILL_FAILED_LIQUIDITY
+            any_failed = True
+        elif min_fill_ratio > 0.0 and fill_ratio < min_fill_ratio:
+            # Below minimum fill ratio → skip
+            tr_code_k = _FILL_BELOW_MIN
+            any_failed = True
+            filled = 0.0  # treat as not filled
+        elif filled < qty_req - 1e-10:
+            tr_code_k = _FILL_PARTIAL
+            any_partial = True
+        else:
+            tr_code_k = _FILL_OK
+
+        # Record fill details
+        mid_b = mid_px[t, b_idx]
+        dv01_filled = filled * dv01_b
+        exec_cost = abs(vwap - mid_b) * filled if filled > 1e-15 else 0.0
+        fills_list.append((
+            b_idx, side_k, qty_req, filled,
+            qty_req * dv01_b, dv01_filled,
+            c_alpha[k], c_fair_type[k],
+            vwap, mid_b, exec_cost, tr_code_k,
+        ))
+
+        # Update pos/cash only if filled
+        if filled > 1e-15 and tr_code_k in (_FILL_OK, _FILL_PARTIAL):
+            signed_qty = side_k * filled
+            # BUY: cash -= qty * vwap, pos += qty
+            # SELL: cash += qty * vwap, pos -= qty
+            cash -= signed_qty * vwap
+            pos[b_idx] += signed_qty
+            cum_instrument_cash_mid -= signed_qty * mid_px[t, b_idx]
+            pos_exec_cost = abs(vwap - mid_px[t, b_idx]) * filled
+            bar_position_cost += pos_exec_cost
+            any_executed = True
+            bar_n_trades += 1
+
+            # -- Accumulate hedge target --
+            if has_hedge:
+                for h in range(H):
+                    hr = hedge_ratios[t, b_idx, h]
+                    if abs(hr) < 1e-15:
+                        continue
+                    hdv01 = hedge_dv01[t, h]
+                    if hdv01 < 1e-15:
+                        continue
+                    hedge_target[h] += signed_qty * dv01_b * hr / hdv01
+
+    return (fills_list, any_executed, any_partial, any_failed,
+            bar_n_trades, bar_position_cost, hedge_target,
+            cash, cum_instrument_cash_mid)
+
+
+def _execute_hedge_rebalance(
+    t, H, hedge_target, hedge_pos,
+    hedge_bid_px, hedge_ask_px, hedge_bid_sz, hedge_ask_sz, hedge_mid_px,
+    hedge_qty_step, min_qty_trade, max_levels, haircut,
+    cash, cum_hedge_cash_mid,
+):
+    """Execute net hedge rebalance for the bar (Step 10).
+
+    Mutates *hedge_pos* in-place.  Returns (cash, cum_hedge_cash_mid,
+    bar_hedge_cost, hedge_trade_cash, hedge_fill_details).
+    """
+    bar_hedge_cost = 0.0
+    hedge_trade_cash = 0.0
+    hedge_fill_details = []
+
+    for h in range(H):
+        hedge_remaining = hedge_target[h] - hedge_pos[h]
+        # Round hedge trade size using per-hedge qty_step
+        hedge_remaining = _round_qty_trade(
+            hedge_remaining, min_qty_trade, hedge_qty_step[h],
+        )
+        if abs(hedge_remaining) < 1e-15:
+            continue
+        if hedge_remaining > 1e-15:
+            h_filled, h_vwap = _walk_book(
+                hedge_ask_px[t, h], hedge_ask_sz[t, h],
+                hedge_remaining, max_levels, haircut,
+            )
+        else:
+            h_filled, h_vwap = _walk_book(
+                hedge_bid_px[t, h], hedge_bid_sz[t, h],
+                abs(hedge_remaining), max_levels, haircut,
+            )
+        if h_filled < 1e-15:
+            continue
+        h_signed = np.sign(hedge_remaining) * h_filled
+        cash -= h_signed * h_vwap
+        hedge_trade_cash += h_signed * h_vwap
+        cum_hedge_cash_mid -= h_signed * hedge_mid_px[t, h]
+        hedge_pos[h] += h_signed
+        h_exec_cost = abs(h_vwap - hedge_mid_px[t, h]) * h_filled
+        bar_hedge_cost += h_exec_cost
+        hedge_fill_details.append((h, hedge_remaining, h_signed, h_vwap))
+
+    return cash, cum_hedge_cash_mid, bar_hedge_cost, hedge_trade_cash, hedge_fill_details
+
+
+def _end_of_bar_bookkeeping(
+    t, B, H, pos, hedge_pos, cash,
+    mid_px, hedge_mid_px,
+    prev_equity, prev_hedge_mtm,
+    hedge_trade_cash, bar_cost, has_hedge,
+):
+    """Compute equity, PnL, and MTM at end of bar.
+
+    Read-only on mutable state.  Returns (equity_t, pnl_t, gross_pnl_t,
+    position_mtm_t, hedge_mtm_t_eq, hedge_pnl_t).
+    """
+    position_mtm_t = 0.0
+    for b in range(B):
+        mid_b_t = mid_px[t, b]
+        if not np.isnan(mid_b_t):
+            position_mtm_t += pos[b] * mid_b_t
+    hedge_mtm_t_eq = 0.0
+    if has_hedge:
+        for h in range(H):
+            h_mid_t = hedge_mid_px[t, h]
+            if not np.isnan(h_mid_t):
+                hedge_mtm_t_eq += hedge_pos[h] * h_mid_t
+    equity_t = cash + position_mtm_t + hedge_mtm_t_eq
+
+    pnl_t = equity_t - prev_equity
+    gross_pnl_t = pnl_t + bar_cost
+
+    # Hedge PnL: MTM change minus cash outflows for hedge trades
+    hedge_pnl_t = 0.0
+    if has_hedge:
+        hedge_pnl_t = hedge_mtm_t_eq - prev_hedge_mtm - hedge_trade_cash
+
+    return equity_t, pnl_t, gross_pnl_t, position_mtm_t, hedge_mtm_t_eq, hedge_pnl_t
+
+
+# ======================================================================
 # Core loop
 # ======================================================================
 
@@ -524,11 +929,8 @@ def lp_portfolio_loop(
     maturity_2d = maturity is not None and maturity.ndim == 2
     maturity_bucket_2d = maturity_bucket is not None and maturity_bucket.ndim == 2
 
-    # Pre-compute current bucket dv01 arrays (updated after each bar's trades)
     n_issuers = len(issuer_dv01_caps) if issuer_dv01_caps is not None else 0
     n_mat_buckets = len(mat_bucket_dv01_caps) if mat_bucket_dv01_caps is not None else 0
-    current_issuer_dv01 = np.zeros(max(n_issuers, 1), dtype=np.float64)
-    current_mat_dv01 = np.zeros(max(n_mat_buckets, 1), dtype=np.float64)
 
     for t in range(T):
         code = _NO_ACTION
@@ -539,19 +941,16 @@ def lp_portfolio_loop(
         hedge_trade_cash = 0.0  # sum of h_signed * h_vwap for hedge trades this bar
 
         # ==============================================================
-        # Step 0: Cooldown check
+        # Step 0: Cooldown check (inline)
         # ==============================================================
         in_cooldown = cooldown_remaining > 0
         allow_risk_reducing_only = False
         if in_cooldown:
             cooldown_remaining -= 1
             if cooldown_mode == _COOLDOWN_BLOCK_ALL:
-                # Skip all trading this bar
                 code = _SKIP_COOLDOWN
-                # Jump to bookkeeping
                 _skip_to_bookkeeping = True
             else:
-                # Allow risk-reducing trades only
                 allow_risk_reducing_only = True
                 _skip_to_bookkeeping = False
                 code = _SKIP_COOLDOWN_RISK_ONLY
@@ -559,154 +958,23 @@ def lp_portfolio_loop(
             _skip_to_bookkeeping = False
 
         if not _skip_to_bookkeeping:
-            # ==========================================================
             # Step 1: Gate fair prices
-            # ==========================================================
-            # fair_inc active when |zscore| > z_inc AND adf_p < p_inc
-            # fair_dec active when |zscore| > z_dec AND adf_p < p_dec
-            fair_inc_active = np.zeros(B, dtype=np.bool_)
-            fair_dec_active = np.zeros(B, dtype=np.bool_)
-            for b in range(B):
-                az = abs(zscore[t, b])
-                ap = adf_p_value[t, b]
-                if az > z_inc and ap < p_inc:
-                    fair_inc_active[b] = True
-                if az > z_dec and ap < p_dec:
-                    fair_dec_active[b] = True
+            fair_inc_active, fair_dec_active = _gate_fair_prices(
+                zscore[t], adf_p_value[t], z_inc, p_inc, z_dec, p_dec, B)
 
-            # ==========================================================
-            # Step 2-5: Build candidates
-            # ==========================================================
-            # Candidate arrays (pre-allocate to B, trim later)
-            cand_inst = np.empty(B, dtype=np.int32)
-            cand_side = np.empty(B, dtype=np.int32)
-            cand_alpha = np.empty(B, dtype=np.float64)
-            cand_fair_type = np.empty(B, dtype=np.int32)
-            cand_dv01_liq = np.empty(B, dtype=np.float64)
-            cand_pos_headroom = np.empty(B, dtype=np.float64)
-            n_cand = 0
+            # Steps 2-5: Build candidates
+            cand_inst, cand_side, cand_alpha, cand_fair_type, \
+                cand_dv01_liq, cand_pos_headroom, n_cand = _build_candidates(
+                    t, B, tradable, dv01, bid_px, ask_px, mid_px,
+                    bid_sz, ask_sz,
+                    fair_price, fair_inc_active, fair_dec_active, pos,
+                    pos_limits_long, pos_limits_short,
+                    max_trade_notional_inc, max_trade_notional_dec,
+                    alpha_thr_inc, alpha_thr_dec,
+                    max_levels, haircut, allow_risk_reducing_only,
+                    maturity, maturity_2d, min_maturity_inc,
+                )
 
-            for b in range(B):
-                # -- Eligibility: tradable --
-                if not tradable[b]:
-                    continue
-
-                # -- DV01 valid --
-                dv01_b = dv01[t, b]
-                if not (dv01_b >= 1e-15):   # catches NaN and < 1e-15
-                    continue
-
-                # -- Market valid --
-                bid0 = bid_px[t, b, 0]
-                ask0 = ask_px[t, b, 0]
-                mid_b = mid_px[t, b]
-                if not _check_market_valid(bid0, ask0, mid_b):
-                    continue
-
-                fair_b = fair_price[t, b]
-                if np.isnan(fair_b):
-                    continue
-
-                # -- Determine candidate directions --
-                # Check both BUY and SELL opportunities for this instrument
-                for side in (1, -1):
-                    # Risk classification
-                    if side == 1:  # BUY
-                        is_risk_dec = pos[b] < -1e-15  # closing/reducing short
-                    else:  # SELL
-                        is_risk_dec = pos[b] > 1e-15   # closing/reducing long
-
-                    # In cooldown with risk-reducing only: skip risk-increasing
-                    if allow_risk_reducing_only and not is_risk_dec:
-                        continue
-
-                    # Choose fair based on risk type
-                    if is_risk_dec:
-                        if not fair_dec_active[b]:
-                            continue
-                        chosen_fair = fair_b  # fair_price is the base
-                        fair_tp = _FAIR_DEC
-                        alpha_thr = alpha_thr_dec
-                    else:
-                        if not fair_inc_active[b]:
-                            continue
-                        chosen_fair = fair_b
-                        fair_tp = _FAIR_INC
-                        alpha_thr = alpha_thr_inc
-
-                    # Executable alpha (bps)
-                    if side == 1:  # BUY
-                        # Opportunity: fair > ask
-                        alpha_bps = (chosen_fair - ask0) / dv01_b
-                    else:  # SELL
-                        # Opportunity: fair < bid  => bid - fair > 0
-                        alpha_bps = (bid0 - chosen_fair) / dv01_b
-
-                    if alpha_bps <= alpha_thr:
-                        continue
-
-                    # Liquidity check: must have depth on required side
-                    if side == 1:
-                        if ask_sz[t, b, 0] <= 1e-15:
-                            continue
-                    else:
-                        if bid_sz[t, b, 0] <= 1e-15:
-                            continue
-
-                    # Maturity filter for risk-increasing
-                    if (not is_risk_dec and min_maturity_inc > 0.0
-                            and maturity is not None):
-                        mat_val = maturity[t, b] if maturity_2d else maturity[b]
-                        if mat_val < min_maturity_inc:
-                            continue
-
-                    # Position limits: compute headroom in notional
-                    if side == 1:  # BUY → position increases
-                        headroom_notional = pos_limits_long[b] - pos[b]
-                    else:  # SELL → position decreases
-                        headroom_notional = pos[b] - pos_limits_short[b]
-
-                    # Risk-decreasing: cap at current position so we don't
-                    # overshoot past flat and flip the position.
-                    if is_risk_dec:
-                        headroom_notional = min(headroom_notional, abs(pos[b]))
-                        headroom_notional = min(
-                            headroom_notional, max_trade_notional_dec[b])
-                    else:
-                        headroom_notional = min(
-                            headroom_notional, max_trade_notional_inc[b])
-
-                    if headroom_notional < 1e-15:
-                        continue
-
-                    # Convert headroom to DV01
-                    headroom_dv01 = headroom_notional * dv01_b
-
-                    # Liquidity cap in DV01: walk the book to find max fillable
-                    total_avail = 0.0
-                    if side == 1:
-                        book_px = ask_px[t, b]
-                        book_sz = ask_sz[t, b]
-                    else:
-                        book_px = bid_px[t, b]
-                        book_sz = bid_sz[t, b]
-                    nl = min(max_levels, len(book_px))
-                    for lev in range(nl):
-                        total_avail += book_sz[lev] * haircut
-                    dv01_liq = total_avail * dv01_b
-
-                    # Store candidate
-                    cand_inst[n_cand] = b
-                    cand_side[n_cand] = side
-                    cand_alpha[n_cand] = alpha_bps
-                    cand_fair_type[n_cand] = fair_tp
-                    cand_dv01_liq[n_cand] = dv01_liq
-                    cand_pos_headroom[n_cand] = headroom_dv01
-                    n_cand += 1
-
-            # ==========================================================
-            # Step 6: Rank by alpha and keep top K
-            # ==========================================================
             if n_cand == 0:
                 code = _NO_CANDIDATES if not in_cooldown else code
             else:
@@ -718,39 +986,21 @@ def lp_portfolio_loop(
                 c_dv01_liq = cand_dv01_liq[:n_cand]
                 c_pos_hr = cand_pos_headroom[:n_cand]
 
-                if n_cand > top_k:
-                    # Keep top_k by descending alpha
-                    top_idx = np.argsort(-c_alpha)[:top_k]
-                    c_inst = c_inst[top_idx]
-                    c_side = c_side[top_idx]
-                    c_alpha = c_alpha[top_idx]
-                    c_fair_type = c_fair_type[top_idx]
-                    c_dv01_liq = c_dv01_liq[top_idx]
-                    c_pos_hr = c_pos_hr[top_idx]
-                    n_cand = top_k
+                # Step 6: Rank by alpha and keep top K
+                c_alpha, c_dv01_liq, c_pos_hr, c_inst, c_side, \
+                    c_fair_type, n_cand = _select_top_k(
+                        n_cand, top_k, c_inst, c_side, c_alpha,
+                        c_fair_type, c_dv01_liq, c_pos_hr)
 
-                # ==================================================
                 # Step 7: Compute current bucket exposures for LP
-                # ==================================================
-                if n_issuers > 0 and issuer_bucket is not None:
-                    current_issuer_dv01[:] = 0.0
-                    for b in range(B):
-                        iss = issuer_bucket[b]
-                        if 0 <= iss < n_issuers:
-                            current_issuer_dv01[iss] += pos[b] * dv01[t, b]
+                mat_bkt_t = (maturity_bucket[t] if maturity_bucket_2d
+                             else maturity_bucket)
+                current_issuer_dv01, current_mat_dv01 = \
+                    _compute_bucket_exposures(
+                        pos, dv01[t], B, issuer_bucket, mat_bkt_t,
+                        n_issuers, n_mat_buckets)
 
-                if n_mat_buckets > 0 and maturity_bucket is not None:
-                    current_mat_dv01[:] = 0.0
-                    mat_bkt_t = maturity_bucket[t] if maturity_bucket_2d else maturity_bucket
-                    for b in range(B):
-                        bkt = mat_bkt_t[b]
-                        if 0 <= bkt < n_mat_buckets:
-                            current_mat_dv01[bkt] += pos[b] * dv01[t, b]
-
-                # ==================================================
                 # Step 8: Solve LP / greedy
-                # ==================================================
-                mat_bkt_lp = maturity_bucket[t] if maturity_bucket_2d else maturity_bucket
                 dv01_alloc, used_greedy = _solve_lp(
                     c_alpha,
                     c_dv01_liq,
@@ -759,7 +1009,7 @@ def lp_portfolio_loop(
                     c_inst,
                     c_side,
                     issuer_bucket,
-                    mat_bkt_lp,
+                    mat_bkt_t,
                     issuer_dv01_caps,
                     mat_bucket_dv01_caps,
                     current_issuer_dv01,
@@ -767,155 +1017,66 @@ def lp_portfolio_loop(
                     use_greedy=use_greedy,
                 )
 
-                # ==================================================
-                # Step 9: Round and execute
-                # ==================================================
-                any_executed = False
-                any_partial = False
-                any_failed = False
+                # Step 9: Round and execute instrument trades
+                fills, any_executed, any_partial, any_failed, \
+                    bar_n_trades, bar_position_cost, hedge_target, \
+                    cash, cum_instrument_cash_mid = \
+                    _execute_instrument_trades(
+                        t, n_cand, dv01_alloc, c_inst, c_side,
+                        c_alpha, c_fair_type,
+                        bid_px, ask_px, bid_sz, ask_sz, mid_px, dv01,
+                        qty_step, min_qty_trade, min_fill_ratio,
+                        max_levels, haircut,
+                        pos, cash, cum_instrument_cash_mid,
+                        has_hedge, hedge_ratios, hedge_dv01,
+                        hedge_pos, H,
+                    )
 
-                # Accumulate target hedge position across all instrument fills
-                if has_hedge:
-                    hedge_target = hedge_pos.copy()
-
-                for k in range(n_cand):
-                    raw_dv01 = dv01_alloc[k]
-                    if raw_dv01 < 1e-15:
-                        continue
-
-                    b_idx = int(c_inst[k])
-                    side_k = int(c_side[k])
-                    dv01_b = dv01[t, b_idx]
-
-                    if dv01_b < 1e-15:
-                        continue
-
-                    # Convert DV01 to notional quantity, then round size
-                    raw_qty = raw_dv01 / dv01_b
-                    qty_req = _round_qty_trade(raw_qty, min_qty_trade, qty_step[b_idx])
-                    if qty_req < 1e-15:
-                        continue
-
-                    # Execute via book walking
-                    if side_k == 1:  # BUY → lift ask
-                        filled, vwap = _walk_book(
-                            ask_px[t, b_idx], ask_sz[t, b_idx],
-                            qty_req, max_levels, haircut,
-                        )
-                    else:  # SELL → hit bid
-                        filled, vwap = _walk_book(
-                            bid_px[t, b_idx], bid_sz[t, b_idx],
-                            qty_req, max_levels, haircut,
-                        )
-
-                    # Check fill ratio
-                    fill_ratio = filled / qty_req if qty_req > 1e-15 else 0.0
-
-                    if filled < 1e-15:
-                        # No fill at all
-                        tr_code_k = _FILL_FAILED_LIQUIDITY
-                        any_failed = True
-                    elif min_fill_ratio > 0.0 and fill_ratio < min_fill_ratio:
-                        # Below minimum fill ratio → skip
-                        tr_code_k = _FILL_BELOW_MIN
-                        any_failed = True
-                        filled = 0.0  # treat as not filled
-                    elif filled < qty_req - 1e-10:
-                        tr_code_k = _FILL_PARTIAL
-                        any_partial = True
-                    else:
-                        tr_code_k = _FILL_OK
-
-                    # Record trade (even if failed, for diagnostics)
+                # Record fills into output arrays
+                for fill in fills:
                     if n_trades_total < max_trades:
-                        mid_b = mid_px[t, b_idx]
-                        dv01_filled = filled * dv01_b
-                        exec_cost = abs(vwap - mid_b) * filled if filled > 1e-15 else 0.0
-
+                        (b_idx, side_k, qty_req, filled,
+                         dv01_req, dv01_filled, alpha_k, fair_type_k,
+                         vwap, mid_b, exec_cost, tr_code_k) = fill
                         tr_bar[n_trades_total] = t
                         tr_instrument[n_trades_total] = b_idx
                         tr_side[n_trades_total] = side_k
                         tr_qty_req[n_trades_total] = qty_req
                         tr_qty_fill[n_trades_total] = filled
-                        tr_dv01_req[n_trades_total] = qty_req * dv01_b
+                        tr_dv01_req[n_trades_total] = dv01_req
                         tr_dv01_fill[n_trades_total] = dv01_filled
-                        tr_alpha[n_trades_total] = c_alpha[k]
-                        tr_fair_type[n_trades_total] = c_fair_type[k]
+                        tr_alpha[n_trades_total] = alpha_k
+                        tr_fair_type[n_trades_total] = fair_type_k
                         tr_vwap[n_trades_total] = vwap
                         tr_mid[n_trades_total] = mid_b
                         tr_cost[n_trades_total] = exec_cost
                         tr_code[n_trades_total] = tr_code_k
                         n_trades_total += 1
 
-                    # Update pos/cash only if filled
-                    if filled > 1e-15 and tr_code_k in (_FILL_OK, _FILL_PARTIAL):
-                        signed_qty = side_k * filled
-                        # BUY: cash -= qty * vwap, pos += qty
-                        # SELL: cash += qty * vwap, pos -= qty
-                        cash -= signed_qty * vwap
-                        pos[b_idx] += signed_qty
-                        cum_instrument_cash_mid -= signed_qty * mid_px[t, b_idx]
-                        pos_exec_cost = abs(vwap - mid_px[t, b_idx]) * filled
-                        bar_cost += pos_exec_cost
-                        bar_position_cost += pos_exec_cost
-                        any_executed = True
-                        bar_n_trades += 1
-
-                        # -- Accumulate hedge target --
-                        if has_hedge:
-                            for h in range(H):
-                                hr = hedge_ratios[t, b_idx, h]
-                                if abs(hr) < 1e-15:
-                                    continue
-                                hdv01 = hedge_dv01[t, h]
-                                if hdv01 < 1e-15:
-                                    continue
-                                hedge_target[h] += signed_qty * dv01_b * hr / hdv01
-
-                # ==================================================
                 # Step 10: Execute net hedge for the bar
-                # ==================================================
                 if has_hedge and any_executed:
-                    bar_hedge_cost = 0.0
-                    for h in range(H):
-                        hedge_remaining = hedge_target[h] - hedge_pos[h]
-                        # Round hedge trade size using per-hedge qty_step
-                        hedge_remaining = _round_qty_trade(
-                            hedge_remaining, min_qty_trade, hedge_qty_step[h],
+                    cash, cum_hedge_cash_mid, bar_hedge_cost, \
+                        hedge_trade_cash, hedge_fills = \
+                        _execute_hedge_rebalance(
+                            t, H, hedge_target, hedge_pos,
+                            hedge_bid_px, hedge_ask_px,
+                            hedge_bid_sz, hedge_ask_sz, hedge_mid_px,
+                            hedge_qty_step, min_qty_trade,
+                            max_levels, haircut,
+                            cash, cum_hedge_cash_mid,
                         )
-                        if abs(hedge_remaining) < 1e-15:
-                            continue
-                        if hedge_remaining > 1e-15:
-                            h_filled, h_vwap = _walk_book(
-                                hedge_ask_px[t, h], hedge_ask_sz[t, h],
-                                hedge_remaining, max_levels, haircut,
-                            )
-                        else:
-                            h_filled, h_vwap = _walk_book(
-                                hedge_bid_px[t, h], hedge_bid_sz[t, h],
-                                abs(hedge_remaining), max_levels, haircut,
-                            )
-                        if h_filled < 1e-15:
-                            continue
-                        h_signed = np.sign(hedge_remaining) * h_filled
-                        cash -= h_signed * h_vwap
-                        hedge_trade_cash += h_signed * h_vwap
-                        cum_hedge_cash_mid -= h_signed * hedge_mid_px[t, h]
-                        hedge_pos[h] += h_signed
-                        h_exec_cost = abs(h_vwap - hedge_mid_px[t, h]) * h_filled
-                        bar_cost += h_exec_cost
-                        bar_hedge_cost += h_exec_cost
-                        bar_hedge_cost_t += h_exec_cost
-                        # Record in the last trade's hedge arrays
-                        last_trade = n_trades_total - 1
-                        if last_trade >= 0 and last_trade < max_trades:
-                            tr_hedge_sizes[last_trade, h] = hedge_remaining
+                    bar_hedge_cost_t = bar_hedge_cost
+                    # Record hedge fills in last trade's arrays
+                    last_trade = n_trades_total - 1
+                    if last_trade >= 0 and last_trade < max_trades:
+                        for (h, h_req, h_signed, h_vwap) in hedge_fills:
+                            tr_hedge_sizes[last_trade, h] = h_req
                             tr_hedge_fills[last_trade, h] = h_signed
                             tr_hedge_vwaps[last_trade, h] = h_vwap
-                    if bar_hedge_cost > 0.0:
-                        last_trade = n_trades_total - 1
-                        if last_trade >= 0 and last_trade < max_trades:
+                        if bar_hedge_cost > 0.0:
                             tr_hedge_cost[last_trade] = bar_hedge_cost
+
+                bar_cost = bar_position_cost + bar_hedge_cost_t
 
                 # Determine bar code
                 if any_executed and not any_partial and not any_failed:
@@ -935,31 +1096,18 @@ def lp_portfolio_loop(
         # ==============================================================
         # End-of-bar bookkeeping
         # ==============================================================
-        # equity = cash + sum(pos[b] * mid[b]) + sum(hedge_pos[h] * hedge_mid[h])
-        position_mtm_t = 0.0
-        for b in range(B):
-            mid_b_t = mid_px[t, b]
-            if not np.isnan(mid_b_t):
-                position_mtm_t += pos[b] * mid_b_t
-        hedge_mtm_t_eq = 0.0
-        if has_hedge:
-            for h in range(H):
-                h_mid_t = hedge_mid_px[t, h]
-                if not np.isnan(h_mid_t):
-                    hedge_mtm_t_eq += hedge_pos[h] * h_mid_t
-        equity_t = cash + position_mtm_t + hedge_mtm_t_eq
-
-        pnl_t = equity_t - prev_equity
-        gross_pnl_t = pnl_t + bar_cost
+        equity_t, pnl_t, gross_pnl_t, position_mtm_t, \
+            hedge_mtm_t_eq, hedge_pnl_t = _end_of_bar_bookkeeping(
+                t, B, H, pos, hedge_pos, cash,
+                mid_px, hedge_mid_px,
+                prev_equity, prev_hedge_mtm,
+                hedge_trade_cash, bar_cost, has_hedge,
+            )
         prev_equity = equity_t
-
-        # Hedge PnL: MTM change minus cash outflows for hedge trades
-        hedge_pnl_t = 0.0
         if has_hedge:
-            hedge_pnl_t = hedge_mtm_t_eq - prev_hedge_mtm - hedge_trade_cash
             prev_hedge_mtm = hedge_mtm_t_eq
 
-        # Write output arrays
+        # Write per-bar output arrays
         for b in range(B):
             out_pos[t, b] = pos[b]
         if has_hedge:
