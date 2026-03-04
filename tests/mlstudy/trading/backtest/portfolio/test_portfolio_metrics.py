@@ -23,11 +23,27 @@ from mlstudy.trading.backtest.metrics.metrics import BacktestMetrics
 def _bar_df(T: int = 10, initial_equity: float = 1_000_000.0) -> pd.DataFrame:
     """Minimal bar_df with equity and state columns."""
     equity = np.linspace(initial_equity, initial_equity + 1000, T)
+    pnl = np.diff(equity, prepend=initial_equity)
+    pnl[0] = equity[0] - initial_equity
+    gross_pnl = pnl.copy()
+    instrument_cost = np.zeros(T)
+    hedge_cost = np.zeros(T)
+    portfolio_cost = np.zeros(T)
     return pd.DataFrame({
         "equity": equity,
         "state": np.ones(T, dtype=np.float64),
         "position_0": np.linspace(0, 100, T),
         "position_1": np.linspace(0, -50, T),
+        "pnl": pnl,
+        "gross_pnl": gross_pnl,
+        "cumulative_pnl": np.cumsum(pnl),
+        "cumulative_gross_pnl": np.cumsum(gross_pnl),
+        "instrument_cost": instrument_cost,
+        "hedge_cost": hedge_cost,
+        "portfolio_cost": portfolio_cost,
+        "cumulative_instrument_cost": np.cumsum(instrument_cost),
+        "cumulative_hedge_cost": np.cumsum(hedge_cost),
+        "cumulative_portfolio_cost": np.cumsum(portfolio_cost),
     })
 
 
@@ -567,12 +583,9 @@ class TestThreePnlViewMetrics:
         hedge_pnl = np.zeros(T)
         hedge_pnl[1:5] = -5.0
 
-        bar = pd.DataFrame({
-            "equity": np.linspace(1e6, 1e6 + 1000, T),
-            "state": np.ones(T),
-            "position_0": np.zeros(T),
-            "hedge_pnl": hedge_pnl,
-        })
+        bar = _bar_df(T)
+        bar["hedge_pnl"] = hedge_pnl
+        bar["position_0"] = np.zeros(T)
 
         calc = PortfolioMetricsCalculator(
             bar, trade, annualization_factor=252,

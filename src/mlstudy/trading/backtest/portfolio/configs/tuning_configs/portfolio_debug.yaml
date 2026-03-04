@@ -4,7 +4,6 @@ base_config:
   use_greedy: false
   p_inc: 0.05
   p_dec: 0.10
-  min_qty_trade: 0.0
   min_fill_ratio: 0.0
   cooldown_mode: 0
   min_maturity_inc: 0.0
@@ -14,7 +13,7 @@ base_config:
     US: 100000000000000.0
   mat_bucket_dv01_caps: [50000.0, 500000.0, 50000.0, 500000.0, 5000000.0]
   initial_capital: 1000.0
-  close_time: "none"
+  close_time: "17:00"
 
 grid:
   z_inc: [0.5, 1.0]
@@ -43,8 +42,12 @@ sweep:
   mode: "metrics_only"
   keep_top_k_full: 5
   chunk_freq: "D"
-  start_date: "20260102"
-  end_date: "20260103"
+  start_date: "20260101"
+  end_date: "20260104"
+
+plot:
+  inactive_start: "16:30"
+  inactive_end: "08:30"
 
 rank:
   primary_metrics:

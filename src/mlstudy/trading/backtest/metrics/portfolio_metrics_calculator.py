@@ -316,6 +316,7 @@ class PortfolioMetricsCalculator(MetricsCalculator):
         trade_df: pd.DataFrame | None = None,
         *,
         annualization_factor: int | None = None,
+        initial_equity: float | None = None,
         hedge_ratios: np.ndarray | None = None,
         dv01: np.ndarray | None = None,
         hedge_dv01: np.ndarray | None = None,
@@ -324,7 +325,7 @@ class PortfolioMetricsCalculator(MetricsCalculator):
         hedge_ask_px: np.ndarray | None = None,
         instrument_ids: list | None = None,
     ):
-        super().__init__(bar_df, trade_df, annualization_factor=annualization_factor)
+        super().__init__(bar_df, trade_df, annualization_factor=annualization_factor, initial_equity=initial_equity)
         self._hedge_ratios = hedge_ratios
         self._dv01 = dv01
         self._hedge_dv01 = hedge_dv01
@@ -434,13 +435,13 @@ class PortfolioMetricsCalculator(MetricsCalculator):
         )
 
         if inst_traded_dv01 > 1e-15:
-            total_gross_pnl = float(bar_df["gross_pnl"].sum()) if "gross_pnl" in bar_df.columns else 0.0
-            total_net_pnl = float(bar_df["pnl"].sum()) if "pnl" in bar_df.columns else 0.0
-            total_inst_cost = float(bar_df["instrument_cost"].sum()) if "instrument_cost" in bar_df.columns else 0.0
-            total_hedge_cost = float(bar_df["hedge_cost"].sum()) if "hedge_cost" in bar_df.columns else 0.0
+            total_gross_pnl = float(bar_df["cumulative_gross_pnl"].iloc[-1])
+            total_net_pnl = float(bar_df["cumulative_pnl"].iloc[-1])
+            total_inst_cost = float(bar_df["cumulative_instrument_cost"].iloc[-1])
+            total_hedge_cost = float(bar_df["cumulative_hedge_cost"].iloc[-1])
             total_cost = total_inst_cost + total_hedge_cost
 
-            bps = 1e4 / inst_traded_dv01
+            bps = 1 / inst_traded_dv01
             cost_eff = {
                 "inst_traded_notional": inst_traded_notional,
                 "inst_traded_dv01": inst_traded_dv01,

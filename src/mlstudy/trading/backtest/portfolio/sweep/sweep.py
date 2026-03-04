@@ -50,9 +50,12 @@ def _run_one_portfolio(
             res = run_backtest_chunked(data_chunks=data_chunks, cfg=scenario.cfg)
         else:
             res = run_backtest(cfg=scenario.cfg, **market_data)
-        bar_df = res.close_bar_df if res.close_bar_df is not None else res.bar_df
+        use_close = res.close_bar_df is not None
+        bar_df = res.close_bar_df if use_close else res.bar_df
+        init_eq = res.initial_capital if use_close else None
         metrics = PortfolioMetricsCalculator(
             bar_df, res.trade_df,
+            initial_equity=init_eq,
             hedge_ratios=res.hedge_ratios,
             dv01=res.dv01,
             hedge_dv01=res.hedge_dv01,
@@ -119,6 +122,7 @@ class PortfolioSweepExecutor:
         instrument_ids,
         # Per-instrument execution
         qty_step,           # (B,) or scalar
+        min_qty_trade,      # (B,) per-instrument min trade size
         # Hedge L2 book
         hedge_bid_px,       # (T, H, L) or None
         hedge_bid_sz,       # (T, H, L) or None
@@ -130,6 +134,7 @@ class PortfolioSweepExecutor:
         hedge_ratios,       # (T, B, H) or None
         # Per-hedge execution
         hedge_qty_step,     # (H,) or None
+        hedge_min_qty_trade,  # (H,) or None
         # Timestamps
         datetimes,
         # -- Sweep control (parallel dispatch of scenarios) -------------
@@ -191,6 +196,7 @@ class PortfolioSweepExecutor:
             mat_bucket_dv01_caps=mat_bucket_dv01_caps,
             instrument_ids=instrument_ids,
             qty_step=qty_step,
+            min_qty_trade=min_qty_trade,
             hedge_bid_px=hedge_bid_px,
             hedge_bid_sz=hedge_bid_sz,
             hedge_ask_px=hedge_ask_px,
@@ -199,6 +205,7 @@ class PortfolioSweepExecutor:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
             hedge_qty_step=hedge_qty_step,
+            hedge_min_qty_trade=hedge_min_qty_trade,
             datetimes=datetimes,
         )
         if chunk_params is not None:

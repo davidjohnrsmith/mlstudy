@@ -34,7 +34,9 @@ def _validate(
     max_trade_notional_inc: np.ndarray,
     max_trade_notional_dec: np.ndarray,
     qty_step: np.ndarray,
+    min_qty_trade: np.ndarray,
     hedge_qty_step: np.ndarray,
+    hedge_min_qty_trade: np.ndarray,
     hedge_bid_px: np.ndarray,
     hedge_bid_sz: np.ndarray,
     hedge_ask_px: np.ndarray,
@@ -62,6 +64,7 @@ def _validate(
         ("max_trade_notional_inc", max_trade_notional_inc, B),
         ("max_trade_notional_dec", max_trade_notional_dec, B),
         ("qty_step", qty_step, B),
+        ("min_qty_trade", min_qty_trade, B),
     ]:
         if len(arr) != expected_len:
             raise ValueError(f"{name} length {len(arr)} != expected {expected_len}")
@@ -94,6 +97,20 @@ def _validate(
         if hedge_qty_step is not None and len(hedge_qty_step) != H:
             raise ValueError(
                 f"hedge_qty_step length {len(hedge_qty_step)} != expected H={H}"
+            )
+        if hedge_min_qty_trade is not None and len(hedge_min_qty_trade) != H:
+            raise ValueError(
+                f"hedge_min_qty_trade length {len(hedge_min_qty_trade)} != expected H={H}"
+            )
+        # hedge_ratios sum should be <= 0 for each instrument (sell hedge when
+        # buying instrument).  Warn if any instrument has positive sum.
+        ratio_sum = hedge_ratios.sum(axis=2)          # (T, B)
+        if np.any(ratio_sum > 0):
+            import warnings
+            warnings.warn(
+                "hedge_ratios sum across hedges is positive for some "
+                "(time, instrument) entries; expected <= 0 (sell hedge when "
+                "buying instrument)"
             )
 
 
@@ -134,10 +151,12 @@ def run_backtest(
     hedge_ratios: np.ndarray = None,
     # -- Instrument IDs --
     instrument_ids: list[str] = None,
-    # -- Per-instrument qty_step --
+    # -- Per-instrument qty_step / min_qty_trade --
     qty_step: np.ndarray = None,     # (B,)
-    # -- Per-hedge qty_step --
+    min_qty_trade: np.ndarray = None,  # (B,)
+    # -- Per-hedge qty_step / min_qty_trade --
     hedge_qty_step: np.ndarray = None,  # (H,) or None
+    hedge_min_qty_trade: np.ndarray = None,  # (H,) or None
     # -- Config --
     cfg: PortfolioBacktestConfig = None,
     # -- Context --
@@ -207,7 +226,7 @@ def run_backtest(
         dv01, fair_price, zscore, adf_p_value,
         tradable, pos_limits_long, pos_limits_short,
         max_trade_notional_inc, max_trade_notional_dec,
-        qty_step, hedge_qty_step,
+        qty_step, min_qty_trade, hedge_qty_step, hedge_min_qty_trade,
         hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
         hedge_mid_px, hedge_dv01, hedge_ratios,
     )
@@ -257,7 +276,7 @@ def run_backtest(
         max_levels=int(cfg.max_levels),
         haircut=float(cfg.haircut),
         qty_step=qty_step,
-        min_qty_trade=float(cfg.min_qty_trade),
+        min_qty_trade=min_qty_trade,
         min_fill_ratio=float(cfg.min_fill_ratio),
         cooldown_bars=int(cfg.cooldown_bars),
         cooldown_mode=int(cfg.cooldown_mode),
@@ -272,6 +291,7 @@ def run_backtest(
         hedge_dv01=f_hedge_dv01,
         hedge_ratios=f_hedge_ratios,
         hedge_qty_step=hedge_qty_step,
+        hedge_min_qty_trade=hedge_min_qty_trade,
         initial_state=initial_state,
         return_final_state=return_final_state,
     )
@@ -292,6 +312,7 @@ def run_backtest(
         dv01=f_dv01,
         hedge_dv01=f_hedge_dv01,
         instrument_ids=instrument_ids,
+        initial_capital=float(cfg.initial_capital),
     )
 
     logger.info(
@@ -375,6 +396,10 @@ def run_backtest_chunked(
     instrument_cost = np.concatenate([r.instrument_cost for r, _ in chunk_results])
     hedge_cost_bar = np.concatenate([r.hedge_cost_bar for r, _ in chunk_results])
     portfolio_cost = np.concatenate([r.portfolio_cost for r, _ in chunk_results])
+    net_instrument_dv01 = np.concatenate([r.net_instrument_dv01 for r, _ in chunk_results])
+    gross_instrument_dv01 = np.concatenate([r.gross_instrument_dv01 for r, _ in chunk_results])
+    net_hedge_dv01 = np.concatenate([r.net_hedge_dv01 for r, _ in chunk_results])
+    gross_hedge_dv01 = np.concatenate([r.gross_hedge_dv01 for r, _ in chunk_results])
 
     # Stitch per-trade arrays with bar index offset
     tr_bars = []
@@ -502,6 +527,7 @@ def run_backtest_chunked(
         tr_hedge_cost=_concat_or_empty(tr_hedge_costs),
         n_trades=total_trades,
         instrument_ids=first.instrument_ids,
+        initial_capital=first.initial_capital,
         datetimes=datetimes,
         close_time=first.close_time,
         mid_px=mid_px,
@@ -511,4 +537,8 @@ def run_backtest_chunked(
         hedge_ratios=hedge_ratios,
         dv01=dv01_arr,
         hedge_dv01=hedge_dv01,
+        net_instrument_dv01=net_instrument_dv01,
+        gross_instrument_dv01=gross_instrument_dv01,
+        net_hedge_dv01=net_hedge_dv01,
+        gross_hedge_dv01=gross_hedge_dv01,
     )

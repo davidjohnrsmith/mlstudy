@@ -46,6 +46,7 @@ class PortfolioSweepConfig:
     sweep_kwargs: dict[str, Any]
     ranking_plan: RankingPlan | None = None
     data_loader: PortfolioDataLoader | None = None
+    plot_config: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +210,8 @@ def load_sweep_config(path: str | Path) -> PortfolioSweepConfig:
         grid_name, len(grid), n_combos, data_loader is not None,
     )
 
+    plot_config = raw.get("plot")
+
     return PortfolioSweepConfig(
         grid_name=grid_name,
         base_config=base_config,
@@ -216,4 +219,5 @@ def load_sweep_config(path: str | Path) -> PortfolioSweepConfig:
         sweep_kwargs=sweep_kwargs,
         ranking_plan=ranking_plan,
         data_loader=data_loader,
+        plot_config=plot_config,
     )

@@ -42,7 +42,7 @@ def _make_market(T, B, L=3, mid_base=100.0, spread_bps=10.0):
     return bid_px, bid_sz, ask_px, ask_sz, mid_px
 
 
-def _default_params():
+def _default_params(B=1):
     """Default scalar parameters for the loop."""
     return dict(
         gross_dv01_cap=100.0,
@@ -57,8 +57,8 @@ def _default_params():
         alpha_thr_dec=0.5,
         max_levels=3,
         haircut=1.0,
-        qty_step=0.0,
-        min_qty_trade=0.0,
+        qty_step=np.zeros(B, dtype=np.float64),
+        min_qty_trade=np.zeros(B, dtype=np.float64),
         min_fill_ratio=0.0,
         cooldown_bars=0,
         cooldown_mode=int(CooldownMode.BLOCK_ALL),
@@ -176,7 +176,7 @@ class TestLpPortfolioLoopBasic:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         result = lp_portfolio_loop(
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -186,7 +186,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[35]
+        n_trades = result[39]
         assert n_trades == 0
 
     def test_buy_signal_executes(self):
@@ -202,7 +202,7 @@ class TestLpPortfolioLoopBasic:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         result = lp_portfolio_loop(
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -212,7 +212,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[35]
+        n_trades = result[39]
         assert n_trades > 0
         # Check that trades are buys
         tr_side = result[11]
@@ -230,7 +230,7 @@ class TestLpPortfolioLoopBasic:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         result = lp_portfolio_loop(
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -240,7 +240,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[35]
+        n_trades = result[39]
         assert n_trades > 0
         tr_side = result[11]
         for i in range(n_trades):
@@ -257,7 +257,7 @@ class TestLpPortfolioLoopBasic:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         result = lp_portfolio_loop(
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -284,7 +284,7 @@ class TestLpPortfolioLoopBasic:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
         params["initial_capital"] = 500_000.0
 
         result = lp_portfolio_loop(
@@ -310,7 +310,7 @@ class TestCooldown:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e8)
         pos_short = np.full(B, -1e8)
-        params = _default_params()
+        params = _default_params(B)
         params["cooldown_bars"] = 3
         params["cooldown_mode"] = int(CooldownMode.BLOCK_ALL)
 
@@ -351,7 +351,7 @@ class TestSignalGating:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         result = lp_portfolio_loop(
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -361,7 +361,7 @@ class TestSignalGating:
             None, None, None,
             **params,
         )
-        assert result[35] == 0  # no trades
+        assert result[39] == 0  # no trades
 
     def test_high_adf_pvalue_no_fair(self):
         """ADF p-value above threshold should block fair price activation."""
@@ -374,7 +374,7 @@ class TestSignalGating:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         result = lp_portfolio_loop(
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -384,7 +384,7 @@ class TestSignalGating:
             None, None, None,
             **params,
         )
-        assert result[35] == 0
+        assert result[39] == 0
 
 
 class TestPositionLimits:
@@ -399,7 +399,7 @@ class TestPositionLimits:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 500.0)  # tight limit
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
         params["cooldown_bars"] = 0
 
         result = lp_portfolio_loop(
@@ -427,7 +427,7 @@ class TestNonTradable:
         tradable = np.array([1, 0, 1], dtype=np.int32)  # instrument 1 not tradable
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         result = lp_portfolio_loop(
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -437,7 +437,7 @@ class TestNonTradable:
             None, None, None,
             **params,
         )
-        n_trades = result[35]
+        n_trades = result[39]
         tr_instrument = result[10]
         for i in range(n_trades):
             assert tr_instrument[i] != 1  # instrument 1 should never be traded
@@ -455,7 +455,7 @@ class TestBookkeeping:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
         params["initial_capital"] = 1e6
 
         result = lp_portfolio_loop(
@@ -485,7 +485,7 @@ class TestBookkeeping:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         result = lp_portfolio_loop(
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -544,7 +544,7 @@ class TestHedgeExecution:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         # Hedge: 1 instrument, ratio = -1.0 (sell hedge to offset buy)
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H, L, spread_bps=5.0)
@@ -564,7 +564,7 @@ class TestHedgeExecution:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[35]
+        n_trades = result[39]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # Instrument buy with negative hedge_ratio → hedge sells → hedge_pos < 0
@@ -585,7 +585,7 @@ class TestHedgeCostInEquity:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         # Run without hedge
         result_no_hedge = lp_portfolio_loop(
@@ -638,7 +638,7 @@ class TestHedgeMtmInEquity:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H, L, spread_bps=5.0)
         hedge_dv01 = np.full((T, H), 0.01, dtype=np.float64)
@@ -685,7 +685,7 @@ class TestNoHedge:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H, L)
         hedge_dv01 = np.full((T, H), 0.01, dtype=np.float64)
@@ -720,7 +720,7 @@ class TestNoHedge:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         result = lp_portfolio_loop(
             bid_px, bid_sz, ask_px, ask_sz, mid_px,
@@ -730,7 +730,7 @@ class TestNoHedge:
             None, None, None,
             **params,
         )
-        n_trades = result[35]
+        n_trades = result[39]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # H=0 → out_hedge_pos is (T, 1) of zeros
@@ -751,7 +751,7 @@ class TestHedgePartialFill:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         # Hedge book with very small size
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H, L, spread_bps=5.0)
@@ -774,7 +774,7 @@ class TestHedgePartialFill:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[35]
+        n_trades = result[39]
         assert n_trades > 0
         tr_hedge_fills = result[24]
         # Hedge should be partially filled (limited by book size)
@@ -802,7 +802,7 @@ class TestTimeVaryingMaturity:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         # Static (B,) maturity
         maturity_1d = np.array([5.0, 10.0])
@@ -829,7 +829,7 @@ class TestTimeVaryingMaturity:
         )
 
         # Same trades produced
-        assert result_1d[35] == result_2d[35]
+        assert result_1d[39] == result_2d[39]
         np.testing.assert_allclose(result_1d[0], result_2d[0])
 
     def test_2d_maturity_filter_blocks_when_maturity_decreases(self):
@@ -843,7 +843,7 @@ class TestTimeVaryingMaturity:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e8)
         pos_short = np.full(B, -1e8)
-        params = _default_params()
+        params = _default_params(B)
         params["min_maturity_inc"] = 2.0
         params["cooldown_bars"] = 0
 
@@ -859,7 +859,7 @@ class TestTimeVaryingMaturity:
             maturity_2d, None, None,
             **params,
         )
-        n_trades = result[35]
+        n_trades = result[39]
         tr_bar = result[9]
         # Trades should only happen in bars 0-2 (maturity >= 2.0)
         # Bars 3-5 have maturity < 2.0, risk-increasing trades should be blocked
@@ -884,7 +884,7 @@ class TestTimeVaryingMaturity:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
         params["cooldown_bars"] = 0
 
         # Both instruments start in bucket 0, then instrument 1 moves to bucket 1
@@ -905,7 +905,7 @@ class TestTimeVaryingMaturity:
             **params,
         )
         # Should run without error — LP uses per-bar slice
-        assert result[35] >= 0  # non-negative trade count
+        assert result[39] >= 0  # non-negative trade count
 
     def test_1d_arrays_still_work(self):
         """Existing (B,) maturity and maturity_bucket arrays still work."""
@@ -918,7 +918,7 @@ class TestTimeVaryingMaturity:
         tradable = np.ones(B, dtype=np.int32)
         pos_long = np.full(B, 1e6)
         pos_short = np.full(B, -1e6)
-        params = _default_params()
+        params = _default_params(B)
 
         maturity_1d = np.array([5.0, 10.0])
         maturity_bucket_1d = np.array([0, 1], dtype=np.int64)
@@ -932,4 +932,4 @@ class TestTimeVaryingMaturity:
             maturity_1d, None, maturity_bucket_1d,
             **params,
         )
-        assert result[35] > 0  # trades happen
+        assert result[39] > 0  # trades happen

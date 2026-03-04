@@ -32,6 +32,10 @@ class PortfolioBacktestResults:
     instrument_cost         : (T,) execution cost of instrument trades per bar.
     hedge_cost_bar          : (T,) execution cost of hedge trades per bar.
     portfolio_cost          : (T,) total execution cost (instrument + hedge) per bar.
+    net_instrument_dv01     : (T,) net instrument DV01 (sum of pos * dv01).
+    gross_instrument_dv01   : (T,) gross instrument DV01 (sum of |pos * dv01|).
+    net_hedge_dv01          : (T,) net hedge DV01 (sum of hedge_pos * hedge_dv01).
+    gross_hedge_dv01        : (T,) gross hedge DV01 (sum of |hedge_pos * hedge_dv01|).
 
     Per-trade arrays (length *n_trades*)
     ------------------------------------
@@ -73,6 +77,10 @@ class PortfolioBacktestResults:
     instrument_cost: np.ndarray
     hedge_cost_bar: np.ndarray
     portfolio_cost: np.ndarray
+    net_instrument_dv01: np.ndarray
+    gross_instrument_dv01: np.ndarray
+    net_hedge_dv01: np.ndarray
+    gross_hedge_dv01: np.ndarray
 
     # per-trade
     tr_bar: np.ndarray
@@ -106,6 +114,8 @@ class PortfolioBacktestResults:
     dv01: np.ndarray | None = field(default=None, repr=False)          # (T, B)
     hedge_dv01: np.ndarray | None = field(default=None, repr=False)    # (T, H)
 
+    initial_capital: float = 0.0
+
     bar_df: pd.DataFrame = None
     trade_df: pd.DataFrame = None
     close_bar_df: pd.DataFrame = None
@@ -118,6 +128,12 @@ class PortfolioBacktestResults:
         if self.mid_px is not None:
             self.instrument_pnl_df = self.to_instrument_pnl_df()
 
+    # Columns that are per-bar flows (must be aggregated when downsampling)
+    _FLOW_COLS = frozenset({
+        "pnl", "gross_pnl", "instrument_cost", "hedge_cost",
+        "portfolio_cost", "n_trades", "hedge_pnl",
+    })
+
     def _build_close_bar_df(self) -> pd.DataFrame | None:
         if self.close_time is None or self.datetimes is None:
             return None
@@ -125,7 +141,25 @@ class PortfolioBacktestResults:
         dt = pd.to_datetime(df["datetime"])
         target = pd.Timestamp(self.close_time).time()
         mask = dt.dt.time == target
-        return df[mask].reset_index(drop=True)
+        close_idx = np.where(mask.values)[0]
+        if len(close_idx) == 0:
+            return None
+
+        # Start with close-bar rows (snapshot columns are correct as-is)
+        close_df = df.iloc[close_idx].copy()
+
+        # Aggregate flow columns over the period between consecutive close bars
+        for col in self._FLOW_COLS:
+            if col not in df.columns:
+                continue
+            vals = df[col].values
+            agg = np.empty(len(close_idx), dtype=np.float64)
+            for i, ci in enumerate(close_idx):
+                start = (close_idx[i - 1] + 1) if i > 0 else 0
+                agg[i] = vals[start: ci + 1].sum()
+            close_df[col] = agg
+
+        return close_df.reset_index(drop=True)
 
     @staticmethod
     def from_loop_output(
@@ -141,9 +175,10 @@ class PortfolioBacktestResults:
         hedge_ratios: np.ndarray | None = None,
         dv01: np.ndarray | None = None,
         hedge_dv01: np.ndarray | None = None,
+        initial_capital: float = 0.0,
     ) -> "PortfolioBacktestResults":
         """Construct from the raw tuple returned by :func:`lp_portfolio_loop`."""
-        n = int(out[35])
+        n = int(out[39])
         return PortfolioBacktestResults(
             positions=out[0],
             cash=out[1],
@@ -163,6 +198,10 @@ class PortfolioBacktestResults:
             instrument_cost=out[32],
             hedge_cost_bar=out[33],
             portfolio_cost=out[34],
+            net_instrument_dv01=out[35],
+            gross_instrument_dv01=out[36],
+            net_hedge_dv01=out[37],
+            gross_hedge_dv01=out[38],
             tr_bar=out[9][:n],
             tr_instrument=out[10][:n],
             tr_side=out[11][:n],
@@ -191,6 +230,7 @@ class PortfolioBacktestResults:
             dv01=dv01,
             hedge_dv01=hedge_dv01,
             instrument_ids=instrument_ids,
+            initial_capital=initial_capital,
         )
 
     # -------------------------------------------------------------------
@@ -228,6 +268,15 @@ class PortfolioBacktestResults:
                 "instrument_cost": self.instrument_cost[:T],
                 "hedge_cost": self.hedge_cost_bar[:T],
                 "portfolio_cost": self.portfolio_cost[:T],
+                "cumulative_instrument_cost": np.cumsum(self.instrument_cost[:T]),
+                "cumulative_hedge_cost": np.cumsum(self.hedge_cost_bar[:T]),
+                "cumulative_portfolio_cost": np.cumsum(self.portfolio_cost[:T]),
+                "net_instrument_dv01": self.net_instrument_dv01[:T],
+                "gross_instrument_dv01": self.gross_instrument_dv01[:T],
+                "net_hedge_dv01": self.net_hedge_dv01[:T],
+                "gross_hedge_dv01": self.gross_hedge_dv01[:T],
+                "net_total_dv01": self.net_instrument_dv01[:T] + self.net_hedge_dv01[:T],
+                "gross_total_dv01": self.gross_instrument_dv01[:T] + self.gross_hedge_dv01[:T],
             }
         )
 

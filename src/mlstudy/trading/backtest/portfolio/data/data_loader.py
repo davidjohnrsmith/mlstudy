@@ -89,6 +89,7 @@ class PortfolioMarketData:
     max_trade_notional_inc: np.ndarray
     max_trade_notional_dec: np.ndarray
     qty_step: np.ndarray              # (B,) per-instrument notional rounding step
+    min_qty_trade: np.ndarray         # (B,) per-instrument min trade size
     # Meta
     maturity: np.ndarray              # (T, B) or (B,)
     issuer_bucket: np.ndarray         # (B,)
@@ -107,6 +108,7 @@ class PortfolioMarketData:
     hedge_ratios: np.ndarray
     # Hedge meta
     hedge_qty_step: np.ndarray        # (H,) per-hedge notional rounding step
+    hedge_min_qty_trade: np.ndarray   # (H,) per-hedge min trade size
     # Context
     datetimes: np.ndarray
     instrument_ids: list[str]
@@ -130,6 +132,7 @@ class PortfolioMarketData:
             "max_trade_notional_inc": self.max_trade_notional_inc,
             "max_trade_notional_dec": self.max_trade_notional_dec,
             "qty_step": self.qty_step,
+            "min_qty_trade": self.min_qty_trade,
             "maturity": self.maturity,
             "issuer_bucket": self.issuer_bucket,
             "maturity_bucket": self.maturity_bucket,
@@ -143,6 +146,7 @@ class PortfolioMarketData:
             "hedge_dv01": self.hedge_dv01,
             "hedge_ratios": self.hedge_ratios,
             "hedge_qty_step": self.hedge_qty_step,
+            "hedge_min_qty_trade": self.hedge_min_qty_trade,
             "datetimes": self.datetimes,
             "instrument_ids": self.instrument_ids,
         }
@@ -603,12 +607,13 @@ def _extract_meta_arrays(
     pos_limits_short = meta_indexed["pos_limit_short"].values.astype(np.float64)
 
     # Per-instrument max trade notional
-    for col in ("max_trade_notional_inc", "max_trade_notional_dec", "qty_step"):
+    for col in ("max_trade_notional_inc", "max_trade_notional_dec", "qty_step", "min_qty_trade"):
         if col not in meta_indexed.columns:
             raise ValueError(f"Required column {col!r} not found in meta file")
     max_trade_notional_inc = meta_indexed["max_trade_notional_inc"].values.astype(np.float64)
     max_trade_notional_dec = meta_indexed["max_trade_notional_dec"].values.astype(np.float64)
     qty_step = meta_indexed["qty_step"].values.astype(np.float64)
+    min_qty_trade = meta_indexed["min_qty_trade"].values.astype(np.float64)
 
     # Issuer bucket
     if "issuer_bucket" in meta_indexed.columns and issuer_dv01_caps_map:
@@ -659,6 +664,7 @@ def _extract_meta_arrays(
         "max_trade_notional_inc": max_trade_notional_inc,
         "max_trade_notional_dec": max_trade_notional_dec,
         "qty_step": qty_step,
+        "min_qty_trade": min_qty_trade,
         "issuer_bucket": issuer_bucket,
         "issuer_dv01_caps": issuer_dv01_caps,
         "maturity_dates_raw": maturity_dates_raw,
@@ -676,18 +682,20 @@ def _extract_hedge_meta_arrays(
     hedge_meta_df: pd.DataFrame,
     inst_col: str,
     hedge_ids: list[str],
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """Extract per-hedge static arrays from hedge meta DataFrame.
 
-    Returns hedge_qty_step (H,) array.
+    Returns (hedge_qty_step, hedge_min_qty_trade) arrays, each (H,).
     """
     hedge_meta_indexed = hedge_meta_df.set_index(inst_col).reindex(hedge_ids)
-    if "qty_step" not in hedge_meta_indexed.columns:
-        raise ValueError(
-            "Required column 'qty_step' not found in hedge_meta file"
-        )
+    for col in ("qty_step", "min_qty_trade"):
+        if col not in hedge_meta_indexed.columns:
+            raise ValueError(
+                f"Required column {col!r} not found in hedge_meta file"
+            )
     hedge_qty_step = hedge_meta_indexed["qty_step"].values.astype(np.float64)
-    return hedge_qty_step
+    hedge_min_qty_trade = hedge_meta_indexed["min_qty_trade"].values.astype(np.float64)
+    return hedge_qty_step, hedge_min_qty_trade
 
 
 def _disable_allnan_instruments(
@@ -803,7 +811,6 @@ def _build_market_data(
     sources, all_dts_idx = align_and_fill(
         sources,
         fill_method=fill_method,
-        essential_keys=("inst_book", ),
         datetime_source_keys=("inst_book", ),
     )
 
@@ -838,6 +845,7 @@ def _build_market_data(
     max_trade_notional_inc = static_arrays["max_trade_notional_inc"]
     max_trade_notional_dec = static_arrays["max_trade_notional_dec"]
     qty_step_arr = static_arrays["qty_step"]
+    min_qty_trade_arr = static_arrays["min_qty_trade"]
     issuer_bucket = static_arrays["issuer_bucket"]
     _issuer_dv01_caps = static_arrays["issuer_dv01_caps"]
     _maturity_dates_raw = static_arrays["maturity_dates_raw"]
@@ -889,8 +897,8 @@ def _build_market_data(
         else np.empty(0, dtype=np.float64)
     )
 
-    # Extract hedge_qty_step from hedge_meta
-    hedge_qty_step = _extract_hedge_meta_arrays(
+    # Extract hedge_qty_step and hedge_min_qty_trade from hedge_meta
+    hedge_qty_step, hedge_min_qty_trade = _extract_hedge_meta_arrays(
         hedge_meta_df, inst_col, hedge_ids,
     )
 
@@ -910,6 +918,7 @@ def _build_market_data(
         max_trade_notional_inc=max_trade_notional_inc,
         max_trade_notional_dec=max_trade_notional_dec,
         qty_step=qty_step_arr,
+        min_qty_trade=min_qty_trade_arr,
         maturity=maturity,
         issuer_bucket=issuer_bucket,
         maturity_bucket=maturity_bucket,
@@ -923,6 +932,7 @@ def _build_market_data(
         hedge_dv01=hedge_dv01_arr,
         hedge_ratios=hedge_ratios_arr,
         hedge_qty_step=hedge_qty_step,
+        hedge_min_qty_trade=hedge_min_qty_trade,
         datetimes=datetimes,
         instrument_ids=instrument_ids,
         hedge_ids=hedge_ids,

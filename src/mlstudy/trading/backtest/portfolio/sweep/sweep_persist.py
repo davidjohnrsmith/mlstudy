@@ -59,6 +59,10 @@ PORTFOLIO_ARRAY_FIELDS = [
     "tr_hedge_vwaps",
     "tr_hedge_fills",
     "tr_hedge_cost",
+    "net_instrument_dv01",
+    "gross_instrument_dv01",
+    "net_hedge_dv01",
+    "gross_hedge_dv01",
 ]
 
 
@@ -90,6 +94,8 @@ class PortfolioSweepPersister:
             # Persist DataFrames as CSV for easy inspection
             if sr.results.bar_df is not None:
                 sr.results.bar_df.to_csv(scenario_dir / "bar_df.csv", index=False)
+            if sr.results.close_bar_df is not None:
+                sr.results.close_bar_df.to_csv(scenario_dir / "close_bar_df.csv", index=False)
             if sr.results.trade_df is not None:
                 sr.results.trade_df.to_csv(scenario_dir / "trade_df.csv", index=False)
             if sr.results.instrument_pnl_df is not None:
@@ -194,15 +200,23 @@ class PortfolioSweepPersister:
             full_results = raw
 
         if full_results:
-            _save_scenario_plots(full_results, output_dir / "plots")
+            _save_scenario_plots(
+                full_results, output_dir / "plots",
+                plot_config=cfg.plot_config,
+            )
 
 
 def _save_scenario_plots(
-    results: list[SweepResult], plots_dir: Path,
+    results: list[SweepResult],
+    plots_dir: Path,
+    plot_config: dict[str, Any] | None = None,
 ) -> None:
-    """Generate dashboard PNGs for full scenarios, if matplotlib is available."""
+    """Generate dashboard and detail PNGs for full scenarios."""
     try:
-        from mlstudy.trading.backtest.portfolio.sweep.plots import plot_scenario
+        from mlstudy.trading.backtest.portfolio.sweep.plots import (
+            plot_scenario,
+            plot_scenario_detail,
+        )
         from mlstudy.trading.backtest.portfolio.sweep.sweep_results_reader import (
             PortfolioFullScenario,
         )
@@ -226,9 +240,17 @@ def _save_scenario_plots(
                 results=sr.results,
                 directory=plots_dir,
             )
-            save_path = plots_dir / f"scenario_{rank:03d}.png"
-            fig = plot_scenario(sc, save_path=save_path)
             import matplotlib.pyplot as plt
+
+            fig = plot_scenario(
+                sc, save_path=plots_dir / f"scenario_{rank:03d}.png",
+                plot_config=plot_config,
+            )
             plt.close(fig)
+
+            fig_d = plot_scenario_detail(
+                sc, save_path=plots_dir / f"scenario_{rank:03d}_detail.png",
+            )
+            plt.close(fig_d)
         except Exception:
             logger.warning("Failed to plot scenario %d", rank, exc_info=True)

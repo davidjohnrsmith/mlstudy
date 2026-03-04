@@ -87,6 +87,7 @@ def _make_portfolio_inputs(T: int = 30, B: int = 2, H: int = 1):
         max_trade_notional_inc=np.full(B, np.inf, dtype=np.float64),
         max_trade_notional_dec=np.full(B, np.inf, dtype=np.float64),
         qty_step=np.zeros(B, dtype=np.float64),
+        min_qty_trade=np.zeros(B, dtype=np.float64),
         maturity=np.full((T, B), 5.0, dtype=np.float64),
         issuer_bucket=np.zeros(B, dtype=np.int64),
         maturity_bucket=np.zeros((T, B), dtype=np.int64),
@@ -100,6 +101,7 @@ def _make_portfolio_inputs(T: int = 30, B: int = 2, H: int = 1):
         hedge_dv01=np.full((T, H), 0.01, dtype=np.float64),
         hedge_ratios=np.full((T, B, H), -0.5, dtype=np.float64),
         hedge_qty_step=np.zeros(H, dtype=np.float64),
+        hedge_min_qty_trade=np.zeros(H, dtype=np.float64),
         instrument_ids=[f"INST_{i}" for i in range(B)],
         datetimes=pd.bdate_range("2024-01-02", periods=T, freq="B").values,
     )
@@ -127,7 +129,6 @@ _FULL_MODE_YAML = {
         "alpha_thr_dec": 0.5,
         "max_levels": 3,
         "haircut": 1.0,
-        "min_qty_trade": 0.0,
         "min_fill_ratio": 0.0,
         "cooldown_bars": 0,
         "cooldown_mode": 0,
