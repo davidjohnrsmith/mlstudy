@@ -127,9 +127,10 @@ def _make_meta_df(
 
     max_trade_notional_inc = rng.uniform(5e5, 2e6, size=B)
     max_trade_notional_dec = rng.uniform(5e5, 2e6, size=B)
-    qty_step = rng.choice([1000.0, 5000.0, 10000.0], size=B)
-    min_qty_trade = rng.choice([0.0, 500.0, 1000.0, 5000.0], size=B)
-
+    # qty_step = rng.choice([1000.0, 5000.0, 10000.0], size=B)
+    # min_qty_trade = rng.choice([500.0, 1000.0, 5000.0], size=B)
+    qty_step = rng.choice([0.], size=B)
+    min_qty_trade = rng.choice([0.], size=B)
     return pd.DataFrame({
         "instrument_id": instrument_ids,
         "tradable": tradable,
@@ -150,8 +151,8 @@ def _make_hedge_meta_df(
 ) -> pd.DataFrame:
     """Create hedge meta DataFrame with per-hedge qty_step and min_qty_trade."""
     H = len(hedge_ids)
-    qty_step = rng.choice([1000.0, 5000.0, 10000.0], size=H)
-    min_qty_trade = rng.choice([0.0, 500.0, 1000.0, 5000.0], size=H)
+    qty_step = rng.choice([0.,], size=H)
+    min_qty_trade = rng.choice([0.0,], size=H)
     return pd.DataFrame({
         "instrument_id": hedge_ids,
         "qty_step": qty_step,
@@ -190,7 +191,7 @@ def _make_hedge_ratios_list_parquet(
                 "hedge_ratios": [float(x) for x in w],
             })
     df = pd.DataFrame(rows)
-    df = _drop_rows(df, rng, missing_prob)
+    # df = _drop_rows(df, rng, missing_prob)
     return df
 
 
@@ -244,7 +245,7 @@ def generate_portfolio_parquets(cfg: PortfolioGenConfig) -> None:
         size_step=60.0,
         id_col="instrument_id",
     )
-    book_df = _drop_rows(book_df, rng, cfg.missing_prob)
+    # book_df = _drop_rows(book_df, rng, cfg.missing_prob)
     book_df.to_parquet(cfg.out_dir / "book.parquet", index=False)
 
     # ---- Signals (for instruments only) --------------------------------------
@@ -348,11 +349,18 @@ def generate_portfolio_parquets_chunked(
     dv01_df = _drop_rows(dv01_df, rng, cfg.missing_prob)
 
     book_df = _make_book_df(
-        rng, dts, mid_df, all_ids, cfg.instrument_levels,
+        rng, dts, mid_df, instrument_ids, cfg.instrument_levels,
         spread0=0.008, spread_step=0.003,
         size0=120.0, size_step=60.0, id_col="instrument_id",
     )
     book_df = _drop_rows(book_df, rng, cfg.missing_prob)
+
+    h_book_df = _make_book_df(
+        rng, dts, mid_df, hedge_ids, cfg.instrument_levels,
+        spread0=0.008, spread_step=0.003,
+        size0=1200000.0, size_step=60.0, id_col="instrument_id",
+    )
+    book_df=pd.concat([book_df, h_book_df])
 
     signal_df = _make_signal_df_for_instruments(
         rng, dts, instrument_ids, mid_df,
@@ -422,6 +430,7 @@ def main() -> None:
     ap = argparse.ArgumentParser("Generate synthetic parquets for PortfolioDataLoader")
     ap.add_argument("--out", required=True, type=str)
     ap.add_argument("--instruments", type=str, default="instrument_000,instrument_001,instrument_002,instrument_003,instrument_004")
+    ap.add_argument("--n-instruments", type=int, default=None)
     ap.add_argument("--hedges", type=str, default="HEDGE_00,HEDGE_01,HEDGE_02")
     ap.add_argument("--start", type=str, default="2026-01-01 09:00:00")
     ap.add_argument("--periods", type=int, default=5000)
@@ -438,9 +447,22 @@ def main() -> None:
                     help="Chunk frequency (D=daily, W=weekly, MS=month-start)")
     args = ap.parse_args()
 
+
+    if args.n_instruments:
+        instrument_ids = []
+        for i in range(args.n_instruments):
+            i_str = str(i)
+            if len(i_str) == 1:
+                i_str = "00"+i_str
+            elif len(i_str) == 2:
+                i_str = "0"+i_str
+            instrument_ids.append(f'instrument_{i_str}')
+    else:
+        instrument_ids=[s.strip() for s in args.instruments.split(",") if s.strip()]
     cfg = PortfolioGenConfig(
         out_dir=Path(args.out),
-        instrument_ids=[s.strip() for s in args.instruments.split(",") if s.strip()],
+        # instrument_ids=[s.strip() for s in args.instruments.split(",") if s.strip()],
+        instrument_ids=instrument_ids,
         hedge_ids=[s.strip() for s in args.hedges.split(",") if s.strip()],
         start=args.start,
         periods=args.periods,

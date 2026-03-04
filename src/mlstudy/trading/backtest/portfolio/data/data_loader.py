@@ -149,6 +149,7 @@ class PortfolioMarketData:
             "hedge_min_qty_trade": self.hedge_min_qty_trade,
             "datetimes": self.datetimes,
             "instrument_ids": self.instrument_ids,
+            "hedge_ids": self.hedge_ids,
         }
 
 

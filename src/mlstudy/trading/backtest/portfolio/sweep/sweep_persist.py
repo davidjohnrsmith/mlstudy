@@ -91,6 +91,20 @@ class PortfolioSweepPersister:
                 arr = getattr(sr.results, field_name)
                 np.save(scenario_dir / f"{field_name}.npy", arr)
 
+            # Persist instrument/hedge ID → index mapping
+            id_map = {
+                "instrument_ids": {
+                    str(i): str(iid)
+                    for i, iid in enumerate(sr.results.instrument_ids)
+                } if sr.results.instrument_ids else {},
+                "hedge_ids": {
+                    str(i): str(hid)
+                    for i, hid in enumerate(sr.results.hedge_ids)
+                } if sr.results.hedge_ids else {},
+            }
+            with open(scenario_dir / "id_map.json", "w") as f:
+                json.dump(id_map, f, indent=2)
+
             # Persist DataFrames as CSV for easy inspection
             if sr.results.bar_df is not None:
                 sr.results.bar_df.to_csv(scenario_dir / "bar_df.csv", index=False)

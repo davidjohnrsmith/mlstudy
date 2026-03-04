@@ -102,6 +102,7 @@ class PortfolioBacktestResults:
     tr_hedge_cost: np.ndarray
     n_trades: int
     instrument_ids: list
+    hedge_ids: list | None = None
 
     # optional context
     datetimes: np.ndarray | None = field(default=None, repr=False)
@@ -113,6 +114,7 @@ class PortfolioBacktestResults:
     hedge_ratios: np.ndarray | None = field(default=None, repr=False)  # (T, B, H)
     dv01: np.ndarray | None = field(default=None, repr=False)          # (T, B)
     hedge_dv01: np.ndarray | None = field(default=None, repr=False)    # (T, H)
+    maturity: np.ndarray | None = field(default=None, repr=False)      # (B,) years to maturity
 
     initial_capital: float = 0.0
 
@@ -166,6 +168,7 @@ class PortfolioBacktestResults:
         out: tuple,
         *,
         instrument_ids: list,
+        hedge_ids: list | None = None,
         datetimes: np.ndarray | None = None,
         close_time: str | None = None,
         mid_px: np.ndarray | None = None,
@@ -175,6 +178,7 @@ class PortfolioBacktestResults:
         hedge_ratios: np.ndarray | None = None,
         dv01: np.ndarray | None = None,
         hedge_dv01: np.ndarray | None = None,
+        maturity: np.ndarray | None = None,
         initial_capital: float = 0.0,
     ) -> "PortfolioBacktestResults":
         """Construct from the raw tuple returned by :func:`lp_portfolio_loop`."""
@@ -229,7 +233,9 @@ class PortfolioBacktestResults:
             hedge_ratios=hedge_ratios,
             dv01=dv01,
             hedge_dv01=hedge_dv01,
+            maturity=maturity,
             instrument_ids=instrument_ids,
+            hedge_ids=hedge_ids,
             initial_capital=initial_capital,
         )
 

@@ -127,7 +127,7 @@ class MetricsCalculator:
         returns = self._returns
         cumulative = self._cumulative_pnl
 
-        total_pnl = float(equity.iloc[-1] - equity.iloc[0])
+        total_pnl = float(cumulative.iloc[-1])
         mean_ret = float(returns.mean())
         std_ret = float(returns.std())
 

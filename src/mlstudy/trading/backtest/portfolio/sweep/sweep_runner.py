@@ -45,7 +45,46 @@ from mlstudy.trading.backtest.common.sweep.sweep_types import (
     SweepSummary,
 )
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
+
+
+def _filter_time_range(md: dict, start_time: str | None, end_time: str | None) -> dict:
+    """Remove bars outside [start_time, end_time] from market data dict.
+
+    Parameters
+    ----------
+    md : dict
+        Market data dict (keys → numpy arrays). Arrays with first dimension
+        equal to T (the length of ``datetimes``) are sliced.
+    start_time, end_time : str or None
+        Time-of-day strings like ``"08:30"`` or ``"17:00"``.
+        None means no bound on that side.
+    """
+    if (start_time is None and end_time is None) or md.get("datetimes") is None:
+        return md
+    dts = pd.DatetimeIndex(md["datetimes"])
+    T = len(dts)
+    mask = np.ones(T, dtype=bool)
+    if start_time is not None:
+        mask &= dts.time >= pd.Timestamp(start_time).time()
+    if end_time is not None:
+        mask &= dts.time <= pd.Timestamp(end_time).time()
+    if mask.all():
+        return md
+    n_removed = int((~mask).sum())
+    logger.info(
+        "Time filter [%s, %s]: keeping %d / %d bars (removed %d)",
+        start_time, end_time, int(mask.sum()), T, n_removed,
+    )
+    filtered = {}
+    for k, v in md.items():
+        if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] == T:
+            filtered[k] = v[mask]
+        else:
+            filtered[k] = v
+    return filtered
 
 _REQUIRED_KEYS = {
     "bid_px", "bid_sz", "ask_px", "ask_sz", "mid_px",
