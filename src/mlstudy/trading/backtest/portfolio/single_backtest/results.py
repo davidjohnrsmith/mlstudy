@@ -36,6 +36,8 @@ class PortfolioBacktestResults:
     gross_instrument_dv01   : (T,) gross instrument DV01 (sum of |pos * dv01|).
     net_hedge_dv01          : (T,) net hedge DV01 (sum of hedge_pos * hedge_dv01).
     gross_hedge_dv01        : (T,) gross hedge DV01 (sum of |hedge_pos * hedge_dv01|).
+    hedge_fills_bar         : (T, H) signed hedge fills per bar.
+    hedge_vwaps_bar         : (T, H) hedge fill VWAPs per bar.
 
     Per-trade arrays (length *n_trades*)
     ------------------------------------
@@ -81,6 +83,8 @@ class PortfolioBacktestResults:
     gross_instrument_dv01: np.ndarray
     net_hedge_dv01: np.ndarray
     gross_hedge_dv01: np.ndarray
+    hedge_fills_bar: np.ndarray
+    hedge_vwaps_bar: np.ndarray
 
     # per-trade
     tr_bar: np.ndarray
@@ -182,7 +186,7 @@ class PortfolioBacktestResults:
         initial_capital: float = 0.0,
     ) -> "PortfolioBacktestResults":
         """Construct from the raw tuple returned by :func:`lp_portfolio_loop`."""
-        n = int(out[39])
+        n = int(out[41])
         return PortfolioBacktestResults(
             positions=out[0],
             cash=out[1],
@@ -206,6 +210,8 @@ class PortfolioBacktestResults:
             gross_instrument_dv01=out[36],
             net_hedge_dv01=out[37],
             gross_hedge_dv01=out[38],
+            hedge_fills_bar=out[39],
+            hedge_vwaps_bar=out[40],
             tr_bar=out[9][:n],
             tr_instrument=out[10][:n],
             tr_side=out[11][:n],
@@ -372,7 +378,7 @@ class PortfolioBacktestResults:
                 "pass mid_px to from_loop_output"
             )
 
-        H = self.tr_hedge_fills.shape[1] if self.n_trades > 0 else 0
+        H = self.hedge_fills_bar.shape[1] if self.hedge_fills_bar is not None else 0
 
         if self.n_trades > 0:
             inst_idx = self.tr_instrument.astype(np.intp)
@@ -386,38 +392,33 @@ class PortfolioBacktestResults:
             inst_cost = np.zeros(B, dtype=np.float64)
             np.add.at(inst_cost, inst_idx, self.tr_cost)
 
-            # Hedge execution cost per instrument
-            hedge_cost = np.zeros(B, dtype=np.float64)
-            np.add.at(hedge_cost, inst_idx, self.tr_hedge_cost)
-
             # Trade count per instrument
             n_trades_per = np.zeros(B, dtype=np.int64)
             np.add.at(n_trades_per, inst_idx, 1)
-
-            # Hedge position contributed by each instrument: (B, H)
-            hedge_pos_from_inst = np.zeros((B, max(H, 1)), dtype=np.float64)
-            for h in range(H):
-                np.add.at(hedge_pos_from_inst[:, h], inst_idx,
-                          self.tr_hedge_fills[:, h])
         else:
             trade_cash = np.zeros(B, dtype=np.float64)
             inst_cost = np.zeros(B, dtype=np.float64)
-            hedge_cost = np.zeros(B, dtype=np.float64)
             n_trades_per = np.zeros(B, dtype=np.int64)
-            hedge_pos_from_inst = np.zeros((B, max(H, 1)), dtype=np.float64)
+
+        # Total hedge cost from per-bar data (covers all bars, not just
+        # bars with instrument trades)
+        total_hedge_cost = float(np.sum(self.hedge_cost_bar))
 
         # Direct instrument PnL = final position MTM + trade cash
         final_pos_mtm = self.positions[-1] * self.mid_px[-1]
         instrument_pnl = final_pos_mtm + trade_cash
 
         # -- Hedge PnL attribution --
+        # Use per-bar hedge fill arrays which capture ALL hedge activity
+        # (including hedge-only rebalance bars with no instrument trades).
         hedge_pnl_attr = np.zeros(B, dtype=np.float64)
-        if H > 0 and self.hedge_mid_px is not None and self.n_trades > 0:
-            # Reconstruct cash per hedge instrument from trade data
+        hedge_cost_attr = np.zeros(B, dtype=np.float64)
+        if H > 0 and self.hedge_mid_px is not None:
+            # Reconstruct cash per hedge instrument from per-bar fill data
             hedge_cash_per_h = np.zeros(H, dtype=np.float64)
             for h in range(H):
-                fills_h = self.tr_hedge_fills[:, h]
-                vwaps_h = self.tr_hedge_vwaps[:, h]
+                fills_h = self.hedge_fills_bar[:, h]
+                vwaps_h = self.hedge_vwaps_bar[:, h]
                 mask = np.abs(fills_h) > 1e-15
                 if mask.any():
                     hedge_cash_per_h[h] = -np.sum(fills_h[mask] * vwaps_h[mask])
@@ -428,25 +429,58 @@ class PortfolioBacktestResults:
                 + hedge_cash_per_h
             )
 
-            # Attribute each hedge h's PnL to instruments proportionally
+            # Attribute hedge PnL and cost to instruments using DV01-weighted
+            # hedge ratios.  Each instrument b's contribution to hedge h's
+            # target is pos[b] * dv01[b] * hedge_ratios[b, h].
+            have_ratios = (
+                self.hedge_ratios is not None
+                and self.dv01 is not None
+            )
             for h in range(H):
-                contribs = hedge_pos_from_inst[:, h]
-                total_pos = self.hedge_positions[-1, h]
-                if abs(total_pos) < 1e-15:
-                    # Hedge fully unwound — attribute by absolute contribution
-                    total_abs = np.sum(np.abs(contribs))
+                if not have_ratios:
+                    # Without ratios, distribute evenly across instruments
+                    # that have positions
+                    active = np.abs(self.positions[-1]) > 1e-15
+                    n_active = int(np.sum(active))
+                    if n_active == 0:
+                        continue
+                    frac = np.zeros(B, dtype=np.float64)
+                    frac[active] = 1.0 / n_active
+                else:
+                    weights = (
+                        self.positions[-1]
+                        * self.dv01[-1]
+                        * self.hedge_ratios[-1, :, h]
+                    )
+                    total_abs = np.sum(np.abs(weights))
                     if total_abs < 1e-15:
                         continue
-                    weights = np.abs(contribs) / total_abs
-                else:
-                    weights = contribs / total_pos
-                hedge_pnl_attr += weights * hedge_pnl_per_h[h]
+                    total_signed = np.sum(weights)
+                    if abs(total_signed) > 1e-15:
+                        frac = weights / total_signed
+                    else:
+                        frac = np.abs(weights) / total_abs
+                hedge_pnl_attr += frac * hedge_pnl_per_h[h]
+
+            # Attribute total hedge cost proportionally using same weights
+            if have_ratios and total_hedge_cost > 1e-15:
+                # Use absolute DV01 contribution across all hedges
+                abs_weights = np.zeros(B, dtype=np.float64)
+                for h in range(H):
+                    abs_weights += np.abs(
+                        self.positions[-1]
+                        * self.dv01[-1]
+                        * self.hedge_ratios[-1, :, h]
+                    )
+                total_w = np.sum(abs_weights)
+                if total_w > 1e-15:
+                    hedge_cost_attr = abs_weights / total_w * total_hedge_cost
 
         # MTM = PnL as if traded at mid (no slippage)
         instrument_mtm = instrument_pnl + inst_cost
-        hedge_mtm = hedge_pnl_attr + hedge_cost
+        hedge_mtm = hedge_pnl_attr + hedge_cost_attr
         total_mtm = instrument_mtm + hedge_mtm
-        total_cost = inst_cost + hedge_cost
+        total_cost = inst_cost + hedge_cost_attr
         total_mtm_with_cost = total_mtm - total_cost
 
         df = pd.DataFrame({
@@ -455,7 +489,7 @@ class PortfolioBacktestResults:
             "instrument_mtm": instrument_mtm,
             "instrument_cost": inst_cost,
             "hedge_mtm": hedge_mtm,
-            "hedge_cost": hedge_cost,
+            "hedge_cost": hedge_cost_attr,
             "total_mtm": total_mtm,
             "total_mtm_with_cost": total_mtm_with_cost,
             "n_trades": n_trades_per,

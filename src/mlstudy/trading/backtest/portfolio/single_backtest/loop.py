@@ -376,12 +376,13 @@ def _build_candidates(
     Returns (c_inst, c_side, c_alpha, c_fair_type, c_dv01_liq,
              c_pos_hr, n_cand).
     """
-    cand_inst = np.empty(B, dtype=np.int32)
-    cand_side = np.empty(B, dtype=np.int32)
-    cand_alpha = np.empty(B, dtype=np.float64)
-    cand_fair_type = np.empty(B, dtype=np.int32)
-    cand_dv01_liq = np.empty(B, dtype=np.float64)
-    cand_pos_headroom = np.empty(B, dtype=np.float64)
+    max_cand = B
+    cand_inst = np.empty(max_cand, dtype=np.int32)
+    cand_side = np.empty(max_cand, dtype=np.int32)
+    cand_alpha = np.empty(max_cand, dtype=np.float64)
+    cand_fair_type = np.empty(max_cand, dtype=np.int32)
+    cand_dv01_liq = np.empty(max_cand, dtype=np.float64)
+    cand_pos_headroom = np.empty(max_cand, dtype=np.float64)
     n_cand = 0
 
     for b in range(B):
@@ -983,6 +984,10 @@ def lp_portfolio_loop(
     out_net_hedge_dv01 = np.zeros(T, dtype=np.float64)
     out_gross_hedge_dv01 = np.zeros(T, dtype=np.float64)
 
+    # -- Per-bar hedge fill tracking --
+    out_hedge_fills_bar = np.zeros((T, max(H, 1)), dtype=np.float64)
+    out_hedge_vwaps_bar = np.zeros((T, max(H, 1)), dtype=np.float64)
+
     # -- Mutable state --
     if initial_state is not None:
         pos = initial_state.pos.copy()
@@ -1160,15 +1165,20 @@ def lp_portfolio_loop(
                     cash, cum_hedge_cash_mid,
                 )
             bar_hedge_cost_t = bar_hedge_cost
-            # Record hedge fills in last trade's arrays
-            last_trade = n_trades_total - 1
-            if last_trade >= 0 and last_trade < max_trades:
-                for (h, h_req, h_signed, h_vwap) in hedge_fills:
-                    tr_hedge_sizes[last_trade, h] = h_req
-                    tr_hedge_fills[last_trade, h] = h_signed
-                    tr_hedge_vwaps[last_trade, h] = h_vwap
-                if bar_hedge_cost > 0.0:
-                    tr_hedge_cost[last_trade] = bar_hedge_cost
+            # Record hedge fills in per-bar arrays (always)
+            for (h, h_req, h_signed, h_vwap) in hedge_fills:
+                out_hedge_fills_bar[t, h] = h_signed
+                out_hedge_vwaps_bar[t, h] = h_vwap
+            # Record hedge fills in per-trade arrays (only when instrument trades exist this bar)
+            if bar_n_trades > 0:
+                last_trade = n_trades_total - 1
+                if 0 <= last_trade < max_trades:
+                    for (h, h_req, h_signed, h_vwap) in hedge_fills:
+                        tr_hedge_sizes[last_trade, h] = h_req
+                        tr_hedge_fills[last_trade, h] = h_signed
+                        tr_hedge_vwaps[last_trade, h] = h_vwap
+                    if bar_hedge_cost > 0.0:
+                        tr_hedge_cost[last_trade] = bar_hedge_cost
 
         bar_cost = bar_position_cost + bar_hedge_cost_t
 
@@ -1279,8 +1289,11 @@ def lp_portfolio_loop(
         out_gross_instrument_dv01,    # 36: (T,)
         out_net_hedge_dv01,           # 37: (T,)
         out_gross_hedge_dv01,         # 38: (T,)
+        # Per-bar hedge fill tracking
+        out_hedge_fills_bar,          # 39: (T, H) signed hedge fills per bar
+        out_hedge_vwaps_bar,          # 40: (T, H) hedge fill VWAPs per bar
         # Scalar
-        n_trades_total,               # 39
+        n_trades_total,               # 41
     )
 
     if return_final_state:

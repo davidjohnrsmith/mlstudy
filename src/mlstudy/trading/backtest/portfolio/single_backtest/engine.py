@@ -457,6 +457,8 @@ def run_backtest_chunked(
     gross_instrument_dv01 = np.concatenate([r.gross_instrument_dv01 for r, _ in chunk_results])
     net_hedge_dv01 = np.concatenate([r.net_hedge_dv01 for r, _ in chunk_results])
     gross_hedge_dv01 = np.concatenate([r.gross_hedge_dv01 for r, _ in chunk_results])
+    hedge_fills_bar = np.concatenate([r.hedge_fills_bar for r, _ in chunk_results], axis=0)
+    hedge_vwaps_bar = np.concatenate([r.hedge_vwaps_bar for r, _ in chunk_results], axis=0)
 
     # Stitch per-trade arrays with bar index offset
     tr_bars = []
@@ -600,4 +602,6 @@ def run_backtest_chunked(
         gross_instrument_dv01=gross_instrument_dv01,
         net_hedge_dv01=net_hedge_dv01,
         gross_hedge_dv01=gross_hedge_dv01,
+        hedge_fills_bar=hedge_fills_bar,
+        hedge_vwaps_bar=hedge_vwaps_bar,
     )
