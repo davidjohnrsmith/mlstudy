@@ -2,29 +2,33 @@ grid_name: "portfolio_grid_debug"
 
 base_config:
   use_greedy: false
-  p_inc: 0.05
-  p_dec: 0.10
+
   min_fill_ratio: 0.0
   cooldown_mode: 0
   min_maturity_inc: 0.0
   maturity_bucket_bins: [2, 5, 7, 10]
   issuer_dv01_caps:
-    Japan: 50.0
+    Japan: 5000000000000.0
     US: 100000000000000.0
   mat_bucket_dv01_caps: [50000.0, 500000.0, 50000.0, 500000.0, 5000000.0]
   initial_capital: 1000.0
   close_time: "17:00"
+  expected_hedge_ratio_sum: -1.0
+  start_time: "08:00"
+  end_time: "16:30"
 
 grid:
-  z_inc: [0.5, 1.0]
+  z_inc: [0.1, 1.0]
   z_dec: [0.1]
   alpha_thr_inc: [1.0]
   alpha_thr_dec: [0.5]
-  gross_dv01_cap: [100.0]
-  cooldown_bars: [0]
+  p_inc: [1.0]
+  p_dec: [1.0]
+  gross_dv01_cap: [10000000000.0]
+  cooldown_bars: [100]
   max_levels: [3]
   haircut: [1.0]
-  top_k: [10]
+  top_k: [1]
 
 data:
   book_filename: "book"

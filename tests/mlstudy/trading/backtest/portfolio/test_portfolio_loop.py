@@ -186,7 +186,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[39]
+        n_trades = result[41]
         assert n_trades == 0
 
     def test_buy_signal_executes(self):
@@ -212,7 +212,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[39]
+        n_trades = result[41]
         assert n_trades > 0
         # Check that trades are buys
         tr_side = result[11]
@@ -240,7 +240,7 @@ class TestLpPortfolioLoopBasic:
             None, None, None,
             **params,
         )
-        n_trades = result[39]
+        n_trades = result[41]
         assert n_trades > 0
         tr_side = result[11]
         for i in range(n_trades):
@@ -361,7 +361,7 @@ class TestSignalGating:
             None, None, None,
             **params,
         )
-        assert result[39] == 0  # no trades
+        assert result[41] == 0  # no trades
 
     def test_high_adf_pvalue_no_fair(self):
         """ADF p-value above threshold should block fair price activation."""
@@ -384,7 +384,7 @@ class TestSignalGating:
             None, None, None,
             **params,
         )
-        assert result[39] == 0
+        assert result[41] == 0
 
 
 class TestPositionLimits:
@@ -437,7 +437,7 @@ class TestNonTradable:
             None, None, None,
             **params,
         )
-        n_trades = result[39]
+        n_trades = result[41]
         tr_instrument = result[10]
         for i in range(n_trades):
             assert tr_instrument[i] != 1  # instrument 1 should never be traded
@@ -564,7 +564,7 @@ class TestHedgeExecution:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[39]
+        n_trades = result[41]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # Instrument buy with negative hedge_ratio → hedge sells → hedge_pos < 0
@@ -730,7 +730,7 @@ class TestNoHedge:
             None, None, None,
             **params,
         )
-        n_trades = result[39]
+        n_trades = result[41]
         assert n_trades > 0
         out_hedge_pos = result[8]
         # H=0 → out_hedge_pos is (T, 1) of zeros
@@ -774,13 +774,202 @@ class TestHedgePartialFill:
             hedge_dv01=hedge_dv01,
             hedge_ratios=hedge_ratios,
         )
-        n_trades = result[39]
+        n_trades = result[41]
         assert n_trades > 0
         tr_hedge_fills = result[24]
         # Hedge should be partially filled (limited by book size)
         # Instrument fill was large but hedge book only had 3.0 total
         assert abs(tr_hedge_fills[0, 0]) > 0  # some fill
         assert abs(tr_hedge_fills[0, 0]) <= 3.0 + 1e-10  # capped by book
+
+
+# =========================================================================
+# Net DV01 zero when hedge_ratios sum to -1
+# =========================================================================
+
+
+class TestNetDv01ZeroWithFullHedge:
+    """When hedge_ratios sum to -1, net DV01 (instrument + hedge) should be zero."""
+
+    def _net_dv01(self, result):
+        """Return per-bar net total DV01 (instrument + hedge)."""
+        return result[35] + result[37]  # net_instrument_dv01 + net_hedge_dv01
+
+    def test_perfect_liquidity_net_dv01_zero(self):
+        """With ample liquidity and no rounding, net DV01 is zero every bar."""
+        T, B, H = 5, 2, 1
+        L = 3
+        bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, L, spread_bps=5.0)
+        dv01 = np.full((T, B), 0.01, dtype=np.float64)
+        fair_price = mid_px + 1.0  # buy signal
+        zscore = np.full((T, B), 3.0)
+        adf_p = np.full((T, B), 0.01)
+        tradable = np.ones(B, dtype=np.int32)
+        pos_long = np.full(B, 1e6)
+        pos_short = np.full(B, -1e6)
+        params = _default_params(B)
+
+        h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H, L, spread_bps=5.0)
+        hedge_dv01 = np.full((T, H), 0.01, dtype=np.float64)
+        hedge_ratios = np.full((T, B, H), -1.0, dtype=np.float64)
+
+        result = lp_portfolio_loop(
+            bid_px, bid_sz, ask_px, ask_sz, mid_px,
+            dv01, fair_price, zscore, adf_p,
+            tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
+            None, None, None,
+            **params,
+            hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
+            hedge_ask_px=h_ask, hedge_ask_sz=h_asz,
+            hedge_mid_px=h_mid,
+            hedge_dv01=hedge_dv01,
+            hedge_ratios=hedge_ratios,
+        )
+        n_trades = result[41]
+        assert n_trades > 0, "Expected at least one trade"
+        net_dv01 = self._net_dv01(result)
+        np.testing.assert_allclose(
+            net_dv01, 0.0, atol=1e-10,
+            err_msg="Net DV01 should be zero every bar with perfect liquidity",
+        )
+
+    def test_imperfect_first_bar_corrected_second_bar(self):
+        """min_qty_trade causes imperfect hedge on bar 0; bar 1 corrects it."""
+        T, B, H = 3, 1, 1
+        L = 3
+        bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, L, spread_bps=5.0)
+        dv01 = np.full((T, B), 0.01, dtype=np.float64)
+        # Buy signal only on bar 0 (bar 1+ no signal → no new instrument trades)
+        fair_price = np.copy(mid_px)
+        fair_price[0, :] += 1.0  # buy signal bar 0
+        zscore = np.full((T, B), 3.0)
+        adf_p = np.full((T, B), 0.01)
+        tradable = np.ones(B, dtype=np.int32)
+        pos_long = np.full(B, 1e6)
+        pos_short = np.full(B, -1e6)
+        params = _default_params(B)
+
+        # Ample instrument liquidity
+        h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H, L, spread_bps=5.0)
+        hedge_dv01 = np.full((T, H), 0.01, dtype=np.float64)
+        hedge_ratios = np.full((T, B, H), -1.0, dtype=np.float64)
+
+        # Hedge min_qty_trade causes rounding → imperfect hedge on bar 0
+        # Instrument gets ~100 DV01 worth of trades; hedge_min_qty_trade=500
+        # means hedge rounds to nearest 500, creating a mismatch.
+        result = lp_portfolio_loop(
+            bid_px, bid_sz, ask_px, ask_sz, mid_px,
+            dv01, fair_price, zscore, adf_p,
+            tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
+            None, None, None,
+            **params,
+            hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
+            hedge_ask_px=h_ask, hedge_ask_sz=h_asz,
+            hedge_mid_px=h_mid,
+            hedge_dv01=hedge_dv01,
+            hedge_ratios=hedge_ratios,
+            hedge_min_qty_trade=np.array([500.0]),
+        )
+        n_trades = result[41]
+        assert n_trades > 0
+        net_dv01 = self._net_dv01(result)
+        # Bar 0: hedge is rounded → net DV01 may not be zero
+        # Bar 1+: hedge rebalance corrects residual (no new instrument trades,
+        # but total-position-based hedge target catches up)
+        # On bar 1 the hedge target is recomputed from total pos and the
+        # residual should be corrected (if the rounded amount now matches).
+        # Net DV01 on the last bar should be zero or very small.
+        # With hedge_min_qty_trade=500 and instrument fill ~1000 units,
+        # the hedge rounds to 1000 (nearest 500), so it should be exact.
+        # Use a generous tolerance for rounding effects.
+        assert abs(net_dv01[-1]) < 500 * 0.01 + 1e-10, (
+            f"Net DV01 on last bar should be within one hedge quantum; "
+            f"got {net_dv01[-1]}"
+        )
+
+    def test_multiple_instruments_net_dv01_zero(self):
+        """Multiple instruments, each with hedge_ratio=-1, net DV01 is zero."""
+        T, B, H = 5, 4, 1
+        L = 3
+        bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, L, spread_bps=5.0)
+        dv01 = np.full((T, B), 0.01, dtype=np.float64)
+        # Vary DV01 per instrument
+        for b in range(B):
+            dv01[:, b] = 0.005 * (b + 1)
+        fair_price = mid_px + 1.0
+        zscore = np.full((T, B), 3.0)
+        adf_p = np.full((T, B), 0.01)
+        tradable = np.ones(B, dtype=np.int32)
+        pos_long = np.full(B, 1e6)
+        pos_short = np.full(B, -1e6)
+        params = _default_params(B)
+
+        h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H, L, spread_bps=5.0)
+        hedge_dv01 = np.full((T, H), 0.01, dtype=np.float64)
+        hedge_ratios = np.full((T, B, H), -1.0, dtype=np.float64)
+
+        result = lp_portfolio_loop(
+            bid_px, bid_sz, ask_px, ask_sz, mid_px,
+            dv01, fair_price, zscore, adf_p,
+            tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
+            None, None, None,
+            **params,
+            hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
+            hedge_ask_px=h_ask, hedge_ask_sz=h_asz,
+            hedge_mid_px=h_mid,
+            hedge_dv01=hedge_dv01,
+            hedge_ratios=hedge_ratios,
+        )
+        n_trades = result[41]
+        assert n_trades > 0
+        net_dv01 = self._net_dv01(result)
+        np.testing.assert_allclose(
+            net_dv01, 0.0, atol=1e-10,
+            err_msg="Net DV01 should be zero with 4 instruments and perfect liquidity",
+        )
+
+    def test_two_hedges_net_dv01_zero(self):
+        """Two hedges each with ratio -0.5 (summing to -1), net DV01 is zero."""
+        T, B, H = 5, 2, 2
+        L = 3
+        bid_px, bid_sz, ask_px, ask_sz, mid_px = _make_market(T, B, L, spread_bps=5.0)
+        dv01 = np.full((T, B), 0.01, dtype=np.float64)
+        fair_price = mid_px + 1.0
+        zscore = np.full((T, B), 3.0)
+        adf_p = np.full((T, B), 0.01)
+        tradable = np.ones(B, dtype=np.int32)
+        pos_long = np.full(B, 1e6)
+        pos_short = np.full(B, -1e6)
+        params = _default_params(B)
+
+        h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H, L, spread_bps=5.0)
+        hedge_dv01 = np.full((T, H), 0.01, dtype=np.float64)
+        # Split hedge across two hedges: -0.5 each
+        hedge_ratios = np.full((T, B, H), -0.5, dtype=np.float64)
+
+        result = lp_portfolio_loop(
+            bid_px, bid_sz, ask_px, ask_sz, mid_px,
+            dv01, fair_price, zscore, adf_p,
+            tradable, pos_long, pos_short,
+            np.full_like(pos_long, np.inf), np.full_like(pos_long, np.inf),
+            None, None, None,
+            **params,
+            hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
+            hedge_ask_px=h_ask, hedge_ask_sz=h_asz,
+            hedge_mid_px=h_mid,
+            hedge_dv01=hedge_dv01,
+            hedge_ratios=hedge_ratios,
+        )
+        n_trades = result[41]
+        assert n_trades > 0
+        net_dv01 = self._net_dv01(result)
+        np.testing.assert_allclose(
+            net_dv01, 0.0, atol=1e-10,
+            err_msg="Net DV01 should be zero with two hedges summing to -1",
+        )
 
 
 # =========================================================================
@@ -829,7 +1018,7 @@ class TestTimeVaryingMaturity:
         )
 
         # Same trades produced
-        assert result_1d[39] == result_2d[39]
+        assert result_1d[41] == result_2d[41]
         np.testing.assert_allclose(result_1d[0], result_2d[0])
 
     def test_2d_maturity_filter_blocks_when_maturity_decreases(self):
@@ -859,7 +1048,7 @@ class TestTimeVaryingMaturity:
             maturity_2d, None, None,
             **params,
         )
-        n_trades = result[39]
+        n_trades = result[41]
         tr_bar = result[9]
         # Trades should only happen in bars 0-2 (maturity >= 2.0)
         # Bars 3-5 have maturity < 2.0, risk-increasing trades should be blocked
@@ -905,7 +1094,7 @@ class TestTimeVaryingMaturity:
             **params,
         )
         # Should run without error — LP uses per-bar slice
-        assert result[39] >= 0  # non-negative trade count
+        assert result[41] >= 0  # non-negative trade count
 
     def test_1d_arrays_still_work(self):
         """Existing (B,) maturity and maturity_bucket arrays still work."""
@@ -932,4 +1121,4 @@ class TestTimeVaryingMaturity:
             maturity_1d, None, maturity_bucket_1d,
             **params,
         )
-        assert result[39] > 0  # trades happen
+        assert result[41] > 0  # trades happen

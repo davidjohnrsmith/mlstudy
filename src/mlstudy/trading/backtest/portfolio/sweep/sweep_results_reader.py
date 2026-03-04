@@ -151,6 +151,22 @@ class PortfolioSweepResultsReader:
             n_trades=n_trades,
         )
 
+        # Load instrument/hedge ID mapping if available
+        id_map_path = scenario_dir / "id_map.json"
+        if id_map_path.exists():
+            with open(id_map_path) as f:
+                id_map = json.load(f)
+            inst_map = id_map.get("instrument_ids", {})
+            if inst_map:
+                results.instrument_ids = [
+                    inst_map[str(i)] for i in range(len(inst_map))
+                ]
+            hedge_map = id_map.get("hedge_ids", {})
+            if hedge_map:
+                results.hedge_ids = [
+                    hedge_map[str(i)] for i in range(len(hedge_map))
+                ]
+
         return PortfolioFullScenario(spec=spec, results=results, directory=scenario_dir)
 
     @staticmethod

@@ -120,6 +120,7 @@ class PortfolioSweepExecutor:
         mat_bucket_dv01_caps,  # (n_buckets,) or None
         # Instrument identifiers
         instrument_ids,
+        hedge_ids=None,
         # Per-instrument execution
         qty_step,           # (B,) or scalar
         min_qty_trade,      # (B,) per-instrument min trade size
@@ -195,6 +196,7 @@ class PortfolioSweepExecutor:
             issuer_dv01_caps=issuer_dv01_caps,
             mat_bucket_dv01_caps=mat_bucket_dv01_caps,
             instrument_ids=instrument_ids,
+            hedge_ids=hedge_ids,
             qty_step=qty_step,
             min_qty_trade=min_qty_trade,
             hedge_bid_px=hedge_bid_px,

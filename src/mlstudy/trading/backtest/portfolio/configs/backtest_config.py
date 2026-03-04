@@ -74,6 +74,16 @@ class PortfolioBacktestConfig:
     #   e.g. maturity_bucket_bins=[2,5,7,10] → 5 buckets → 5 caps
     mat_bucket_dv01_caps: tuple[float, ...] = ()
 
+    # -- Hedge ratio validation ------------------------------------------------
+    # Expected sum of hedge_ratios across hedges per instrument.
+    # None to skip validation; e.g. -1.0 means fully hedged.
+    expected_hedge_ratio_sum: float | None = None
+
+    # -- Time-of-day filter ----------------------------------------------------
+    # Remove bars outside [start_time, end_time].  None to disable.
+    start_time: str | None = None
+    end_time: str | None = None
+
     def __post_init__(self):
         if self.issuer_dv01_caps is None:
             object.__setattr__(self, "issuer_dv01_caps", {})

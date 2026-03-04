@@ -168,6 +168,78 @@ def _round_qty_trade(qty, min_qty_trade, qty_step):
 # ======================================================================
 
 
+def _greedy_allocate(
+    alphas, ub, gross_dv01_cap,
+    inst_indices, sides,
+    issuer_bucket, maturity_bucket,
+    issuer_dv01_caps, mat_bucket_dv01_caps,
+    current_issuer_dv01, current_mat_dv01,
+):
+    """Greedy allocation by descending alpha, respecting all caps.
+
+    Respects gross DV01 budget, per-candidate upper bounds, and
+    issuer / maturity bucket signed-DV01 caps.
+    """
+    K = len(alphas)
+    dv01_sizes = np.zeros(K, dtype=np.float64)
+    order = np.argsort(-alphas)
+    remaining_budget = gross_dv01_cap
+
+    # Running signed DV01 accumulators (copy so we don't mutate caller arrays)
+    has_issuer = (issuer_bucket is not None and issuer_dv01_caps is not None
+                  and len(issuer_dv01_caps) > 0)
+    has_mat = (maturity_bucket is not None and mat_bucket_dv01_caps is not None
+               and len(mat_bucket_dv01_caps) > 0)
+    running_issuer_dv01 = (current_issuer_dv01.copy() if has_issuer
+                           else None)
+    running_mat_dv01 = (current_mat_dv01.copy() if has_mat else None)
+
+    for idx in order:
+        if remaining_budget <= 1e-15:
+            break
+        alloc = min(ub[idx], remaining_budget)
+        if alloc <= 1e-15:
+            continue
+
+        b_idx = inst_indices[idx]
+        s = sides[idx]
+
+        # Clamp by issuer bucket headroom
+        if has_issuer:
+            iss = issuer_bucket[b_idx]
+            cap_iss = issuer_dv01_caps[iss]
+            cur_iss = running_issuer_dv01[iss]
+            # |cur_iss + s * alloc| <= cap_iss
+            if s > 0:
+                iss_headroom = cap_iss - cur_iss
+            else:
+                iss_headroom = cap_iss + cur_iss
+            alloc = min(alloc, max(iss_headroom, 0.0))
+
+        # Clamp by maturity bucket headroom
+        if has_mat:
+            bkt = maturity_bucket[b_idx]
+            cap_mat = mat_bucket_dv01_caps[bkt]
+            cur_mat = running_mat_dv01[bkt]
+            if s > 0:
+                mat_headroom = cap_mat - cur_mat
+            else:
+                mat_headroom = cap_mat + cur_mat
+            alloc = min(alloc, max(mat_headroom, 0.0))
+
+        if alloc <= 1e-15:
+            continue
+
+        dv01_sizes[idx] = alloc
+        remaining_budget -= alloc
+        if has_issuer:
+            running_issuer_dv01[issuer_bucket[b_idx]] += s * alloc
+        if has_mat:
+            running_mat_dv01[maturity_bucket[b_idx]] += s * alloc
+
+    return dv01_sizes
+
+
 def _solve_lp(
     alphas,           # (K,) alpha_bps per candidate (positive)
     dv01_liq_caps,    # (K,) max dv01 fillable per candidate
@@ -197,19 +269,13 @@ def _solve_lp(
     ub = np.maximum(ub, 0.0)
 
     if use_greedy:
-        # Skip LP entirely — jump straight to greedy allocation
-        order = np.argsort(-alphas)
-        dv01_sizes = np.zeros(K, dtype=np.float64)
-        remaining_budget = gross_dv01_cap
-        for idx in order:
-            if remaining_budget <= 1e-15:
-                break
-            alloc = min(ub[idx], remaining_budget)
-            if alloc <= 1e-15:
-                continue
-            dv01_sizes[idx] = alloc
-            remaining_budget -= alloc
-        return dv01_sizes, True
+        return _greedy_allocate(
+            alphas, ub, gross_dv01_cap,
+            inst_indices, sides,
+            issuer_bucket, maturity_bucket,
+            issuer_dv01_caps, mat_bucket_dv01_caps,
+            current_issuer_dv01, current_mat_dv01,
+        ), True
 
     # Minimise -alpha·x  (maximise alpha·x)
     c = -alphas.copy()
@@ -270,21 +336,8 @@ def _solve_lp(
     except Exception:
         pass
 
-    # Greedy fallback: allocate by descending alpha, respecting caps
-    order = np.argsort(-alphas)
-    dv01_sizes = np.zeros(K, dtype=np.float64)
-    remaining_budget = gross_dv01_cap
-
-    for idx in order:
-        if remaining_budget <= 1e-15:
-            break
-        alloc = min(ub[idx], remaining_budget)
-        if alloc <= 1e-15:
-            continue
-        dv01_sizes[idx] = alloc
-        remaining_budget -= alloc
-
-    return dv01_sizes, True
+    # LP failed — do not trade this bar
+    return np.zeros(K, dtype=np.float64), False
 
 
 # ======================================================================
@@ -323,12 +376,13 @@ def _build_candidates(
     Returns (c_inst, c_side, c_alpha, c_fair_type, c_dv01_liq,
              c_pos_hr, n_cand).
     """
-    cand_inst = np.empty(B, dtype=np.int32)
-    cand_side = np.empty(B, dtype=np.int32)
-    cand_alpha = np.empty(B, dtype=np.float64)
-    cand_fair_type = np.empty(B, dtype=np.int32)
-    cand_dv01_liq = np.empty(B, dtype=np.float64)
-    cand_pos_headroom = np.empty(B, dtype=np.float64)
+    max_cand = B
+    cand_inst = np.empty(max_cand, dtype=np.int32)
+    cand_side = np.empty(max_cand, dtype=np.int32)
+    cand_alpha = np.empty(max_cand, dtype=np.float64)
+    cand_fair_type = np.empty(max_cand, dtype=np.int32)
+    cand_dv01_liq = np.empty(max_cand, dtype=np.float64)
+    cand_pos_headroom = np.empty(max_cand, dtype=np.float64)
     n_cand = 0
 
     for b in range(B):
@@ -503,12 +557,11 @@ def _execute_instrument_trades(
     bid_px, ask_px, bid_sz, ask_sz, mid_px, dv01,
     qty_step, min_qty_trade, min_fill_ratio, max_levels, haircut,
     pos, cash, cum_instrument_cash_mid,
-    has_hedge, hedge_ratios, hedge_dv01, hedge_pos, H,
 ):
     """Round LP allocations and execute via L2 book walking (Step 9).
 
     Mutates *pos* in-place.  Returns (fills_list, any_executed, any_partial,
-    any_failed, bar_n_trades, bar_position_cost, hedge_target, cash,
+    any_failed, bar_n_trades, bar_position_cost, cash,
     cum_instrument_cash_mid) where *fills_list* is a list of per-fill tuples
     to be recorded into the output arrays by the caller.
     """
@@ -518,11 +571,6 @@ def _execute_instrument_trades(
     bar_n_trades = 0
     bar_position_cost = 0.0
     fills_list = []
-
-    if has_hedge:
-        hedge_target = hedge_pos.copy()
-    else:
-        hedge_target = None
 
     for k in range(n_cand):
         raw_dv01 = dv01_alloc[k]
@@ -596,20 +644,36 @@ def _execute_instrument_trades(
             any_executed = True
             bar_n_trades += 1
 
-            # -- Accumulate hedge target --
-            if has_hedge:
-                for h in range(H):
-                    hr = hedge_ratios[t, b_idx, h]
-                    if abs(hr) < 1e-15:
-                        continue
-                    hdv01 = hedge_dv01[t, h]
-                    if not (hdv01 >= 1e-15):  # catches NaN
-                        continue
-                    hedge_target[h] += signed_qty * dv01_b * hr / hdv01
-
     return (fills_list, any_executed, any_partial, any_failed,
-            bar_n_trades, bar_position_cost, hedge_target,
+            bar_n_trades, bar_position_cost,
             cash, cum_instrument_cash_mid)
+
+
+def _compute_hedge_target(t, B, H, pos, dv01, hedge_ratios, hedge_dv01):
+    """Compute desired hedge position from total instrument position.
+
+    For each hedge h, the target is:
+        target[h] = sum_b( pos[b] * dv01[t,b] * hedge_ratios[t,b,h] / hedge_dv01[t,h] )
+
+    This ensures the hedge fully offsets instrument DV01 when hedge_ratios
+    sum to -1.
+    """
+    hedge_target = np.zeros(H, dtype=np.float64)
+    for h in range(H):
+        hdv01 = hedge_dv01[t, h]
+        if not (hdv01 >= 1e-15):  # catches NaN
+            continue
+        for b in range(B):
+            if abs(pos[b]) < 1e-15:
+                continue
+            dv01_b = dv01[t, b]
+            if not (dv01_b >= 1e-15):
+                continue
+            hr = hedge_ratios[t, b, h]
+            if abs(hr) < 1e-15:
+                continue
+            hedge_target[h] += pos[b] * dv01_b * hr / hdv01
+    return hedge_target
 
 
 def _execute_hedge_rebalance(
@@ -920,6 +984,10 @@ def lp_portfolio_loop(
     out_net_hedge_dv01 = np.zeros(T, dtype=np.float64)
     out_gross_hedge_dv01 = np.zeros(T, dtype=np.float64)
 
+    # -- Per-bar hedge fill tracking --
+    out_hedge_fills_bar = np.zeros((T, max(H, 1)), dtype=np.float64)
+    out_hedge_vwaps_bar = np.zeros((T, max(H, 1)), dtype=np.float64)
+
     # -- Mutable state --
     if initial_state is not None:
         pos = initial_state.pos.copy()
@@ -1034,7 +1102,7 @@ def lp_portfolio_loop(
 
                 # Step 9: Round and execute instrument trades
                 fills, any_executed, any_partial, any_failed, \
-                    bar_n_trades, bar_position_cost, hedge_target, \
+                    bar_n_trades, bar_position_cost, \
                     cash, cum_instrument_cash_mid = \
                     _execute_instrument_trades(
                         t, n_cand, dv01_alloc, c_inst, c_side,
@@ -1043,8 +1111,6 @@ def lp_portfolio_loop(
                         qty_step, min_qty_trade, min_fill_ratio,
                         max_levels, haircut,
                         pos, cash, cum_instrument_cash_mid,
-                        has_hedge, hedge_ratios, hedge_dv01,
-                        hedge_pos, H,
                     )
 
                 # Record fills into output arrays
@@ -1068,31 +1134,6 @@ def lp_portfolio_loop(
                         tr_code[n_trades_total] = tr_code_k
                         n_trades_total += 1
 
-                # Step 10: Execute net hedge for the bar
-                if has_hedge and any_executed:
-                    cash, cum_hedge_cash_mid, bar_hedge_cost, \
-                        hedge_trade_cash, hedge_fills = \
-                        _execute_hedge_rebalance(
-                            t, H, hedge_target, hedge_pos,
-                            hedge_bid_px, hedge_ask_px,
-                            hedge_bid_sz, hedge_ask_sz, hedge_mid_px,
-                            hedge_qty_step, hedge_min_qty_trade,
-                            max_levels, haircut,
-                            cash, cum_hedge_cash_mid,
-                        )
-                    bar_hedge_cost_t = bar_hedge_cost
-                    # Record hedge fills in last trade's arrays
-                    last_trade = n_trades_total - 1
-                    if last_trade >= 0 and last_trade < max_trades:
-                        for (h, h_req, h_signed, h_vwap) in hedge_fills:
-                            tr_hedge_sizes[last_trade, h] = h_req
-                            tr_hedge_fills[last_trade, h] = h_signed
-                            tr_hedge_vwaps[last_trade, h] = h_vwap
-                        if bar_hedge_cost > 0.0:
-                            tr_hedge_cost[last_trade] = bar_hedge_cost
-
-                bar_cost = bar_position_cost + bar_hedge_cost_t
-
                 # Determine bar code
                 if any_executed and not any_partial and not any_failed:
                     code = _EXEC_GREEDY if used_greedy else _EXEC_OK
@@ -1107,6 +1148,39 @@ def lp_portfolio_loop(
                 # Start cooldown if any trades were executed
                 if any_executed and cooldown_bars > 0:
                     cooldown_remaining = cooldown_bars
+
+        # Step 10: Hedge rebalance — computed from TOTAL instrument
+        # position so residual mismatches from rounding are corrected.
+        if has_hedge:
+            hedge_target = _compute_hedge_target(
+                t, B, H, pos, dv01, hedge_ratios, hedge_dv01)
+            cash, cum_hedge_cash_mid, bar_hedge_cost, \
+                hedge_trade_cash, hedge_fills = \
+                _execute_hedge_rebalance(
+                    t, H, hedge_target, hedge_pos,
+                    hedge_bid_px, hedge_ask_px,
+                    hedge_bid_sz, hedge_ask_sz, hedge_mid_px,
+                    hedge_qty_step, hedge_min_qty_trade,
+                    max_levels, haircut,
+                    cash, cum_hedge_cash_mid,
+                )
+            bar_hedge_cost_t = bar_hedge_cost
+            # Record hedge fills in per-bar arrays (always)
+            for (h, h_req, h_signed, h_vwap) in hedge_fills:
+                out_hedge_fills_bar[t, h] = h_signed
+                out_hedge_vwaps_bar[t, h] = h_vwap
+            # Record hedge fills in per-trade arrays (only when instrument trades exist this bar)
+            if bar_n_trades > 0:
+                last_trade = n_trades_total - 1
+                if 0 <= last_trade < max_trades:
+                    for (h, h_req, h_signed, h_vwap) in hedge_fills:
+                        tr_hedge_sizes[last_trade, h] = h_req
+                        tr_hedge_fills[last_trade, h] = h_signed
+                        tr_hedge_vwaps[last_trade, h] = h_vwap
+                    if bar_hedge_cost > 0.0:
+                        tr_hedge_cost[last_trade] = bar_hedge_cost
+
+        bar_cost = bar_position_cost + bar_hedge_cost_t
 
         # ==============================================================
         # End-of-bar bookkeeping
@@ -1215,8 +1289,11 @@ def lp_portfolio_loop(
         out_gross_instrument_dv01,    # 36: (T,)
         out_net_hedge_dv01,           # 37: (T,)
         out_gross_hedge_dv01,         # 38: (T,)
+        # Per-bar hedge fill tracking
+        out_hedge_fills_bar,          # 39: (T, H) signed hedge fills per bar
+        out_hedge_vwaps_bar,          # 40: (T, H) hedge fill VWAPs per bar
         # Scalar
-        n_trades_total,               # 39
+        n_trades_total,               # 41
     )
 
     if return_final_state:

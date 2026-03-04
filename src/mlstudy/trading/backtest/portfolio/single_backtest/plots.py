@@ -55,6 +55,21 @@ def _format_xaxis(ax, res: PortfolioBacktestResults) -> None:
     ax.tick_params(axis="x", labelsize=7, rotation=30)
 
 
+def _instrument_label(res: PortfolioBacktestResults, b: int) -> str:
+    """Short label: instrument id + maturity (e.g. 'UST2Y 4.3y')."""
+    if res.instrument_ids is not None and b < len(res.instrument_ids):
+        name = str(res.instrument_ids[b])
+    else:
+        name = f"Inst {b}"
+    if res.maturity is not None and b < len(res.maturity):
+        mat = res.maturity[b]
+        if mat < 1.0:
+            name += f" {mat * 12:.0f}m"
+        else:
+            name += f" {mat:.1f}y"
+    return name
+
+
 def shade_inactive_hours(
     ax, res: PortfolioBacktestResults,
     inactive_start: str = "16:30",
@@ -187,7 +202,46 @@ def plot_portfolio_mtm_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes
     ax.axhline(0, color="black", linewidth=0.3)
     ax.set_ylabel("Portfolio MTM")
     _format_xaxis(ax, res)
-    ax.legend(**_LEGEND_KW)
+
+    # Portfolio MTM with cost on right axis
+    ax2 = ax.twinx()
+    mtm_with_cost = res.portfolio_mtm[:T] - np.cumsum(res.portfolio_cost[:T])
+    ax2.plot(bars, mtm_with_cost, linewidth=0.8, color="darkorange",
+             label="MTM with cost")
+    ax2.set_ylabel("MTM with cost")
+
+    # Combined legend
+    lines, labels = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines + lines2, labels + labels2, **_LEGEND_KW)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_cost_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Cumulative cost breakdown: portfolio on left, instrument/hedge on right."""
+    if ax is None:
+        _, ax = plt.subplots()
+    T = len(res.equity)
+    bars = np.arange(T)
+    cum_portfolio = np.cumsum(res.portfolio_cost[:T])
+    ax.plot(bars, cum_portfolio, linewidth=0.8, color="steelblue",
+            label="Portfolio cost")
+    ax.set_ylabel("Portfolio cost")
+    _format_xaxis(ax, res)
+
+    ax2 = ax.twinx()
+    cum_inst = np.cumsum(res.instrument_cost[:T])
+    cum_hedge = np.cumsum(res.hedge_cost_bar[:T])
+    ax2.plot(bars, cum_inst, linewidth=0.8, color="darkorange",
+             label="Instrument cost")
+    ax2.plot(bars, cum_hedge, linewidth=0.8, color="green",
+             label="Hedge cost")
+    ax2.set_ylabel("Component cost")
+
+    lines, labels = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines + lines2, labels + labels2, **_LEGEND_KW)
     ax.grid(True, alpha=0.3)
     return ax
 
@@ -240,12 +294,17 @@ def plot_hedge_positions_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Ax
         return ax
     T = hpos.shape[0]
     bars = np.arange(T)
-    for h in range(hpos.shape[1]):
-        ax.plot(bars, hpos[:, h], linewidth=0.7, alpha=0.8, label=f"Hedge {h}")
+    H = hpos.shape[1]
+    for h in range(H):
+        label = f"Hedge {h}"
+        if res.hedge_ids is not None and h < len(res.hedge_ids):
+            label = str(res.hedge_ids[h])
+        ax.plot(bars, hpos[:, h], linewidth=0.7, alpha=0.8, label=label)
     ax.axhline(0, color="black", linewidth=0.3)
     ax.set_ylabel("Hedge Pos")
     _format_xaxis(ax, res)
-    ax.legend(**_LEGEND_KW)
+    ncol = 1 if H <= 15 else 2
+    ax.legend(**_LEGEND_KW, ncol=ncol)
     ax.grid(True, alpha=0.3)
     return ax
 
@@ -265,22 +324,58 @@ def plot_pnl_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
 
 
 def plot_gross_dv01_on_ax(res: PortfolioBacktestResults, ax=None, cap: float | None = None) -> plt.Axes:
-    """Net and gross total DV01 exposure over time."""
+    """Gross DV01: left=total+cap, right=instrument+hedge."""
     if ax is None:
         _, ax = plt.subplots()
     T = len(res.equity)
     bars = np.arange(T)
-    ax.plot(bars, res.gross_instrument_dv01[:T] + res.gross_hedge_dv01[:T],
-            linewidth=0.8, color="darkorange", label="Gross Total")
-    ax.plot(bars, res.net_instrument_dv01[:T] + res.net_hedge_dv01[:T],
-            linewidth=0.8, color="steelblue", label="Net Total")
+    gross_total = res.gross_instrument_dv01[:T] + res.gross_hedge_dv01[:T]
+    ax.plot(bars, gross_total, linewidth=0.8, color="steelblue",
+            label="Gross Total")
     if cap is not None:
         ax.axhline(cap, color="red", linewidth=0.5, linestyle="--",
                    alpha=0.7, label=f"Cap={cap}")
     ax.axhline(0, color="black", linewidth=0.3)
-    ax.set_ylabel("DV01")
+    ax.set_ylabel("Gross DV01")
     _format_xaxis(ax, res)
-    ax.legend(**_LEGEND_KW)
+
+    ax2 = ax.twinx()
+    ax2.plot(bars, res.gross_instrument_dv01[:T], linewidth=0.8,
+             color="darkorange", label="Gross Instrument")
+    ax2.plot(bars, res.gross_hedge_dv01[:T], linewidth=0.8,
+             color="green", label="Gross Hedge")
+    ax2.set_ylabel("Component Gross DV01")
+
+    lines, labels = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines + lines2, labels + labels2, **_LEGEND_KW)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_net_dv01_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Net DV01: left=net total, right=net instrument+hedge."""
+    if ax is None:
+        _, ax = plt.subplots()
+    T = len(res.equity)
+    bars = np.arange(T)
+    net_total = res.net_instrument_dv01[:T] + res.net_hedge_dv01[:T]
+    ax.plot(bars, net_total, linewidth=0.8, color="steelblue",
+            label="Net Total")
+    ax.axhline(0, color="black", linewidth=0.3)
+    ax.set_ylabel("Net DV01")
+    _format_xaxis(ax, res)
+
+    ax2 = ax.twinx()
+    ax2.plot(bars, res.net_instrument_dv01[:T], linewidth=0.8,
+             color="darkorange", label="Net Instrument")
+    ax2.plot(bars, res.net_hedge_dv01[:T], linewidth=0.8,
+             color="green", label="Net Hedge")
+    ax2.set_ylabel("Component Net DV01")
+
+    lines, labels = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines + lines2, labels + labels2, **_LEGEND_KW)
     ax.grid(True, alpha=0.3)
     return ax
 
@@ -313,11 +408,23 @@ def plot_position_heatmap_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.A
     vmax = np.nanmax(np.abs(pos))
     if vmax < 1e-15:
         vmax = 1.0
+    B = pos.shape[1]
+    # Sort instruments by maturity if available
+    if res.maturity is not None and len(res.maturity) == B:
+        order = np.argsort(res.maturity)[::-1]
+    else:
+        order = np.arange(B)
     im = ax.imshow(
-        pos.T, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+        pos[:, order].T, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax,
         interpolation="nearest", origin="lower",
     )
-    ax.set_ylabel("Instrument")
+    # Label y-axis with instrument names (readable for up to ~30; skip for many)
+    if B <= 30:
+        labels = [_instrument_label(res, b) for b in order]
+        ax.set_yticks(range(B))
+        ax.set_yticklabels(labels, fontsize=max(5, 8 - B // 10))
+    else:
+        ax.set_ylabel("Instrument (by maturity)")
     ax.set_xlabel("Bar")
     plt.colorbar(im, ax=ax, fraction=0.02, pad=0.01, label="Position")
     return ax
@@ -341,17 +448,19 @@ def plot_top_k_positions_on_ax(
         exposure = np.abs(pos)
     max_exp = np.nanmax(exposure, axis=0)  # (B,)
     top_idx = np.argsort(max_exp)[::-1][:k]
+    n_plotted = 0
     for rank, b in enumerate(top_idx):
         if max_exp[b] < 1e-15:
             break
-        label = f"Inst {b}"
-        if res.instrument_ids is not None and b < len(res.instrument_ids):
-            label = str(res.instrument_ids[b])
+        label = _instrument_label(res, b)
         ax.plot(bars, pos[:, b], linewidth=0.7, alpha=0.8, label=label)
+        n_plotted += 1
     ax.axhline(0, color="black", linewidth=0.3)
     ax.set_ylabel("Position")
+    ax.set_title(f"Top {n_plotted} Positions (by max DV01 exposure)", fontsize=9)
     _format_xaxis(ax, res)
-    ax.legend(**_LEGEND_KW)
+    ncol = 1 if n_plotted <= 15 else 2
+    ax.legend(**_LEGEND_KW, ncol=ncol)
     ax.grid(True, alpha=0.3)
     return ax
 

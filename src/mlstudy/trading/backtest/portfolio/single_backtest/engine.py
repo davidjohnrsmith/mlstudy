@@ -44,6 +44,7 @@ def _validate(
     hedge_mid_px: np.ndarray,
     hedge_dv01: np.ndarray,
     hedge_ratios: np.ndarray,
+    expected_hedge_ratio_sum: float | None = None,
 ) -> None:
     """Shape and value checks (fail fast)."""
     T, B, L = validate_l2_shapes(bid_px, bid_sz, ask_px, ask_sz, mid_px)
@@ -103,15 +104,26 @@ def _validate(
                 f"hedge_min_qty_trade length {len(hedge_min_qty_trade)} != expected H={H}"
             )
         # hedge_ratios sum should be <= 0 for each instrument (sell hedge when
-        # buying instrument).  Warn if any instrument has positive sum.
+        # buying instrument).
         ratio_sum = hedge_ratios.sum(axis=2)          # (T, B)
         if np.any(ratio_sum > 0):
-            import warnings
-            warnings.warn(
+            raise ValueError(
                 "hedge_ratios sum across hedges is positive for some "
                 "(time, instrument) entries; expected <= 0 (sell hedge when "
                 "buying instrument)"
             )
+        # Optional: validate that hedge_ratios sum equals expected value
+        if expected_hedge_ratio_sum is not None:
+            atol = 1e-6
+            bad = np.abs(ratio_sum - expected_hedge_ratio_sum) > atol
+            if np.any(bad):
+                n_bad = int(np.sum(bad))
+                sample_sums = ratio_sum[bad][:5]
+                raise ValueError(
+                    f"hedge_ratios sum across hedges does not equal "
+                    f"{expected_hedge_ratio_sum} for {n_bad} (time, instrument) "
+                    f"entries; sample sums: {sample_sums.tolist()}"
+                )
 
 
 def run_backtest(
@@ -149,8 +161,9 @@ def run_backtest(
     hedge_mid_px: np.ndarray = None,
     hedge_dv01: np.ndarray = None,
     hedge_ratios: np.ndarray = None,
-    # -- Instrument IDs --
+    # -- Instrument / hedge IDs --
     instrument_ids: list[str] = None,
+    hedge_ids: list[str] = None,
     # -- Per-instrument qty_step / min_qty_trade --
     qty_step: np.ndarray = None,     # (B,)
     min_qty_trade: np.ndarray = None,  # (B,)
@@ -214,6 +227,47 @@ def run_backtest(
     -------
     PortfolioBacktestResults
     """
+    # -- Time-of-day filter (before any validation / processing) ----------------
+    _start_time = getattr(cfg, "start_time", None) if cfg is not None else None
+    _end_time = getattr(cfg, "end_time", None) if cfg is not None else None
+    if (_start_time or _end_time) and datetimes is not None:
+        import pandas as pd
+        dts = pd.DatetimeIndex(datetimes)
+        mask = np.ones(len(dts), dtype=bool)
+        if _start_time:
+            mask &= dts.time >= pd.Timestamp(_start_time).time()
+        if _end_time:
+            mask &= dts.time <= pd.Timestamp(_end_time).time()
+        if not mask.all():
+            n_before = len(dts)
+            # Slice all T-indexed arrays
+            datetimes = datetimes[mask]
+            bid_px = bid_px[mask]
+            bid_sz = bid_sz[mask]
+            ask_px = ask_px[mask]
+            ask_sz = ask_sz[mask]
+            mid_px = mid_px[mask]
+            dv01 = dv01[mask]
+            fair_price = fair_price[mask]
+            zscore = zscore[mask]
+            adf_p_value = adf_p_value[mask]
+            if maturity is not None and maturity.ndim == 2:
+                maturity = maturity[mask]
+            if maturity_bucket is not None and maturity_bucket.ndim == 2:
+                maturity_bucket = maturity_bucket[mask]
+            if hedge_bid_px is not None:
+                hedge_bid_px = hedge_bid_px[mask]
+                hedge_bid_sz = hedge_bid_sz[mask]
+                hedge_ask_px = hedge_ask_px[mask]
+                hedge_ask_sz = hedge_ask_sz[mask]
+                hedge_mid_px = hedge_mid_px[mask]
+                hedge_dv01 = hedge_dv01[mask]
+                hedge_ratios = hedge_ratios[mask]
+            logger.info(
+                "Time filter [%s, %s]: %d → %d bars",
+                _start_time, _end_time, n_before, len(datetimes),
+            )
+
     T, B, L = bid_px.shape
     H = hedge_mid_px.shape[1] if hedge_mid_px is not None and hedge_mid_px.ndim >= 2 else 0
     logger.info(
@@ -229,6 +283,7 @@ def run_backtest(
         qty_step, min_qty_trade, hedge_qty_step, hedge_min_qty_trade,
         hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
         hedge_mid_px, hedge_dv01, hedge_ratios,
+        expected_hedge_ratio_sum=getattr(cfg, "expected_hedge_ratio_sum", None),
     )
 
     B = mid_px.shape[1]
@@ -311,7 +366,9 @@ def run_backtest(
         hedge_ratios=f_hedge_ratios,
         dv01=f_dv01,
         hedge_dv01=f_hedge_dv01,
+        maturity=maturity[0] if maturity.ndim == 2 else maturity,
         instrument_ids=instrument_ids,
+        hedge_ids=hedge_ids,
         initial_capital=float(cfg.initial_capital),
     )
 
@@ -400,6 +457,8 @@ def run_backtest_chunked(
     gross_instrument_dv01 = np.concatenate([r.gross_instrument_dv01 for r, _ in chunk_results])
     net_hedge_dv01 = np.concatenate([r.net_hedge_dv01 for r, _ in chunk_results])
     gross_hedge_dv01 = np.concatenate([r.gross_hedge_dv01 for r, _ in chunk_results])
+    hedge_fills_bar = np.concatenate([r.hedge_fills_bar for r, _ in chunk_results], axis=0)
+    hedge_vwaps_bar = np.concatenate([r.hedge_vwaps_bar for r, _ in chunk_results], axis=0)
 
     # Stitch per-trade arrays with bar index offset
     tr_bars = []
@@ -527,6 +586,7 @@ def run_backtest_chunked(
         tr_hedge_cost=_concat_or_empty(tr_hedge_costs),
         n_trades=total_trades,
         instrument_ids=first.instrument_ids,
+        hedge_ids=first.hedge_ids,
         initial_capital=first.initial_capital,
         datetimes=datetimes,
         close_time=first.close_time,
@@ -537,8 +597,11 @@ def run_backtest_chunked(
         hedge_ratios=hedge_ratios,
         dv01=dv01_arr,
         hedge_dv01=hedge_dv01,
+        maturity=first.maturity,
         net_instrument_dv01=net_instrument_dv01,
         gross_instrument_dv01=gross_instrument_dv01,
         net_hedge_dv01=net_hedge_dv01,
         gross_hedge_dv01=gross_hedge_dv01,
+        hedge_fills_bar=hedge_fills_bar,
+        hedge_vwaps_bar=hedge_vwaps_bar,
     )

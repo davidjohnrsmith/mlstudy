@@ -15,7 +15,9 @@ from mlstudy.trading.backtest.portfolio.single_backtest.plots import (
     plot_equity_on_ax,
     plot_drawdown_on_ax,
     plot_portfolio_mtm_on_ax,
+    plot_cost_on_ax,
     plot_component_mtm_on_ax,
+    plot_net_dv01_on_ax,
     plot_positions_on_ax,
     plot_hedge_positions_on_ax,
     plot_gross_dv01_on_ax,
@@ -82,8 +84,10 @@ def plot_scenario(
         ("equity", 3),
         ("drawdown", 1),
         ("portfolio_mtm", 2),
+        ("cost", 2),
         ("component_mtm", 2),
-        ("dv01", 2),
+        ("net_dv01", 2),
+        ("gross_dv01", 2),
     ]
     if has_positions:
         panels.append(("pos_count", 1))
@@ -109,9 +113,13 @@ def plot_scenario(
             plot_drawdown_on_ax(res, ax=ax)
         elif name == "portfolio_mtm":
             plot_portfolio_mtm_on_ax(res, ax=ax)
+        elif name == "cost":
+            plot_cost_on_ax(res, ax=ax)
         elif name == "component_mtm":
             plot_component_mtm_on_ax(res, ax=ax)
-        elif name == "dv01":
+        elif name == "net_dv01":
+            plot_net_dv01_on_ax(res, ax=ax)
+        elif name == "gross_dv01":
             plot_gross_dv01_on_ax(res, ax=ax, cap=cap)
         elif name == "pos_count":
             plot_position_count_on_ax(res, ax=ax)
@@ -179,7 +187,6 @@ def plot_scenario_detail(
     if has_positions:
         panels.append(("heatmap", 3))
         panels.append(("top_k", 2))
-    panels.append(("dv01_breakdown", 2))
     if has_hedges:
         panels.append(("hedges", 2))
 
@@ -206,8 +213,6 @@ def plot_scenario_detail(
             )
         elif name == "top_k":
             plot_top_k_positions_on_ax(res, ax=ax, k=top_k)
-        elif name == "dv01_breakdown":
-            plot_dv01_breakdown_on_ax(res, ax=ax)
         elif name == "hedges":
             plot_hedge_positions_on_ax(res, ax=ax)
 
@@ -318,7 +323,7 @@ def _add_stats_textbox(fig, scenario: PortfolioFullScenario) -> None:
 
     text = "\n".join(lines)
     fig.text(
-        0.80, 0.95, text,
+        0.88, 0.95, text,
         fontsize=7,
         fontfamily="monospace",
         verticalalignment="top",

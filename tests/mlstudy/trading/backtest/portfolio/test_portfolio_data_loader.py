@@ -350,7 +350,7 @@ class TestPortfolioMarketDataToDict:
             "hedge_bid_px", "hedge_bid_sz", "hedge_ask_px", "hedge_ask_sz",
             "hedge_mid_px", "hedge_dv01", "hedge_ratios",
             "hedge_qty_step", "hedge_min_qty_trade",
-            "datetimes", "instrument_ids",
+            "datetimes", "instrument_ids", "hedge_ids",
         }
         assert set(d.keys()) == expected_keys
 
