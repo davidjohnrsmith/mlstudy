@@ -55,6 +55,61 @@ def _format_xaxis(ax, res: PortfolioBacktestResults) -> None:
     ax.tick_params(axis="x", labelsize=7, rotation=30)
 
 
+def shade_inactive_hours(
+    ax, res: PortfolioBacktestResults,
+    inactive_start: str = "16:30",
+    inactive_end: str = "08:30",
+) -> None:
+    """Add grey shading for inactive (non-trading) hours.
+
+    Parameters
+    ----------
+    ax : matplotlib Axes
+    res : PortfolioBacktestResults
+        Must have ``datetimes`` set.
+    inactive_start : str
+        Time of day when inactive period starts (e.g. "16:30").
+    inactive_end : str
+        Time of day when inactive period ends (e.g. "08:30").
+    """
+    if res.datetimes is None:
+        return
+    dts = res.datetimes
+    T = len(dts)
+    if T == 0:
+        return
+
+    from datetime import time as dt_time
+
+    h_s, m_s = (int(x) for x in inactive_start.split(":"))
+    h_e, m_e = (int(x) for x in inactive_end.split(":"))
+    t_start = dt_time(h_s, m_s)
+    t_end = dt_time(h_e, m_e)
+
+    # Identify contiguous inactive spans and shade them
+    in_inactive = False
+    span_start = 0
+    for i in range(T):
+        ts = pd.Timestamp(dts[i])
+        t = ts.time()
+        if t_start <= t_end:
+            # simple range, e.g. 09:00 – 16:00
+            is_inactive = t >= t_start or t < t_end
+        else:
+            # overnight range, e.g. 16:30 – 08:30
+            is_inactive = t >= t_start or t < t_end
+        if is_inactive and not in_inactive:
+            span_start = i
+            in_inactive = True
+        elif not is_inactive and in_inactive:
+            ax.axvspan(span_start - 0.5, i - 0.5, color="grey",
+                       alpha=0.08, zorder=0)
+            in_inactive = False
+    if in_inactive:
+        ax.axvspan(span_start - 0.5, T - 0.5, color="grey",
+                   alpha=0.08, zorder=0)
+
+
 # ---------------------------------------------------------------------------
 # Trade overlay helpers
 # ---------------------------------------------------------------------------
@@ -121,6 +176,42 @@ def plot_drawdown_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
     return ax
 
 
+def plot_portfolio_mtm_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Portfolio MTM line."""
+    if ax is None:
+        _, ax = plt.subplots()
+    T = len(res.equity)
+    bars = np.arange(T)
+    ax.plot(bars, res.portfolio_mtm[:T], linewidth=0.8, color="steelblue",
+            label="Portfolio MTM")
+    ax.axhline(0, color="black", linewidth=0.3)
+    ax.set_ylabel("Portfolio MTM")
+    _format_xaxis(ax, res)
+    ax.legend(**_LEGEND_KW)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_component_mtm_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Instrument MTM and hedge MTM lines."""
+    if ax is None:
+        _, ax = plt.subplots()
+    T = len(res.equity)
+    bars = np.arange(T)
+    inst_mtm = res.instrument_position_mtm[:T] + res.instrument_cash_mtm[:T]
+    hedge_mtm = res.hedge_position_mtm[:T] + res.hedge_cash_mtm[:T]
+    ax.plot(bars, inst_mtm, linewidth=0.8, color="steelblue",
+            label="Instrument MTM")
+    ax.plot(bars, hedge_mtm, linewidth=0.8, color="darkorange",
+            label="Hedge MTM")
+    ax.axhline(0, color="black", linewidth=0.3)
+    ax.set_ylabel("Component MTM")
+    _format_xaxis(ax, res)
+    ax.legend(**_LEGEND_KW)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
 def plot_positions_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
     """Stacked area of per-instrument positions."""
     if ax is None:
@@ -174,19 +265,113 @@ def plot_pnl_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
 
 
 def plot_gross_dv01_on_ax(res: PortfolioBacktestResults, ax=None, cap: float | None = None) -> plt.Axes:
-    """Gross DV01 exposure over time."""
+    """Net and gross total DV01 exposure over time."""
+    if ax is None:
+        _, ax = plt.subplots()
+    T = len(res.equity)
+    bars = np.arange(T)
+    ax.plot(bars, res.gross_instrument_dv01[:T] + res.gross_hedge_dv01[:T],
+            linewidth=0.8, color="darkorange", label="Gross Total")
+    ax.plot(bars, res.net_instrument_dv01[:T] + res.net_hedge_dv01[:T],
+            linewidth=0.8, color="steelblue", label="Net Total")
+    if cap is not None:
+        ax.axhline(cap, color="red", linewidth=0.5, linestyle="--",
+                   alpha=0.7, label=f"Cap={cap}")
+    ax.axhline(0, color="black", linewidth=0.3)
+    ax.set_ylabel("DV01")
+    _format_xaxis(ax, res)
+    ax.legend(**_LEGEND_KW)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_position_count_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Number of non-zero positions per bar."""
     if ax is None:
         _, ax = plt.subplots()
     pos = res.positions
-    if pos.ndim != 2:
+    if pos.ndim != 2 or pos.shape[1] == 0:
+        ax.set_ylabel("# Positions")
         return ax
     T = pos.shape[0]
     bars = np.arange(T)
-    gross = np.sum(np.abs(pos), axis=1)
-    ax.plot(bars, gross, linewidth=0.8, color="darkorange", label="Gross DV01")
-    if cap is not None:
-        ax.axhline(cap, color="red", linewidth=0.5, linestyle="--", alpha=0.7, label=f"Cap={cap}")
-    ax.set_ylabel("Gross DV01")
+    count = np.sum(np.abs(pos) > 1e-15, axis=1)
+    ax.step(bars, count, where="mid", linewidth=0.7, color="purple")
+    ax.set_ylabel("# Positions")
+    _format_xaxis(ax, res)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_position_heatmap_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Heatmap of positions (T x B), instruments on y-axis, time on x-axis."""
+    if ax is None:
+        _, ax = plt.subplots()
+    pos = res.positions
+    if pos.ndim != 2 or pos.shape[1] == 0:
+        return ax
+    vmax = np.nanmax(np.abs(pos))
+    if vmax < 1e-15:
+        vmax = 1.0
+    im = ax.imshow(
+        pos.T, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+        interpolation="nearest", origin="lower",
+    )
+    ax.set_ylabel("Instrument")
+    ax.set_xlabel("Bar")
+    plt.colorbar(im, ax=ax, fraction=0.02, pad=0.01, label="Position")
+    return ax
+
+
+def plot_top_k_positions_on_ax(
+    res: PortfolioBacktestResults, ax=None, k: int = 10,
+) -> plt.Axes:
+    """Line plot of top-K instruments by max |pos * dv01|."""
+    if ax is None:
+        _, ax = plt.subplots()
+    pos = res.positions
+    if pos.ndim != 2 or pos.shape[1] == 0:
+        return ax
+    T, B = pos.shape
+    bars = np.arange(T)
+    # Rank by max absolute DV01 contribution
+    if res.dv01 is not None and res.dv01.shape == (T, B):
+        exposure = np.abs(pos * res.dv01)
+    else:
+        exposure = np.abs(pos)
+    max_exp = np.nanmax(exposure, axis=0)  # (B,)
+    top_idx = np.argsort(max_exp)[::-1][:k]
+    for rank, b in enumerate(top_idx):
+        if max_exp[b] < 1e-15:
+            break
+        label = f"Inst {b}"
+        if res.instrument_ids is not None and b < len(res.instrument_ids):
+            label = str(res.instrument_ids[b])
+        ax.plot(bars, pos[:, b], linewidth=0.7, alpha=0.8, label=label)
+    ax.axhline(0, color="black", linewidth=0.3)
+    ax.set_ylabel("Position")
+    _format_xaxis(ax, res)
+    ax.legend(**_LEGEND_KW)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_dv01_breakdown_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Stacked area of net instrument DV01 vs net hedge DV01."""
+    if ax is None:
+        _, ax = plt.subplots()
+    T = len(res.equity)
+    bars = np.arange(T)
+    inst = res.net_instrument_dv01[:T]
+    hedge = res.net_hedge_dv01[:T]
+    ax.fill_between(bars, 0, inst, alpha=0.5, color="steelblue",
+                    label="Instrument")
+    ax.fill_between(bars, inst, inst + hedge, alpha=0.5, color="darkorange",
+                    label="Hedge")
+    ax.plot(bars, inst + hedge, linewidth=0.8, color="black",
+            label="Net Total", alpha=0.7)
+    ax.axhline(0, color="black", linewidth=0.3)
+    ax.set_ylabel("Net DV01")
     _format_xaxis(ax, res)
     ax.legend(**_LEGEND_KW)
     ax.grid(True, alpha=0.3)
@@ -321,18 +506,20 @@ def plot_portfolio_dashboard(
     gross_dv01_cap: float | None = None,
     figsize: tuple[float, float] = (14, 12),
 ) -> matplotlib.figure.Figure:
-    """Multi-panel dashboard: equity, drawdown, positions, hedges, DV01, PnL.
+    """Multi-panel dashboard: equity, drawdown, DV01, position count, PnL.
 
     Panels included dynamically based on data availability.
+    Uses aggregate panels that scale to any number of instruments.
     """
+    has_positions = res.positions.ndim == 2 and res.positions.shape[1] > 0
+
     panels: list[tuple[str, int]] = [
         ("equity", 3),
         ("drawdown", 1),
-        ("positions", 2),
+        ("dv01", 2),
     ]
-    if res.hedge_positions.ndim == 2 and res.hedge_positions.shape[1] > 0:
-        panels.append(("hedges", 2))
-    panels.append(("dv01", 2))
+    if has_positions:
+        panels.append(("pos_count", 1))
     panels.append(("pnl", 1))
     panels.append(("codes", 1))
 
@@ -352,12 +539,10 @@ def plot_portfolio_dashboard(
             ax.set_title("Portfolio Backtest", fontsize=12, fontweight="bold")
         elif name == "drawdown":
             plot_drawdown_on_ax(res, ax=ax)
-        elif name == "positions":
-            plot_positions_on_ax(res, ax=ax)
-        elif name == "hedges":
-            plot_hedge_positions_on_ax(res, ax=ax)
         elif name == "dv01":
             plot_gross_dv01_on_ax(res, ax=ax, cap=gross_dv01_cap)
+        elif name == "pos_count":
+            plot_position_count_on_ax(res, ax=ax)
         elif name == "pnl":
             plot_pnl_on_ax(res, ax=ax)
         elif name == "codes":

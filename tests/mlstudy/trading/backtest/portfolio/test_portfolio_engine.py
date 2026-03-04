@@ -54,7 +54,7 @@ def _cfg(**overrides):
         use_greedy=False,
         gross_dv01_cap=100.0, top_k=10, z_inc=2.0, p_inc=0.05,
         z_dec=1.0, p_dec=0.10, alpha_thr_inc=1.0, alpha_thr_dec=0.5,
-        max_levels=3, haircut=1.0, min_qty_trade=0.0,
+        max_levels=3, haircut=1.0,
         min_fill_ratio=0.0, cooldown_bars=0, cooldown_mode=0,
         min_maturity_inc=0.0, initial_capital=1_000_000.0,
         close_time="none",
@@ -78,6 +78,7 @@ def _base_inputs(T=3, B=2):
         max_trade_notional_inc=np.full(B, np.inf),
         max_trade_notional_dec=np.full(B, np.inf),
         qty_step=np.zeros(B, dtype=np.float64),
+        min_qty_trade=np.zeros(B, dtype=np.float64),
         maturity=np.full((T, B), 5.0, dtype=np.float64),
         issuer_bucket=np.zeros(B, dtype=np.int64),
         maturity_bucket=np.zeros((T, B), dtype=np.int64),
@@ -192,7 +193,7 @@ class TestValidation:
         inputs["dv01"] = np.zeros((10, 10))  # wrong shape
         with pytest.raises(ValueError, match="dv01"):
             _validate(**inputs,
-                       hedge_qty_step=None,
+                       hedge_qty_step=None, hedge_min_qty_trade=None,
                        hedge_bid_px=None, hedge_bid_sz=None,
                        hedge_ask_px=None, hedge_ask_sz=None,
                        hedge_mid_px=None, hedge_dv01=None,
@@ -204,7 +205,7 @@ class TestValidation:
         h_bid, h_bsz, h_ask, h_asz, h_mid = _make_hedge_market(T, H)
         with pytest.raises(ValueError, match="all-None or all-provided"):
             _validate(**inputs,
-                       hedge_qty_step=np.zeros(H),
+                       hedge_qty_step=np.zeros(H), hedge_min_qty_trade=np.zeros(H),
                        hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
                        hedge_ask_px=h_ask, hedge_ask_sz=h_asz,
                        hedge_mid_px=h_mid, hedge_dv01=None,
@@ -218,7 +219,7 @@ class TestValidation:
         hedge_ratios = np.zeros((T, B + 1, H))  # wrong B dimension
         with pytest.raises(ValueError, match="hedge_ratios"):
             _validate(**inputs,
-                       hedge_qty_step=np.zeros(H),
+                       hedge_qty_step=np.zeros(H), hedge_min_qty_trade=np.zeros(H),
                        hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
                        hedge_ask_px=h_ask, hedge_ask_sz=h_asz,
                        hedge_mid_px=h_mid, hedge_dv01=hedge_dv01,
@@ -232,7 +233,7 @@ class TestValidation:
         hedge_ratios = np.zeros((T, B, H))
         # Should not raise
         _validate(**inputs,
-                   hedge_qty_step=np.zeros(H),
+                   hedge_qty_step=np.zeros(H), hedge_min_qty_trade=np.zeros(H),
                    hedge_bid_px=h_bid, hedge_bid_sz=h_bsz,
                    hedge_ask_px=h_ask, hedge_ask_sz=h_asz,
                    hedge_mid_px=h_mid, hedge_dv01=hedge_dv01,

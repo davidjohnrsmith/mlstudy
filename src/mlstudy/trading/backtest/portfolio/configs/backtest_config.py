@@ -24,7 +24,7 @@ class PortfolioBacktestConfig:
     ---------
     Trades are sized by the LP solver in DV01 space, converted to notional,
     rounded via per-instrument ``qty_step`` (from meta) and filtered by
-    ``min_qty_trade``.
+    per-instrument ``min_qty_trade`` (from meta / hedge_meta).
     """
 
     # -- Solver mode (False = LP with greedy fallback, True = greedy only) ----
@@ -47,7 +47,6 @@ class PortfolioBacktestConfig:
     # -- Execution params -----------------------------------------------------
     max_levels: int
     haircut: float
-    min_qty_trade: float
     min_fill_ratio: float
 
     # -- Cooldown -------------------------------------------------------------

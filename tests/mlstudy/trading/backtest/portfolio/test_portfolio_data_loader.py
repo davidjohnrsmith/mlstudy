@@ -102,6 +102,7 @@ def _make_meta_df(inst_ids):
             "max_trade_notional_inc": float("inf"),
             "max_trade_notional_dec": float("inf"),
             "qty_step": 0.0,
+            "min_qty_trade": 0.0,
             "maturity_date": pd.Timestamp("2030-01-01"),
         })
     return pd.DataFrame(rows)
@@ -119,6 +120,7 @@ def _make_meta_df_with_optional(inst_ids):
             "max_trade_notional_inc": float("inf"),
             "max_trade_notional_dec": float("inf"),
             "qty_step": 0.0,
+            "min_qty_trade": 0.0,
             "maturity_date": pd.Timestamp("2030-01-01"),
             "maturity": 5.0 + i,
             "issuer_bucket": i,
@@ -142,12 +144,13 @@ def _make_hedge_ratio_df(datetimes, inst_ids, hedge_ids):
 
 
 def _make_hedge_meta_df(hedge_ids):
-    """Create a static hedge metadata DataFrame with qty_step."""
+    """Create a static hedge metadata DataFrame with qty_step and min_qty_trade."""
     rows = []
     for inst in hedge_ids:
         rows.append({
             "instrument_id": inst,
             "qty_step": 0.0,
+            "min_qty_trade": 0.0,
         })
     return pd.DataFrame(rows)
 
@@ -316,6 +319,7 @@ class TestPortfolioMarketDataToDict:
             max_trade_notional_inc=np.full(B, np.inf),
             max_trade_notional_dec=np.full(B, np.inf),
             qty_step=np.zeros(B),
+            min_qty_trade=np.zeros(B),
             maturity=np.full((T, B), 5.0),
             issuer_bucket=np.zeros(B, dtype=np.int64),
             maturity_bucket=np.zeros((T, B), dtype=np.int64),
@@ -329,6 +333,7 @@ class TestPortfolioMarketDataToDict:
             hedge_dv01=np.zeros((T, H)),
             hedge_ratios=np.zeros((T, B, H)),
             hedge_qty_step=np.zeros(H),
+            hedge_min_qty_trade=np.zeros(H),
             datetimes=DATETIMES.values,
             instrument_ids=INST_IDS,
             hedge_ids=HEDGE_IDS,
@@ -338,11 +343,13 @@ class TestPortfolioMarketDataToDict:
             "bid_px", "bid_sz", "ask_px", "ask_sz", "mid_px", "dv01",
             "fair_price", "zscore", "adf_p_value",
             "tradable", "pos_limits_long", "pos_limits_short",
-            "max_trade_notional_inc", "max_trade_notional_dec", "qty_step",
+            "max_trade_notional_inc", "max_trade_notional_dec",
+            "qty_step", "min_qty_trade",
             "maturity", "issuer_bucket", "maturity_bucket",
             "issuer_dv01_caps", "mat_bucket_dv01_caps",
             "hedge_bid_px", "hedge_bid_sz", "hedge_ask_px", "hedge_ask_sz",
-            "hedge_mid_px", "hedge_dv01", "hedge_ratios", "hedge_qty_step",
+            "hedge_mid_px", "hedge_dv01", "hedge_ratios",
+            "hedge_qty_step", "hedge_min_qty_trade",
             "datetimes", "instrument_ids",
         }
         assert set(d.keys()) == expected_keys
@@ -364,6 +371,7 @@ class TestPortfolioMarketDataToDict:
             max_trade_notional_inc=np.full(B, np.inf),
             max_trade_notional_dec=np.full(B, np.inf),
             qty_step=np.zeros(B),
+            min_qty_trade=np.zeros(B),
             maturity=np.array([5.0, 6.0, 7.0]),
             issuer_bucket=np.array([0, 1, 2]),
             maturity_bucket=np.zeros(B, dtype=np.int64),
@@ -377,6 +385,7 @@ class TestPortfolioMarketDataToDict:
             hedge_dv01=np.zeros((T, H)),
             hedge_ratios=np.zeros((T, B, H)),
             hedge_qty_step=np.zeros(H),
+            hedge_min_qty_trade=np.zeros(H),
             datetimes=DATETIMES.values,
             instrument_ids=INST_IDS,
             hedge_ids=HEDGE_IDS,
@@ -639,7 +648,7 @@ _BASE_CFG_DICT = {
     "z_dec": 1.0, "p_dec": 0.10,
     "alpha_thr_inc": 1.0, "alpha_thr_dec": 0.5,
     "max_levels": 3, "haircut": 1.0,
-    "min_qty_trade": 0.0, "min_fill_ratio": 0.0,
+    "min_fill_ratio": 0.0,
     "cooldown_bars": 0, "cooldown_mode": 0,
     "min_maturity_inc": 0.0,
     "initial_capital": 1_000_000.0,

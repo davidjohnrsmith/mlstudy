@@ -38,7 +38,7 @@ _FULL_BASE_CONFIG = dict(
     use_greedy=False,
     gross_dv01_cap=100.0, top_k=10, z_inc=2.0, p_inc=0.05,
     z_dec=1.0, p_dec=0.10, alpha_thr_inc=1.0, alpha_thr_dec=0.5,
-    max_levels=3, haircut=1.0, min_qty_trade=0.0,
+    max_levels=3, haircut=1.0,
     min_fill_ratio=0.0, cooldown_bars=0, cooldown_mode=0,
     min_maturity_inc=0.0, initial_capital=1_000_000.0,
     close_time="none",

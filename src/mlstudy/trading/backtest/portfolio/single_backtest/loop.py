@@ -484,14 +484,16 @@ def _compute_bucket_exposures(pos, dv01_t, B, issuer_bucket,
     if n_issuers > 0 and issuer_bucket is not None:
         for b in range(B):
             iss = issuer_bucket[b]
-            if 0 <= iss < n_issuers:
-                current_issuer_dv01[iss] += pos[b] * dv01_t[b]
+            d = dv01_t[b]
+            if 0 <= iss < n_issuers and d == d:  # skip NaN
+                current_issuer_dv01[iss] += pos[b] * d
 
     if n_mat_buckets > 0 and maturity_bucket_t is not None:
         for b in range(B):
             bkt = maturity_bucket_t[b]
-            if 0 <= bkt < n_mat_buckets:
-                current_mat_dv01[bkt] += pos[b] * dv01_t[b]
+            d = dv01_t[b]
+            if 0 <= bkt < n_mat_buckets and d == d:  # skip NaN
+                current_mat_dv01[bkt] += pos[b] * d
 
     return current_issuer_dv01, current_mat_dv01
 
@@ -531,12 +533,12 @@ def _execute_instrument_trades(
         side_k = int(c_side[k])
         dv01_b = dv01[t, b_idx]
 
-        if dv01_b < 1e-15:
+        if not (dv01_b >= 1e-15):  # catches NaN and <= 0
             continue
 
         # Convert DV01 to notional quantity, then round size
         raw_qty = raw_dv01 / dv01_b
-        qty_req = _round_qty_trade(raw_qty, min_qty_trade, qty_step[b_idx])
+        qty_req = _round_qty_trade(raw_qty, min_qty_trade[b_idx], qty_step[b_idx])
         if qty_req < 1e-15:
             continue
 
@@ -601,7 +603,7 @@ def _execute_instrument_trades(
                     if abs(hr) < 1e-15:
                         continue
                     hdv01 = hedge_dv01[t, h]
-                    if hdv01 < 1e-15:
+                    if not (hdv01 >= 1e-15):  # catches NaN
                         continue
                     hedge_target[h] += signed_qty * dv01_b * hr / hdv01
 
@@ -613,7 +615,7 @@ def _execute_instrument_trades(
 def _execute_hedge_rebalance(
     t, H, hedge_target, hedge_pos,
     hedge_bid_px, hedge_ask_px, hedge_bid_sz, hedge_ask_sz, hedge_mid_px,
-    hedge_qty_step, min_qty_trade, max_levels, haircut,
+    hedge_qty_step, hedge_min_qty_trade, max_levels, haircut,
     cash, cum_hedge_cash_mid,
 ):
     """Execute net hedge rebalance for the bar (Step 10).
@@ -627,9 +629,9 @@ def _execute_hedge_rebalance(
 
     for h in range(H):
         hedge_remaining = hedge_target[h] - hedge_pos[h]
-        # Round hedge trade size using per-hedge qty_step
+        # Round hedge trade size using per-hedge qty_step and min_qty_trade
         hedge_remaining = _round_qty_trade(
-            hedge_remaining, min_qty_trade, hedge_qty_step[h],
+            hedge_remaining, hedge_min_qty_trade[h], hedge_qty_step[h],
         )
         if abs(hedge_remaining) < 1e-15:
             continue
@@ -737,7 +739,7 @@ def lp_portfolio_loop(
     max_levels,         # int       L2 levels to walk
     haircut,            # float     fraction of displayed size usable
     qty_step,          # (B,)      per-instrument notional rounding step
-    min_qty_trade,     # float     notional below this → skip
+    min_qty_trade,     # (B,)      per-instrument notional below this → skip
     min_fill_ratio,     # float     if filled/requested < this → skip (0 to disable)
     # -- Cooldown --
     cooldown_bars,      # int       bars of cooldown after trading
@@ -760,6 +762,7 @@ def lp_portfolio_loop(
     hedge_ratios=None,      # (T, B, H) or None
     # -- Hedge execution --
     hedge_qty_step=None,    # (H,) or None — per-hedge notional rounding step
+    hedge_min_qty_trade=None,  # (H,) or None — per-hedge min trade size
     # -- Chunked state --
     initial_state=None,     # LoopState or None — resume from this state
     return_final_state=False,  # bool — if True, append LoopState to return
@@ -844,19 +847,25 @@ def lp_portfolio_loop(
     T = bid_px.shape[0]
     B = bid_px.shape[1]
 
-    # -- Per-instrument qty_step: broadcast scalar to (B,) for compat --
+    # -- Per-instrument qty_step / min_qty_trade: broadcast scalar to (B,) for compat --
     if np.isscalar(qty_step) or (isinstance(qty_step, np.ndarray) and qty_step.ndim == 0):
         qty_step = np.full(B, float(qty_step), dtype=np.float64)
+    if np.isscalar(min_qty_trade) or (isinstance(min_qty_trade, np.ndarray) and min_qty_trade.ndim == 0):
+        min_qty_trade = np.full(B, float(min_qty_trade), dtype=np.float64)
 
     # -- Hedge universe size --
     H = hedge_bid_px.shape[1] if hedge_bid_px is not None else 0
     has_hedge = H > 0
 
-    # -- Per-hedge qty_step --
+    # -- Per-hedge qty_step / min_qty_trade --
     if hedge_qty_step is None and has_hedge:
         hedge_qty_step = np.zeros(H, dtype=np.float64)
     elif hedge_qty_step is not None and np.isscalar(hedge_qty_step):
         hedge_qty_step = np.full(H, float(hedge_qty_step), dtype=np.float64)
+    if hedge_min_qty_trade is None and has_hedge:
+        hedge_min_qty_trade = np.zeros(H, dtype=np.float64)
+    elif hedge_min_qty_trade is not None and np.isscalar(hedge_min_qty_trade):
+        hedge_min_qty_trade = np.full(H, float(hedge_min_qty_trade), dtype=np.float64)
 
     # -- Per-bar output arrays --
     out_pos = np.zeros((T, B), dtype=np.float64)
@@ -904,6 +913,12 @@ def lp_portfolio_loop(
     out_instrument_cost = np.zeros(T, dtype=np.float64)
     out_hedge_cost_bar = np.zeros(T, dtype=np.float64)
     out_portfolio_cost = np.zeros(T, dtype=np.float64)
+
+    # -- Per-bar DV01 exposure --
+    out_net_instrument_dv01 = np.zeros(T, dtype=np.float64)
+    out_gross_instrument_dv01 = np.zeros(T, dtype=np.float64)
+    out_net_hedge_dv01 = np.zeros(T, dtype=np.float64)
+    out_gross_hedge_dv01 = np.zeros(T, dtype=np.float64)
 
     # -- Mutable state --
     if initial_state is not None:
@@ -1061,7 +1076,7 @@ def lp_portfolio_loop(
                             t, H, hedge_target, hedge_pos,
                             hedge_bid_px, hedge_ask_px,
                             hedge_bid_sz, hedge_ask_sz, hedge_mid_px,
-                            hedge_qty_step, min_qty_trade,
+                            hedge_qty_step, hedge_min_qty_trade,
                             max_levels, haircut,
                             cash, cum_hedge_cash_mid,
                         )
@@ -1131,6 +1146,30 @@ def lp_portfolio_loop(
         out_hedge_cost_bar[t] = bar_hedge_cost_t
         out_portfolio_cost[t] = bar_position_cost + bar_hedge_cost_t
 
+        # DV01 exposure based on position
+        net_inst_dv01 = 0.0
+        gross_inst_dv01 = 0.0
+        for b in range(B):
+            d = dv01[t, b]
+            if d == d:  # skip NaN
+                pdv = pos[b] * d
+                net_inst_dv01 += pdv
+                gross_inst_dv01 += abs(pdv)
+        out_net_instrument_dv01[t] = net_inst_dv01
+        out_gross_instrument_dv01[t] = gross_inst_dv01
+
+        if has_hedge:
+            net_h_dv01 = 0.0
+            gross_h_dv01 = 0.0
+            for h in range(H):
+                d = hedge_dv01[t, h]
+                if d == d:  # skip NaN
+                    pdv = hedge_pos[h] * d
+                    net_h_dv01 += pdv
+                    gross_h_dv01 += abs(pdv)
+            out_net_hedge_dv01[t] = net_h_dv01
+            out_gross_hedge_dv01[t] = gross_h_dv01
+
     result = (
         # Per-bar arrays (9)
         out_pos,            # 0: (T, B)
@@ -1171,8 +1210,13 @@ def lp_portfolio_loop(
         out_instrument_cost,          # 32: (T,)
         out_hedge_cost_bar,           # 33: (T,)
         out_portfolio_cost,           # 34: (T,) instrument + hedge cost
+        # Per-bar DV01 exposure
+        out_net_instrument_dv01,      # 35: (T,)
+        out_gross_instrument_dv01,    # 36: (T,)
+        out_net_hedge_dv01,           # 37: (T,)
+        out_gross_hedge_dv01,         # 38: (T,)
         # Scalar
-        n_trades_total,               # 35
+        n_trades_total,               # 39
     )
 
     if return_final_state:
