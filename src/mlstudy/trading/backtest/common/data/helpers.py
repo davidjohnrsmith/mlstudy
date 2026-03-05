@@ -127,6 +127,7 @@ def align_and_fill(
     essential_keys: tuple[str, ...] | None = None,
     fillna_defaults: dict[str, float] | None = None,
     datetime_source_keys: tuple[str, ...] | None = None,
+    no_ffill_keys: tuple[str, ...] | None = None,
 ) -> tuple[dict[str, pd.DataFrame], pd.DatetimeIndex]:
     """Align multiple DataFrames onto a common datetime index and fill NaNs.
 
@@ -148,11 +149,17 @@ def align_and_fill(
         When provided, only collect datetimes from these source keys
         instead of from all sources.  Other sources are still reindexed
         onto the resulting datetime index.
+    no_ffill_keys : tuple[str, ...] or None
+        Source keys to exclude from forward-filling.  NaN values in
+        these sources are filled with 0 instead.  Use for book data
+        where stale quotes would create phantom liquidity.
 
     Returns
     -------
     (aligned_sources, datetime_index)
     """
+    _no_ffill = set(no_ffill_keys) if no_ffill_keys else set()
+
     # Build unified datetime index
     all_dts: set = set()
     if datetime_source_keys is not None:
@@ -168,7 +175,10 @@ def align_and_fill(
 
     if fill_method == "ffill":
         for key in aligned:
-            aligned[key] = aligned[key].ffill()
+            if key in _no_ffill:
+                aligned[key] = aligned[key].fillna(0.0)
+            else:
+                aligned[key] = aligned[key].ffill()
 
         # Drop leading rows where essential sources still have NaN
         if essential_keys:
