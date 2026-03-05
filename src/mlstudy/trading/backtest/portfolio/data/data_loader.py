@@ -813,6 +813,7 @@ def _build_market_data(
         sources,
         fill_method=fill_method,
         datetime_source_keys=("inst_book", ),
+        no_ffill_keys=("inst_book", "hedge_book"),
     )
 
     T = len(all_dts_idx)

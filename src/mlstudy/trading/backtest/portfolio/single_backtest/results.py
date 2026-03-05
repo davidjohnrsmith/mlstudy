@@ -124,12 +124,14 @@ class PortfolioBacktestResults:
 
     bar_df: pd.DataFrame = None
     trade_df: pd.DataFrame = None
+    hedge_trade_df: pd.DataFrame = None
     close_bar_df: pd.DataFrame = None
     instrument_pnl_df: pd.DataFrame = None
 
     def __post_init__(self):
         self.bar_df = self.to_bar_df()
         self.trade_df = self.to_trade_df()
+        self.hedge_trade_df = self.to_hedge_trade_df()
         self.close_bar_df = self._build_close_bar_df()
         if self.mid_px is not None:
             self.instrument_pnl_df = self.to_instrument_pnl_df()
@@ -350,6 +352,44 @@ class PortfolioBacktestResults:
                 row[f"hedge_vwap_{h}"] = float(self.tr_hedge_vwaps[i, h])
 
             rows.append(row)
+
+        return pd.DataFrame(rows)
+
+    def to_hedge_trade_df(self) -> pd.DataFrame:
+        """Per-bar hedge fill DataFrame from per-bar hedge arrays.
+
+        One row per (bar, hedge) where a fill occurred.  Captures ALL hedge
+        activity including hedge-only rebalance bars with no instrument trades.
+
+        Columns: bar, datetime (if available), hedge (index), hedge_id
+        (if available), fill (signed qty), vwap, cost, mid.
+        """
+        has_dt = self.datetimes is not None
+        H = self.hedge_fills_bar.shape[1] if self.hedge_fills_bar is not None else 0
+        if H == 0:
+            return pd.DataFrame()
+
+        rows: list[dict] = []
+        T = self.hedge_fills_bar.shape[0]
+        for t in range(T):
+            for h in range(H):
+                fill = float(self.hedge_fills_bar[t, h])
+                if abs(fill) < 1e-15:
+                    continue
+                row: dict = {"bar": t}
+                if has_dt:
+                    row["datetime"] = self.datetimes[t]
+                if self.hedge_ids is not None and h < len(self.hedge_ids):
+                    row["hedge_id"] = self.hedge_ids[h]
+                else:
+                    row["hedge"] = h
+                row["fill"] = fill
+                row["vwap"] = float(self.hedge_vwaps_bar[t, h])
+                if self.hedge_mid_px is not None:
+                    mid_h = float(self.hedge_mid_px[t, h])
+                    row["mid"] = mid_h
+                    row["cost"] = abs(row["vwap"] - mid_h) * abs(fill)
+                rows.append(row)
 
         return pd.DataFrame(rows)
 

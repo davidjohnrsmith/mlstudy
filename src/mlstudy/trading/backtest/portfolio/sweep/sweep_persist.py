@@ -112,6 +112,8 @@ class PortfolioSweepPersister:
                 sr.results.close_bar_df.to_csv(scenario_dir / "close_bar_df.csv", index=False)
             if sr.results.trade_df is not None:
                 sr.results.trade_df.to_csv(scenario_dir / "trade_df.csv", index=False)
+            if sr.results.close_bar_df is not None:
+                sr.results.close_bar_df.to_csv(scenario_dir / "close_bar_df.csv", index=False)
             if sr.results.instrument_pnl_df is not None:
                 sr.results.instrument_pnl_df.to_csv(scenario_dir / "instrument_pnl_df.csv", index=False)
 
