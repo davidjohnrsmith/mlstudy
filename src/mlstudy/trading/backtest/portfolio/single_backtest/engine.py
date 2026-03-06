@@ -251,9 +251,9 @@ def run_backtest(
             fair_price = fair_price[mask]
             zscore = zscore[mask]
             adf_p_value = adf_p_value[mask]
-            if maturity is not None and maturity.ndim == 2:
+            if maturity is not None:
                 maturity = maturity[mask]
-            if maturity_bucket is not None and maturity_bucket.ndim == 2:
+            if maturity_bucket is not None:
                 maturity_bucket = maturity_bucket[mask]
             if hedge_bid_px is not None:
                 hedge_bid_px = hedge_bid_px[mask]

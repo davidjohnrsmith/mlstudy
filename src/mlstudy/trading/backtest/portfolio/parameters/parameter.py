@@ -7,7 +7,6 @@ class PortfolioParameter(Enum):
     """LP portfolio backtest parameters."""
 
     # LP constraint params
-    GROSS_DV01_CAP = ("gross_dv01_cap", +1)
     TOP_K = ("top_k", +1)
 
     # signal gating — higher z thresholds → more selective
@@ -28,9 +27,6 @@ class PortfolioParameter(Enum):
 
     # cooldown
     COOLDOWN_BARS = ("cooldown_bars", +1)
-
-    # capital
-    INITIAL_CAPITAL = ("initial_capital", +1)
 
     def __init__(self, param_name: str, direction: int):
         self.key = param_name

@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 import re
-import warnings
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,11 +32,11 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from mlstudy.trading.backtest.common.data.helpers import (
     align_and_fill,
     detect_book_levels,
-    extract_hedge_ids,
     pivot_book,
     pivot_simple,
     reshape_book,
@@ -45,6 +44,24 @@ from mlstudy.trading.backtest.common.data.helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Required columns in the instrument meta file
+META_REQUIRED_COLUMNS = (
+    "tradable",
+    "pos_limit_long",
+    "pos_limit_short",
+    "max_trade_notional_inc",
+    "max_trade_notional_dec",
+    "qty_step",
+    "min_qty_trade",
+    "maturity_date",
+)
+
+# Required columns in the hedge meta file
+HEDGE_META_REQUIRED_COLUMNS = (
+    "qty_step",
+    "min_qty_trade",
+)
 
 
 @dataclass(frozen=True)
@@ -188,7 +205,7 @@ class PortfolioDataLoader:
     # Hedge ratios file
     hedge_ratio_filename: str
     # Hedge meta file (static per-hedge metadata)
-    hedge_meta_filename: str = "hedge_meta.parquet"
+    hedge_meta_filename: str
     # Config
     data_path: str | Path | None = None
     datetime_col: str = "datetime"
@@ -272,14 +289,13 @@ class PortfolioDataLoader:
         hedge_meta_df = pd.read_parquet(data_path_dir / self.hedge_meta_filename)
 
         # --- 2. Extract meta arrays --------------------------------------------
-        meta_indexed, static_arrays = _extract_meta_arrays(
-            meta_df, inst_col, instrument_ids, hedge_ratio_df,
-            issuer_dv01_caps_map, maturity_bucket_bins,
+        _, static_arrays = _extract_meta_arrays(
+            meta_df, inst_col, instrument_ids,
+            issuer_dv01_caps_map,
         )
         instrument_ids = static_arrays["instrument_ids"]
-        hedge_ids = static_arrays.get("hedge_ids") if hedge_ids is None else hedge_ids
         if hedge_ids is None:
-            hedge_ids = extract_hedge_ids(hedge_ratio_df)
+            hedge_ids = sorted(hedge_meta_df[inst_col].unique().tolist())
 
         return _build_market_data(
             book_df=book_df,
@@ -288,7 +304,6 @@ class PortfolioDataLoader:
             signal_df=signal_df,
             hedge_ratio_df=hedge_ratio_df,
             hedge_meta_df=hedge_meta_df,
-            meta_indexed=meta_indexed,
             static_arrays=static_arrays,
             instrument_ids=instrument_ids,
             hedge_ids=hedge_ids,
@@ -345,20 +360,13 @@ class PortfolioDataLoader:
         meta_df = pd.read_parquet(data_path_dir / self.meta_filename)
         hedge_meta_df = pd.read_parquet(data_path_dir / self.hedge_meta_filename)
 
-        # We need hedge_ids for meta extraction — read one hedge file to detect
+        # Extract hedge_ids from hedge meta file
         if hedge_ids is None:
-            hedge_files = _discover_data_files(
-                data_path_dir, self.hedge_ratio_filename, start_date, end_date,
-            )
-            if hedge_files:
-                sample_hr = pd.read_parquet(hedge_files[0])
-                hedge_ids = extract_hedge_ids(sample_hr)
-            else:
-                hedge_ids = []
+            hedge_ids = sorted(hedge_meta_df[inst_col].unique().tolist())
 
-        meta_indexed, static_arrays = _extract_meta_arrays(
-            meta_df, inst_col, instrument_ids, None,
-            issuer_dv01_caps_map, maturity_bucket_bins,
+        _, static_arrays = _extract_meta_arrays(
+            meta_df, inst_col, instrument_ids,
+            issuer_dv01_caps_map,
         )
         instrument_ids = static_arrays["instrument_ids"]
 
@@ -387,6 +395,32 @@ class PortfolioDataLoader:
             len(book_files), len(mid_files), len(dv01_files),
             len(signal_files), len(hedge_ratio_files),
         )
+
+        # --- 2b. Validate cross-data date consistency -------------------------
+        all_file_sets = {
+            "book": _extract_date_set(book_files, self.book_filename),
+            "mid": _extract_date_set(mid_files, self.mid_filename),
+            "dv01": _extract_date_set(dv01_files, self.dv01_filename),
+            "signal": _extract_date_set(signal_files, self.signal_filename),
+            "hedge_ratio": _extract_date_set(hedge_ratio_files, self.hedge_ratio_filename),
+        }
+        # Only validate sets that have files (non-empty)
+        non_empty = {k: v for k, v in all_file_sets.items() if v}
+        if non_empty:
+            union_dates = set.union(*non_empty.values())
+            for name, ds in non_empty.items():
+                missing = union_dates - ds
+                if missing:
+                    raise ValueError(
+                        f"Data type {name!r} is missing files for dates: {sorted(missing)}"
+                    )
+
+        # --- 2c. Validate column consistency within each data type -------------
+        _validate_column_consistency(book_files, "book")
+        _validate_column_consistency(mid_files, "mid")
+        _validate_column_consistency(dv01_files, "dv01")
+        _validate_column_consistency(signal_files, "signal")
+        _validate_column_consistency(hedge_ratio_files, "hedge_ratio")
 
         # --- 3. Generate chunk boundaries --------------------------------------
         sd = pd.Timestamp(start_date) if start_date else None
@@ -425,10 +459,14 @@ class PortfolioDataLoader:
         )
 
         # --- 4. Yield one PortfolioMarketData per chunk ------------------------
-        chunks_yielded = 0
-        for chunk_start, chunk_end in chunk_boundaries:
+        n_chunks = len(chunk_boundaries)
+        for chunk_idx, (chunk_start, chunk_end) in enumerate(chunk_boundaries, 1):
             cs_str = chunk_start.strftime("%Y%m%d")
             ce_str = chunk_end.strftime("%Y%m%d")
+            logger.info(
+                "Processing chunk %d/%d (%s–%s)",
+                chunk_idx, n_chunks, cs_str, ce_str,
+            )
 
             book_df = _read_parquet_date_range(
                 _filter_files_for_range(book_files, self.book_filename, cs_str, ce_str),
@@ -455,15 +493,11 @@ class PortfolioDataLoader:
                 dt_col, chunk_start, chunk_end,
             )
 
-            if book_df.empty:
-                continue
-
             logger.info(
                 "Chunk %s–%s: book=%d rows, mid=%d, dv01=%d, signal=%d, hedge=%d",
                 cs_str, ce_str, len(book_df), len(mid_df), len(dv01_df),
                 len(signal_df), len(hedge_ratio_df),
             )
-            chunks_yielded += 1
 
             yield _build_market_data(
                 book_df=book_df,
@@ -472,7 +506,6 @@ class PortfolioDataLoader:
                 signal_df=signal_df,
                 hedge_ratio_df=hedge_ratio_df,
                 hedge_meta_df=hedge_meta_df,
-                meta_indexed=meta_indexed,
                 static_arrays=static_arrays,
                 instrument_ids=instrument_ids,
                 hedge_ids=hedge_ids,
@@ -483,12 +516,323 @@ class PortfolioDataLoader:
                 mat_bucket_dv01_caps=mat_bucket_dv01_caps,
             )
 
+# ---------------------------------------------------------------------------
+# Internal helpers - main
+# ---------------------------------------------------------------------------
+
+def _build_market_data(
+    *,
+    book_df: pd.DataFrame,
+    mid_df: pd.DataFrame,
+    dv01_df: pd.DataFrame,
+    signal_df: pd.DataFrame,
+    hedge_ratio_df: pd.DataFrame,
+    hedge_meta_df: pd.DataFrame,
+    static_arrays: dict[str, Any],
+    instrument_ids: list[str],
+    hedge_ids: list[str],
+    dt_col: str,
+    inst_col: str,
+    fill_method: str,
+    maturity_bucket_bins: tuple[float, ...],
+    mat_bucket_dv01_caps: tuple[float, ...] | None,
+) -> PortfolioMarketData:
+    """Shared pivot + align + reshape logic used by both load() and load_chunked()."""
+    B = len(instrument_ids)
+    H = len(hedge_ids)
+
+    # Auto-detect book levels
+    n_levels = detect_book_levels(book_df.columns)
+
+    # Pivot book/mid/dv01 separately for instruments and hedges
+    inst_book_pivoted = pivot_book(
+        book_df, dt_col, inst_col, instrument_ids, n_levels,
+    )
+    inst_mid_pivoted = pivot_simple(
+        mid_df, dt_col, inst_col, instrument_ids, "mid_px",
+    )
+    inst_dv01_pivoted = pivot_simple(
+        dv01_df, dt_col, inst_col, instrument_ids, "dv01",
+    )
+
+    hedge_book_pivoted = pivot_book(
+        book_df, dt_col, inst_col, hedge_ids, n_levels,
+    )
+    hedge_mid_pivoted = pivot_simple(
+        mid_df, dt_col, inst_col, hedge_ids, "mid_px",
+    )
+    hedge_dv01_pivoted = pivot_simple(
+        dv01_df, dt_col, inst_col, hedge_ids, "dv01",
+    )
+
+    # Pivot signals
+    fair_pivoted = pivot_simple(
+        signal_df, dt_col, inst_col, instrument_ids, "fair_price",
+    )
+    zscore_pivoted = pivot_simple(
+        signal_df, dt_col, inst_col, instrument_ids, "zscore",
+    )
+    adf_pivoted = pivot_simple(
+        signal_df, dt_col, inst_col, instrument_ids, "adf_p_value",
+    )
+
+    # Pivot hedge ratios
+    hedge_ratios_pivoted = _pivot_hedge_ratios_portfolio(
+        hedge_ratio_df, inst_col, dt_col, instrument_ids, hedge_ids,
+    )
+
+    # Align all sources on common datetime index
+    sources = {
+        "inst_book": inst_book_pivoted,
+        "inst_mid": inst_mid_pivoted,
+        "inst_dv01": inst_dv01_pivoted,
+        "fair_price": fair_pivoted,
+        "zscore": zscore_pivoted,
+        "adf": adf_pivoted,
+        "hedge_book": hedge_book_pivoted,
+        "hedge_mid": hedge_mid_pivoted,
+        "hedge_dv01": hedge_dv01_pivoted,
+        "hedge_ratios": hedge_ratios_pivoted,
+    }
+
+    sources, all_dts_idx = align_and_fill(
+        sources,
+        fill_method=fill_method,
+        datetime_source_keys=("inst_book", ),
+        no_ffill_keys=("inst_book", "hedge_book"),
+    )
+
+    T = len(all_dts_idx)
+
+    # Extract numpy arrays
+    bid_px, bid_sz, ask_px, ask_sz = reshape_book(
+        sources["inst_book"], instrument_ids, n_levels,
+    )
+    hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz = reshape_book(
+        sources["hedge_book"], hedge_ids, n_levels,
+    )
+
+    mid_px = sources["inst_mid"].values.astype(np.float64)
+    dv01 = sources["inst_dv01"].values.astype(np.float64)
+    fair_price = sources["fair_price"].values.astype(np.float64)
+    zscore = sources["zscore"].values.astype(np.float64)
+    adf_p_value = sources["adf"].values.astype(np.float64)
+
+    hedge_mid_px = sources["hedge_mid"].values.astype(np.float64)
+    hedge_dv01_arr = sources["hedge_dv01"].values.astype(np.float64)
+
+    hedge_ratios_arr = sources["hedge_ratios"].values.astype(np.float64)
+    hedge_ratios_arr = hedge_ratios_arr.reshape(T, B, H)
+
+    datetimes = all_dts_idx.values
+
+    # Unpack static arrays (copy tradable — may be mutated per-chunk)
+    tradable = static_arrays["tradable"].copy()
+    pos_limits_long = static_arrays["pos_limits_long"]
+    pos_limits_short = static_arrays["pos_limits_short"]
+    max_trade_notional_inc = static_arrays["max_trade_notional_inc"]
+    max_trade_notional_dec = static_arrays["max_trade_notional_dec"]
+    qty_step_arr = static_arrays["qty_step"]
+    min_qty_trade_arr = static_arrays["min_qty_trade"]
+    issuer_bucket = static_arrays["issuer_bucket"]
+    _issuer_dv01_caps = static_arrays["issuer_dv01_caps"]
+    maturity_dates_raw = static_arrays["maturity_dates_raw"]
+
+    # Compute time-varying maturity from maturity_date
+    dt_ns = datetimes.astype("datetime64[ns]")
+    delta = maturity_dates_raw[np.newaxis, :] - dt_ns[:, np.newaxis]
+    maturity = delta.astype("timedelta64[D]").astype(np.float64) / 365.25
+    if len(maturity_bucket_bins) > 0:
+        bins = np.asarray(maturity_bucket_bins, dtype=np.float64)
+        maturity_bucket = np.digitize(maturity, bins).astype(np.int64)
+    else:
+        maturity_bucket = np.zeros(B, dtype=np.int64)
+
+    # Disable tradable for instruments with all-NaN mid_px or signals
+    _disable_allnan_instruments(
+        tradable, mid_px, fair_price, zscore, adf_p_value, instrument_ids,
+    )
+
+    # Validate shapes, warn NaNs
+    _validate_shapes(
+        bid_px, bid_sz, ask_px, ask_sz, mid_px, dv01,
+        fair_price, zscore, adf_p_value,
+        tradable, pos_limits_long, pos_limits_short,
+        hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
+        hedge_mid_px, hedge_dv01_arr, hedge_ratios_arr,
+        T, B, n_levels, H, n_levels,
+    )
+    warn_nans(
+        bid_px=bid_px, bid_sz=bid_sz, ask_px=ask_px, ask_sz=ask_sz,
+        mid_px=mid_px, dv01=dv01, fair_price=fair_price,
+        zscore=zscore, adf_p_value=adf_p_value,
+        hedge_bid_px=hedge_bid_px, hedge_bid_sz=hedge_bid_sz,
+        hedge_ask_px=hedge_ask_px, hedge_ask_sz=hedge_ask_sz,
+        hedge_mid_px=hedge_mid_px, hedge_dv01=hedge_dv01_arr,
+        hedge_ratios=hedge_ratios_arr,
+    )
+
+    _mat_bucket_dv01_caps = (
+        np.asarray(mat_bucket_dv01_caps, dtype=np.float64)
+        if mat_bucket_dv01_caps
+        else np.empty(0, dtype=np.float64)
+    )
+
+    # Extract hedge_qty_step and hedge_min_qty_trade from hedge_meta
+    hedge_qty_step, hedge_min_qty_trade = _extract_hedge_meta_arrays(
+        hedge_meta_df, inst_col, hedge_ids,
+    )
+
+    return PortfolioMarketData(
+        bid_px=bid_px,
+        bid_sz=bid_sz,
+        ask_px=ask_px,
+        ask_sz=ask_sz,
+        mid_px=mid_px,
+        dv01=dv01,
+        fair_price=fair_price,
+        zscore=zscore,
+        adf_p_value=adf_p_value,
+        tradable=tradable,
+        pos_limits_long=pos_limits_long,
+        pos_limits_short=pos_limits_short,
+        max_trade_notional_inc=max_trade_notional_inc,
+        max_trade_notional_dec=max_trade_notional_dec,
+        qty_step=qty_step_arr,
+        min_qty_trade=min_qty_trade_arr,
+        maturity=maturity,
+        issuer_bucket=issuer_bucket,
+        maturity_bucket=maturity_bucket,
+        issuer_dv01_caps=_issuer_dv01_caps,
+        mat_bucket_dv01_caps=_mat_bucket_dv01_caps,
+        hedge_bid_px=hedge_bid_px,
+        hedge_bid_sz=hedge_bid_sz,
+        hedge_ask_px=hedge_ask_px,
+        hedge_ask_sz=hedge_ask_sz,
+        hedge_mid_px=hedge_mid_px,
+        hedge_dv01=hedge_dv01_arr,
+        hedge_ratios=hedge_ratios_arr,
+        hedge_qty_step=hedge_qty_step,
+        hedge_min_qty_trade=hedge_min_qty_trade,
+        datetimes=datetimes,
+        instrument_ids=instrument_ids,
+        hedge_ids=hedge_ids,
+    )
+
+
+
+def _validate_shapes(
+    bid_px: np.ndarray,
+    bid_sz: np.ndarray,
+    ask_px: np.ndarray,
+    ask_sz: np.ndarray,
+    mid_px: np.ndarray,
+    dv01: np.ndarray,
+    fair_price: np.ndarray,
+    zscore: np.ndarray,
+    adf_p_value: np.ndarray,
+    tradable: np.ndarray,
+    pos_limits_long: np.ndarray,
+    pos_limits_short: np.ndarray,
+    hedge_bid_px: np.ndarray,
+    hedge_bid_sz: np.ndarray,
+    hedge_ask_px: np.ndarray,
+    hedge_ask_sz: np.ndarray,
+    hedge_mid_px: np.ndarray,
+    hedge_dv01: np.ndarray,
+    hedge_ratios: np.ndarray,
+    T: int,
+    B: int,
+    L: int,
+    H: int,
+    L_h: int,
+) -> None:
+    """Validate that all arrays have consistent shapes."""
+    expected = {
+        "bid_px": (T, B, L),
+        "bid_sz": (T, B, L),
+        "ask_px": (T, B, L),
+        "ask_sz": (T, B, L),
+        "mid_px": (T, B),
+        "dv01": (T, B),
+        "fair_price": (T, B),
+        "zscore": (T, B),
+        "adf_p_value": (T, B),
+        "tradable": (B,),
+        "pos_limits_long": (B,),
+        "pos_limits_short": (B,),
+        "hedge_bid_px": (T, H, L_h),
+        "hedge_bid_sz": (T, H, L_h),
+        "hedge_ask_px": (T, H, L_h),
+        "hedge_ask_sz": (T, H, L_h),
+        "hedge_mid_px": (T, H),
+        "hedge_dv01": (T, H),
+        "hedge_ratios": (T, B, H),
+    }
+    arrays = {
+        "bid_px": bid_px,
+        "bid_sz": bid_sz,
+        "ask_px": ask_px,
+        "ask_sz": ask_sz,
+        "mid_px": mid_px,
+        "dv01": dv01,
+        "fair_price": fair_price,
+        "zscore": zscore,
+        "adf_p_value": adf_p_value,
+        "tradable": tradable,
+        "pos_limits_long": pos_limits_long,
+        "pos_limits_short": pos_limits_short,
+        "hedge_bid_px": hedge_bid_px,
+        "hedge_bid_sz": hedge_bid_sz,
+        "hedge_ask_px": hedge_ask_px,
+        "hedge_ask_sz": hedge_ask_sz,
+        "hedge_mid_px": hedge_mid_px,
+        "hedge_dv01": hedge_dv01,
+        "hedge_ratios": hedge_ratios,
+    }
+    for name, arr in arrays.items():
+        if arr.shape != expected[name]:
+            raise ValueError(
+                f"{name} shape mismatch: expected {expected[name]}, got {arr.shape}"
+            )
+
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Internal helpers - files
 # ---------------------------------------------------------------------------
 
 _DATE_PATTERN = re.compile(r"^(.+?)_(\d{8})_(\d{8})$")
+
+
+def _extract_date_set(files: list[Path], base_name: str) -> set[tuple[str, str]]:
+    """Extract set of (start_date, end_date) tuples from discovered files."""
+    dates = set()
+    for p in files:
+        fs, fe = _parse_file_dates(p.stem, base_name)
+        if fs is not None:
+            dates.add((fs.strftime("%Y%m%d"), fe.strftime("%Y%m%d")))
+    return dates
+
+
+def _validate_column_consistency(files: list[Path], data_name: str) -> None:
+    """Validate all files for a data type have the same columns."""
+    if len(files) <= 1:
+        return
+    ref_cols = set(pq.read_schema(files[0]).names)
+    for p in files[1:]:
+        cols = set(pq.read_schema(p).names)
+        if cols != ref_cols:
+            extra = cols - ref_cols
+            missing = ref_cols - cols
+            parts = []
+            if missing:
+                parts.append(f"missing {sorted(missing)}")
+            if extra:
+                parts.append(f"extra {sorted(extra)}")
+            raise ValueError(
+                f"{data_name}: columns in {p.name} differ from {files[0].name}: "
+                f"{', '.join(parts)}"
+            )
 
 
 def _parse_file_dates(stem: str, base_name: str) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
@@ -581,20 +925,21 @@ def _read_parquet_date_range(
     return df
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers - meta
+# ---------------------------------------------------------------------------
 def _extract_meta_arrays(
     meta_df: pd.DataFrame,
     inst_col: str,
     instrument_ids: list[str] | None,
-    hedge_ratio_df: pd.DataFrame | None,
     issuer_dv01_caps_map: dict[str, float] | None,
-    maturity_bucket_bins: tuple[float, ...],
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Extract static arrays from meta DataFrame.
 
     Returns (meta_indexed, static_arrays) where static_arrays contains
     tradable, pos_limits_long, pos_limits_short, issuer_bucket,
     issuer_dv01_caps, maturity_dates_raw, maturity, maturity_bucket,
-    instrument_ids, and optionally hedge_ids.
+    and instrument_ids.
     """
     if instrument_ids is None:
         instrument_ids = sorted(meta_df[inst_col].unique().tolist())
@@ -603,14 +948,16 @@ def _extract_meta_arrays(
     B = len(instrument_ids)
     meta_indexed = meta_df.set_index(inst_col).reindex(instrument_ids)
 
+    # Validate all required columns
+    missing = [c for c in META_REQUIRED_COLUMNS if c not in meta_indexed.columns]
+    if missing:
+        raise ValueError(
+            f"Required column(s) {missing} not found in meta file"
+        )
+
     tradable = meta_indexed["tradable"].values.astype(np.float64)
     pos_limits_long = meta_indexed["pos_limit_long"].values.astype(np.float64)
     pos_limits_short = meta_indexed["pos_limit_short"].values.astype(np.float64)
-
-    # Per-instrument max trade notional
-    for col in ("max_trade_notional_inc", "max_trade_notional_dec", "qty_step", "min_qty_trade"):
-        if col not in meta_indexed.columns:
-            raise ValueError(f"Required column {col!r} not found in meta file")
     max_trade_notional_inc = meta_indexed["max_trade_notional_inc"].values.astype(np.float64)
     max_trade_notional_dec = meta_indexed["max_trade_notional_dec"].values.astype(np.float64)
     qty_step = meta_indexed["qty_step"].values.astype(np.float64)
@@ -636,26 +983,10 @@ def _extract_meta_arrays(
         issuer_bucket = np.zeros(B, dtype=np.int64)
         issuer_dv01_caps = np.empty(0, dtype=np.float64)
 
-    # Maturity
-    maturity_dates_raw = None
-    if "maturity_date" in meta_indexed.columns:
-        maturity_dates_raw = pd.to_datetime(
-            meta_indexed["maturity_date"]
-        ).values.astype("datetime64[ns]")
-        maturity = np.zeros(B, dtype=np.float64)
-        maturity_bucket = np.zeros(B, dtype=np.int64)
-    else:
-        # maturity = (
-        #     meta_indexed["maturity"].values.astype(np.float64)
-        #     if "maturity" in meta_indexed.columns
-        #     else np.zeros(B, dtype=np.float64)
-        # )
-        # maturity_bucket = (
-        #     meta_indexed["maturity_bucket"].values.astype(np.int64)
-        #     if "maturity_bucket" in meta_indexed.columns
-        #     else np.zeros(B, dtype=np.int64)
-        # )
-        raise RuntimeError("maturity_date not in meta data")
+    # Maturity (validated above via META_REQUIRED_COLUMNS)
+    maturity_dates_raw = pd.to_datetime(
+        meta_indexed["maturity_date"]
+    ).values.astype("datetime64[ns]")
 
     static_arrays = {
         "instrument_ids": instrument_ids,
@@ -669,36 +1000,9 @@ def _extract_meta_arrays(
         "issuer_bucket": issuer_bucket,
         "issuer_dv01_caps": issuer_dv01_caps,
         "maturity_dates_raw": maturity_dates_raw,
-        "maturity": maturity,
-        "maturity_bucket": maturity_bucket,
     }
 
-    if hedge_ratio_df is not None:
-        static_arrays["hedge_ids"] = extract_hedge_ids(hedge_ratio_df)
-
     return meta_indexed, static_arrays
-
-
-def _extract_hedge_meta_arrays(
-    hedge_meta_df: pd.DataFrame,
-    inst_col: str,
-    hedge_ids: list[str],
-) -> tuple[np.ndarray, np.ndarray]:
-    """Extract per-hedge static arrays from hedge meta DataFrame.
-
-    Returns (hedge_qty_step, hedge_min_qty_trade) arrays, each (H,).
-    """
-    hedge_meta_indexed = hedge_meta_df.set_index(inst_col).reindex(hedge_ids)
-    for col in ("qty_step", "min_qty_trade"):
-        if col not in hedge_meta_indexed.columns:
-            raise ValueError(
-                f"Required column {col!r} not found in hedge_meta file"
-            )
-    hedge_qty_step = hedge_meta_indexed["qty_step"].values.astype(np.float64)
-    hedge_min_qty_trade = hedge_meta_indexed["min_qty_trade"].values.astype(np.float64)
-    return hedge_qty_step, hedge_min_qty_trade
-
-
 def _disable_allnan_instruments(
     tradable: np.ndarray,
     mid_px: np.ndarray,
@@ -733,214 +1037,34 @@ def _disable_allnan_instruments(
                 break
 
 
-def _build_market_data(
-    *,
-    book_df: pd.DataFrame,
-    mid_df: pd.DataFrame,
-    dv01_df: pd.DataFrame,
-    signal_df: pd.DataFrame,
-    hedge_ratio_df: pd.DataFrame,
+# ---------------------------------------------------------------------------
+# Internal helpers - hedge meta
+# ---------------------------------------------------------------------------
+def _extract_hedge_meta_arrays(
     hedge_meta_df: pd.DataFrame,
-    meta_indexed: pd.DataFrame,
-    static_arrays: dict[str, Any],
-    instrument_ids: list[str],
-    hedge_ids: list[str],
-    dt_col: str,
     inst_col: str,
-    fill_method: str,
-    maturity_bucket_bins: tuple[float, ...],
-    mat_bucket_dv01_caps: tuple[float, ...] | None,
-) -> PortfolioMarketData:
-    """Shared pivot + align + reshape logic used by both load() and load_chunked()."""
-    B = len(instrument_ids)
-    H = len(hedge_ids)
+    hedge_ids: list[str],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extract per-hedge static arrays from hedge meta DataFrame.
 
-    # Auto-detect book levels
-    n_levels = detect_book_levels(book_df.columns)
-
-    # Pivot book/mid/dv01 separately for instruments and hedges
-    inst_book_pivoted = pivot_book(
-        book_df, dt_col, inst_col, instrument_ids, n_levels,
-    )
-    inst_mid_pivoted = pivot_simple(
-        mid_df, dt_col, inst_col, instrument_ids, "mid_px",
-    )
-    inst_dv01_pivoted = pivot_simple(
-        dv01_df, dt_col, inst_col, instrument_ids, "dv01",
-    )
-
-    hedge_book_pivoted = pivot_book(
-        book_df, dt_col, inst_col, hedge_ids, n_levels,
-    )
-    hedge_mid_pivoted = pivot_simple(
-        mid_df, dt_col, inst_col, hedge_ids, "mid_px",
-    )
-    hedge_dv01_pivoted = pivot_simple(
-        dv01_df, dt_col, inst_col, hedge_ids, "dv01",
-    )
-
-    # Pivot signals
-    fair_pivoted = pivot_simple(
-        signal_df, dt_col, inst_col, instrument_ids, "fair_price",
-    )
-    zscore_pivoted = pivot_simple(
-        signal_df, dt_col, inst_col, instrument_ids, "zscore",
-    )
-    adf_pivoted = pivot_simple(
-        signal_df, dt_col, inst_col, instrument_ids, "adf_p_value",
-    )
-
-    # Pivot hedge ratios
-    hedge_ratios_pivoted = _pivot_hedge_ratios_portfolio(
-        hedge_ratio_df, inst_col, dt_col, instrument_ids, hedge_ids,
-    )
-
-    # Align all sources on common datetime index
-    sources = {
-        "inst_book": inst_book_pivoted,
-        "inst_mid": inst_mid_pivoted,
-        "inst_dv01": inst_dv01_pivoted,
-        "fair": fair_pivoted,
-        "zscore": zscore_pivoted,
-        "adf": adf_pivoted,
-        "hedge_book": hedge_book_pivoted,
-        "hedge_mid": hedge_mid_pivoted,
-        "hedge_dv01": hedge_dv01_pivoted,
-        "hedge_ratios": hedge_ratios_pivoted,
-    }
-
-    sources, all_dts_idx = align_and_fill(
-        sources,
-        fill_method=fill_method,
-        datetime_source_keys=("inst_book", ),
-        no_ffill_keys=("inst_book", "hedge_book"),
-    )
-
-    T = len(all_dts_idx)
-
-    # Extract numpy arrays
-    bid_px, bid_sz, ask_px, ask_sz = reshape_book(
-        sources["inst_book"], instrument_ids, n_levels,
-    )
-    hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz = reshape_book(
-        sources["hedge_book"], hedge_ids, n_levels,
-    )
-
-    mid_px = sources["inst_mid"].values.astype(np.float64)
-    dv01 = sources["inst_dv01"].values.astype(np.float64)
-    fair_price = sources["fair"].values.astype(np.float64)
-    zscore = sources["zscore"].values.astype(np.float64)
-    adf_p_value = sources["adf"].values.astype(np.float64)
-
-    hedge_mid_px = sources["hedge_mid"].values.astype(np.float64)
-    hedge_dv01_arr = sources["hedge_dv01"].values.astype(np.float64)
-
-    hedge_ratios_arr = sources["hedge_ratios"].values.astype(np.float64)
-    hedge_ratios_arr = hedge_ratios_arr.reshape(T, B, H)
-
-    datetimes = all_dts_idx.values
-
-    # Unpack static arrays (copy tradable — may be mutated per-chunk)
-    tradable = static_arrays["tradable"].copy()
-    pos_limits_long = static_arrays["pos_limits_long"]
-    pos_limits_short = static_arrays["pos_limits_short"]
-    max_trade_notional_inc = static_arrays["max_trade_notional_inc"]
-    max_trade_notional_dec = static_arrays["max_trade_notional_dec"]
-    qty_step_arr = static_arrays["qty_step"]
-    min_qty_trade_arr = static_arrays["min_qty_trade"]
-    issuer_bucket = static_arrays["issuer_bucket"]
-    _issuer_dv01_caps = static_arrays["issuer_dv01_caps"]
-    _maturity_dates_raw = static_arrays["maturity_dates_raw"]
-    maturity = static_arrays["maturity"]
-    maturity_bucket = static_arrays["maturity_bucket"]
-
-    # Compute time-varying maturity if maturity_date available
-    if _maturity_dates_raw is not None:
-        dt_ns = datetimes.astype("datetime64[ns]")
-        delta = _maturity_dates_raw[np.newaxis, :] - dt_ns[:, np.newaxis]
-        maturity = delta.astype("timedelta64[D]").astype(np.float64) / 365.25
-        if len(maturity_bucket_bins) > 0:
-            bins = np.asarray(maturity_bucket_bins, dtype=np.float64)
-            maturity_bucket = np.digitize(maturity, bins).astype(np.int64)
-        else:
-            maturity_bucket = (
-                meta_indexed["maturity_bucket"].values.astype(np.int64)
-                if "maturity_bucket" in meta_indexed.columns
-                else np.zeros(B, dtype=np.int64)
-            )
-
-    # Disable tradable for instruments with all-NaN mid_px or signals
-    _disable_allnan_instruments(
-        tradable, mid_px, fair_price, zscore, adf_p_value, instrument_ids,
-    )
-
-    # Validate shapes, warn NaNs
-    _validate_shapes(
-        bid_px, bid_sz, ask_px, ask_sz, mid_px, dv01,
-        fair_price, zscore, adf_p_value,
-        tradable, pos_limits_long, pos_limits_short,
-        hedge_bid_px, hedge_bid_sz, hedge_ask_px, hedge_ask_sz,
-        hedge_mid_px, hedge_dv01_arr, hedge_ratios_arr,
-        T, B, n_levels, H, n_levels,
-    )
-    warn_nans(
-        bid_px=bid_px, bid_sz=bid_sz, ask_px=ask_px, ask_sz=ask_sz,
-        mid_px=mid_px, dv01=dv01, fair_price=fair_price,
-        zscore=zscore, adf_p_value=adf_p_value,
-        hedge_bid_px=hedge_bid_px, hedge_bid_sz=hedge_bid_sz,
-        hedge_ask_px=hedge_ask_px, hedge_ask_sz=hedge_ask_sz,
-        hedge_mid_px=hedge_mid_px, hedge_dv01=hedge_dv01_arr,
-        hedge_ratios=hedge_ratios_arr,
-    )
-
-    _mat_bucket_dv01_caps = (
-        np.asarray(mat_bucket_dv01_caps, dtype=np.float64)
-        if mat_bucket_dv01_caps
-        else np.empty(0, dtype=np.float64)
-    )
-
-    # Extract hedge_qty_step and hedge_min_qty_trade from hedge_meta
-    hedge_qty_step, hedge_min_qty_trade = _extract_hedge_meta_arrays(
-        hedge_meta_df, inst_col, hedge_ids,
-    )
-
-    return PortfolioMarketData(
-        bid_px=bid_px,
-        bid_sz=bid_sz,
-        ask_px=ask_px,
-        ask_sz=ask_sz,
-        mid_px=mid_px,
-        dv01=dv01,
-        fair_price=fair_price,
-        zscore=zscore,
-        adf_p_value=adf_p_value,
-        tradable=tradable,
-        pos_limits_long=pos_limits_long,
-        pos_limits_short=pos_limits_short,
-        max_trade_notional_inc=max_trade_notional_inc,
-        max_trade_notional_dec=max_trade_notional_dec,
-        qty_step=qty_step_arr,
-        min_qty_trade=min_qty_trade_arr,
-        maturity=maturity,
-        issuer_bucket=issuer_bucket,
-        maturity_bucket=maturity_bucket,
-        issuer_dv01_caps=_issuer_dv01_caps,
-        mat_bucket_dv01_caps=_mat_bucket_dv01_caps,
-        hedge_bid_px=hedge_bid_px,
-        hedge_bid_sz=hedge_bid_sz,
-        hedge_ask_px=hedge_ask_px,
-        hedge_ask_sz=hedge_ask_sz,
-        hedge_mid_px=hedge_mid_px,
-        hedge_dv01=hedge_dv01_arr,
-        hedge_ratios=hedge_ratios_arr,
-        hedge_qty_step=hedge_qty_step,
-        hedge_min_qty_trade=hedge_min_qty_trade,
-        datetimes=datetimes,
-        instrument_ids=instrument_ids,
-        hedge_ids=hedge_ids,
-    )
+    Returns (hedge_qty_step, hedge_min_qty_trade) arrays, each (H,).
+    """
+    hedge_meta_indexed = hedge_meta_df.set_index(inst_col).reindex(hedge_ids)
+    missing = [c for c in HEDGE_META_REQUIRED_COLUMNS if c not in hedge_meta_indexed.columns]
+    if missing:
+        raise ValueError(
+            f"Required column(s) {missing} not found in hedge_meta file"
+        )
+    hedge_qty_step = hedge_meta_indexed["qty_step"].values.astype(np.float64)
+    hedge_min_qty_trade = hedge_meta_indexed["min_qty_trade"].values.astype(np.float64)
+    return hedge_qty_step, hedge_min_qty_trade
 
 
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers - hedge ratio
+# ---------------------------------------------------------------------------
 def _pivot_hedge_ratios_portfolio(
     hedge_df: pd.DataFrame,
     inst_col: str,
@@ -1008,79 +1132,3 @@ def _pivot_hedge_ratios_portfolio(
     )
     result.index.name = dt_col
     return result
-
-
-def _validate_shapes(
-    bid_px: np.ndarray,
-    bid_sz: np.ndarray,
-    ask_px: np.ndarray,
-    ask_sz: np.ndarray,
-    mid_px: np.ndarray,
-    dv01: np.ndarray,
-    fair_price: np.ndarray,
-    zscore: np.ndarray,
-    adf_p_value: np.ndarray,
-    tradable: np.ndarray,
-    pos_limits_long: np.ndarray,
-    pos_limits_short: np.ndarray,
-    hedge_bid_px: np.ndarray,
-    hedge_bid_sz: np.ndarray,
-    hedge_ask_px: np.ndarray,
-    hedge_ask_sz: np.ndarray,
-    hedge_mid_px: np.ndarray,
-    hedge_dv01: np.ndarray,
-    hedge_ratios: np.ndarray,
-    T: int,
-    B: int,
-    L: int,
-    H: int,
-    L_h: int,
-) -> None:
-    """Validate that all arrays have consistent shapes."""
-    expected = {
-        "bid_px": (T, B, L),
-        "bid_sz": (T, B, L),
-        "ask_px": (T, B, L),
-        "ask_sz": (T, B, L),
-        "mid_px": (T, B),
-        "dv01": (T, B),
-        "fair_price": (T, B),
-        "zscore": (T, B),
-        "adf_p_value": (T, B),
-        "tradable": (B,),
-        "pos_limits_long": (B,),
-        "pos_limits_short": (B,),
-        "hedge_bid_px": (T, H, L_h),
-        "hedge_bid_sz": (T, H, L_h),
-        "hedge_ask_px": (T, H, L_h),
-        "hedge_ask_sz": (T, H, L_h),
-        "hedge_mid_px": (T, H),
-        "hedge_dv01": (T, H),
-        "hedge_ratios": (T, B, H),
-    }
-    arrays = {
-        "bid_px": bid_px,
-        "bid_sz": bid_sz,
-        "ask_px": ask_px,
-        "ask_sz": ask_sz,
-        "mid_px": mid_px,
-        "dv01": dv01,
-        "fair_price": fair_price,
-        "zscore": zscore,
-        "adf_p_value": adf_p_value,
-        "tradable": tradable,
-        "pos_limits_long": pos_limits_long,
-        "pos_limits_short": pos_limits_short,
-        "hedge_bid_px": hedge_bid_px,
-        "hedge_bid_sz": hedge_bid_sz,
-        "hedge_ask_px": hedge_ask_px,
-        "hedge_ask_sz": hedge_ask_sz,
-        "hedge_mid_px": hedge_mid_px,
-        "hedge_dv01": hedge_dv01,
-        "hedge_ratios": hedge_ratios,
-    }
-    for name, arr in arrays.items():
-        if arr.shape != expected[name]:
-            raise ValueError(
-                f"{name} shape mismatch: expected {expected[name]}, got {arr.shape}"
-            )
