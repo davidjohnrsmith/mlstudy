@@ -586,7 +586,7 @@ def _build_market_data(
         "inst_book": inst_book_pivoted,
         "inst_mid": inst_mid_pivoted,
         "inst_dv01": inst_dv01_pivoted,
-        "fair": fair_pivoted,
+        "fair_price": fair_pivoted,
         "zscore": zscore_pivoted,
         "adf": adf_pivoted,
         "hedge_book": hedge_book_pivoted,
@@ -614,7 +614,7 @@ def _build_market_data(
 
     mid_px = sources["inst_mid"].values.astype(np.float64)
     dv01 = sources["inst_dv01"].values.astype(np.float64)
-    fair_price = sources["fair"].values.astype(np.float64)
+    fair_price = sources["fair_price"].values.astype(np.float64)
     zscore = sources["zscore"].values.astype(np.float64)
     adf_p_value = sources["adf"].values.astype(np.float64)
 

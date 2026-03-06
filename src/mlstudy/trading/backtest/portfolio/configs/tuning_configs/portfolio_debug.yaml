@@ -11,6 +11,7 @@ base_config:
     Japan: 5000000000000.0
     US: 100000000000000.0
   mat_bucket_dv01_caps: [50000.0, 500000.0, 50000.0, 500000.0, 5000000.0]
+  gross_dv01_cap: 10000000000.0
   initial_capital: 1000.0
   close_time: "17:00"
   expected_hedge_ratio_sum: -1.0
@@ -24,7 +25,6 @@ grid:
   alpha_thr_dec: [0.5]
   p_inc: [1.0]
   p_dec: [1.0]
-  gross_dv01_cap: [10000000000.0]
   cooldown_bars: [100]
   max_levels: [3]
   haircut: [1.0]
