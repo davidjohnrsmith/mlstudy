@@ -346,7 +346,7 @@ def generate_portfolio_parquets_chunked(
         rng, dts, all_ids,
         base0=0.05, base_step=0.01, noise=0.001, id_col="instrument_id",
     )
-    dv01_df = _drop_rows(dv01_df, rng, cfg.missing_prob)
+    # dv01_df = _drop_rows(dv01_df, rng, cfg.missing_prob)
 
     book_df = _make_book_df(
         rng, dts, mid_df, instrument_ids, cfg.instrument_levels,
