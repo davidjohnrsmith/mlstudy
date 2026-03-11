@@ -66,6 +66,8 @@ class LoopState:
     prev_hedge_mtm: float
     cum_instrument_cash_mid: float = 0.0
     cum_hedge_cash_mid: float = 0.0
+    last_mid: np.ndarray | None = None       # (B,) last known mid prices
+    last_hedge_mid: np.ndarray | None = None  # (H,) last known hedge mid prices
 
 from mlstudy.trading.backtest.portfolio.single_backtest.state import (
     PortfolioActionCode,
@@ -728,8 +730,14 @@ def _end_of_bar_bookkeeping(
     mid_px, hedge_mid_px,
     prev_equity, prev_hedge_mtm,
     hedge_trade_cash, bar_cost, has_hedge,
+    last_mid, last_hedge_mid,
 ):
     """Compute equity, PnL, and MTM at end of bar.
+
+    When mid is NaN for an instrument with a position, the last known
+    mid is used so that the MTM doesn't drop to zero and create a
+    spurious PnL spike.  ``last_mid`` / ``last_hedge_mid`` are updated
+    in-place with the latest valid prices.
 
     Read-only on mutable state.  Returns (equity_t, pnl_t, gross_pnl_t,
     position_mtm_t, hedge_mtm_t_eq, hedge_pnl_t).
@@ -738,13 +746,20 @@ def _end_of_bar_bookkeeping(
     for b in range(B):
         mid_b_t = mid_px[t, b]
         if not np.isnan(mid_b_t):
+            last_mid[b] = mid_b_t
             position_mtm_t += pos[b] * mid_b_t
+        elif not np.isnan(last_mid[b]):
+            # Use last known mid to avoid MTM spike
+            position_mtm_t += pos[b] * last_mid[b]
     hedge_mtm_t_eq = 0.0
     if has_hedge:
         for h in range(H):
             h_mid_t = hedge_mid_px[t, h]
             if not np.isnan(h_mid_t):
+                last_hedge_mid[h] = h_mid_t
                 hedge_mtm_t_eq += hedge_pos[h] * h_mid_t
+            elif not np.isnan(last_hedge_mid[h]):
+                hedge_mtm_t_eq += hedge_pos[h] * last_hedge_mid[h]
     equity_t = cash + position_mtm_t + hedge_mtm_t_eq
 
     pnl_t = equity_t - prev_equity
@@ -998,6 +1013,12 @@ def lp_portfolio_loop(
         prev_hedge_mtm = initial_state.prev_hedge_mtm
         cum_instrument_cash_mid = initial_state.cum_instrument_cash_mid
         cum_hedge_cash_mid = initial_state.cum_hedge_cash_mid
+        last_mid = (initial_state.last_mid.copy()
+                    if initial_state.last_mid is not None
+                    else np.full(B, np.nan, dtype=np.float64))
+        last_hedge_mid = (initial_state.last_hedge_mid.copy()
+                          if initial_state.last_hedge_mid is not None
+                          else np.full(max(H, 1), np.nan, dtype=np.float64))
     else:
         pos = np.zeros(B, dtype=np.float64)
         hedge_pos = np.zeros(max(H, 1), dtype=np.float64)
@@ -1007,6 +1028,8 @@ def lp_portfolio_loop(
         prev_hedge_mtm = 0.0
         cum_instrument_cash_mid = 0.0
         cum_hedge_cash_mid = 0.0
+        last_mid = np.full(B, np.nan, dtype=np.float64)
+        last_hedge_mid = np.full(max(H, 1), np.nan, dtype=np.float64)
 
     # Detect whether maturity / maturity_bucket are time-varying (T, B)
     maturity_2d = maturity is not None and maturity.ndim == 2
@@ -1191,6 +1214,7 @@ def lp_portfolio_loop(
                 mid_px, hedge_mid_px,
                 prev_equity, prev_hedge_mtm,
                 hedge_trade_cash, bar_cost, has_hedge,
+                last_mid, last_hedge_mid,
             )
         prev_equity = equity_t
         if has_hedge:
@@ -1306,6 +1330,8 @@ def lp_portfolio_loop(
             prev_hedge_mtm=prev_hedge_mtm,
             cum_instrument_cash_mid=cum_instrument_cash_mid,
             cum_hedge_cash_mid=cum_hedge_cash_mid,
+            last_mid=last_mid.copy(),
+            last_hedge_mid=last_hedge_mid.copy(),
         )
         return result + (final_state,)
 
