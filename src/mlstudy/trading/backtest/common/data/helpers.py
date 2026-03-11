@@ -128,6 +128,7 @@ def align_and_fill(
     fillna_defaults: dict[str, float] | None = None,
     datetime_source_keys: tuple[str, ...] | None = None,
     no_ffill_keys: tuple[str, ...] | None = None,
+    off_grid_keys: tuple[str, ...] | None = None,
     close_time: str | None = None,
 ) -> tuple[dict[str, pd.DataFrame], pd.DatetimeIndex]:
     """Align multiple DataFrames onto a common datetime index and fill NaNs.
@@ -154,8 +155,14 @@ def align_and_fill(
         onto the resulting datetime index.
     no_ffill_keys : tuple[str, ...] or None
         Source keys to exclude from forward-filling.  NaN values in
-        these sources are filled with 0 instead.  Use for book data
-        where stale quotes would create phantom liquidity.
+        these sources are kept as NaN.  Use for book data where stale
+        quotes would create phantom liquidity.
+    off_grid_keys : tuple[str, ...] or None
+        Source keys whose timestamps may fall outside the intraday grid
+        (e.g. daily data at 00:00:00 when market opens at 07:30).
+        For these keys the original timestamps are temporarily merged
+        into the index so that ffill can propagate values onto the
+        intraday grid, then trimmed back.
     close_time : str or None
         Time string (e.g. ``"17:00"``).  When set, rows whose time
         matches *close_time* are never dropped by the essential-key
@@ -168,6 +175,7 @@ def align_and_fill(
     (aligned_sources, datetime_index)
     """
     _no_ffill = set(no_ffill_keys) if no_ffill_keys else set()
+    _off_grid = set(off_grid_keys) if off_grid_keys else set()
 
     # Build unified datetime index
     all_dts: set = set()
@@ -179,15 +187,34 @@ def align_and_fill(
             all_dts.update(df.index)
     all_dts_idx = pd.DatetimeIndex(sorted(all_dts))
 
-    # Reindex all sources
-    aligned = {k: df.reindex(all_dts_idx) for k, df in sources.items()}
+    # For off-grid sources, build a merged index that includes their
+    # original timestamps so ffill can propagate onto the intraday grid.
+    if _off_grid and fill_method == "ffill":
+        extra_dts: set = set()
+        for key in _off_grid:
+            if key in sources:
+                extra_dts.update(sources[key].index.difference(all_dts_idx))
+        if extra_dts:
+            merged_idx = all_dts_idx.append(
+                pd.DatetimeIndex(extra_dts)
+            ).sort_values()
+        else:
+            merged_idx = all_dts_idx
+    else:
+        merged_idx = None
 
     if fill_method == "ffill":
-        for key in aligned:
+        aligned: dict[str, pd.DataFrame] = {}
+        for key, df in sources.items():
             if key in _no_ffill:
-                aligned[key] = aligned[key].fillna(0.0)
+                # no_ffill keys (e.g. book data) — NaN means no valid
+                # market for that bar.
+                aligned[key] = df.reindex(all_dts_idx)
+            elif key in _off_grid and merged_idx is not None:
+                # Reindex onto merged grid, ffill, then trim back.
+                aligned[key] = df.reindex(merged_idx).ffill().reindex(all_dts_idx)
             else:
-                aligned[key] = aligned[key].ffill()
+                aligned[key] = df.reindex(all_dts_idx).ffill()
 
         # Drop rows where any essential source has all-NaN across columns.
         # Close-time rows are exempt: they are forward-filled instead.
@@ -242,6 +269,7 @@ def align_and_fill(
                 if key in aligned:
                     aligned[key] = aligned[key].fillna(default)
     elif fill_method == "drop":
+        aligned = {k: df.reindex(all_dts_idx) for k, df in sources.items()}
         all_valid = pd.concat(
             [s.notna().all(axis=1) for s in aligned.values()], axis=1,
         ).all(axis=1)
