@@ -694,6 +694,10 @@ def _execute_hedge_rebalance(
     hedge_fill_details = []
 
     for h in range(H):
+        # Skip hedge if market data is invalid (NaN mid or book)
+        h_mid = hedge_mid_px[t, h]
+        if np.isnan(h_mid):
+            continue
         hedge_remaining = hedge_target[h] - hedge_pos[h]
         # Round hedge trade size using per-hedge qty_step and min_qty_trade
         hedge_remaining = _round_qty_trade(
@@ -713,12 +717,14 @@ def _execute_hedge_rebalance(
             )
         if h_filled < 1e-15:
             continue
+        if np.isnan(h_vwap):
+            continue
         h_signed = np.sign(hedge_remaining) * h_filled
         cash -= h_signed * h_vwap
         hedge_trade_cash += h_signed * h_vwap
-        cum_hedge_cash_mid -= h_signed * hedge_mid_px[t, h]
+        cum_hedge_cash_mid -= h_signed * h_mid
         hedge_pos[h] += h_signed
-        h_exec_cost = abs(h_vwap - hedge_mid_px[t, h]) * h_filled
+        h_exec_cost = abs(h_vwap - h_mid) * h_filled
         bar_hedge_cost += h_exec_cost
         hedge_fill_details.append((h, hedge_remaining, h_signed, h_vwap))
 
