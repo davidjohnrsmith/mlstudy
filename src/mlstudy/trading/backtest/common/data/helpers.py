@@ -128,6 +128,7 @@ def align_and_fill(
     fillna_defaults: dict[str, float] | None = None,
     datetime_source_keys: tuple[str, ...] | None = None,
     no_ffill_keys: tuple[str, ...] | None = None,
+    close_time: str | None = None,
 ) -> tuple[dict[str, pd.DataFrame], pd.DatetimeIndex]:
     """Align multiple DataFrames onto a common datetime index and fill NaNs.
 
@@ -136,12 +137,14 @@ def align_and_fill(
     sources : dict[str, DataFrame]
         Pivoted wide-format DataFrames, each indexed by datetime.
     fill_method : str
-        ``"ffill"`` — forward-fill all, drop leading rows where
-        *essential_keys* still have NaN, then apply *fillna_defaults*.
+        ``"ffill"`` — forward-fill all, drop rows where *essential_keys*
+        have all-NaN across columns, then apply *fillna_defaults*.
         ``"drop"`` — keep only rows where all sources have data.
     essential_keys : tuple[str, ...] or None
-        Keys whose NaN values determine where to trim leading rows
-        (only used with ``"ffill"``).
+        Keys whose data validity determines which rows to keep.  A row is
+        invalid for a given key when **all** of its columns are NaN.  If a
+        row is invalid in **any** essential key it is removed from every
+        source — unless it is a close-time row (see *close_time*).
     fillna_defaults : dict[str, float] or None
         After ffill + trim, fill remaining NaN in these sources with
         the given default values (e.g. ``{"dv01": 1.0, "mid": 0.0}``).
@@ -153,6 +156,12 @@ def align_and_fill(
         Source keys to exclude from forward-filling.  NaN values in
         these sources are filled with 0 instead.  Use for book data
         where stale quotes would create phantom liquidity.
+    close_time : str or None
+        Time string (e.g. ``"17:00"``).  When set, rows whose time
+        matches *close_time* are never dropped by the essential-key
+        check.  Instead their essential-key data is forward-filled from
+        the previous valid row.  If a close-time row still has all-NaN
+        essential data after forward-filling, a ``ValueError`` is raised.
 
     Returns
     -------
@@ -180,21 +189,52 @@ def align_and_fill(
             else:
                 aligned[key] = aligned[key].ffill()
 
-        # Drop leading rows where essential sources still have NaN
+        # Drop rows where any essential source has all-NaN across columns.
+        # Close-time rows are exempt: they are forward-filled instead.
         if essential_keys:
-            essential_valid = pd.concat(
-                [aligned[k].notna().all(axis=1) for k in essential_keys],
-                axis=1,
-            ).all(axis=1)
-            first_valid = (
-                essential_valid.idxmax() if essential_valid.any() else None
-            )
-            if first_valid is None:
+            # A row is invalid for a key when every column is NaN.
+            # valid_per_key[k] is True where at least one column is not NaN.
+            valid_per_key = {
+                k: aligned[k].notna().any(axis=1) for k in essential_keys
+            }
+            # Row is valid only if valid in ALL essential keys.
+            all_valid = pd.concat(valid_per_key.values(), axis=1).all(axis=1)
+
+            if close_time is not None:
+                target_time = pd.Timestamp(close_time).time()
+                is_close = pd.Series(
+                    all_dts_idx.time == target_time, index=all_dts_idx,
+                )
+                # Close-time rows that are invalid need forward-fill
+                invalid_close = is_close & ~all_valid
+                if invalid_close.any():
+                    # Forward-fill essential sources at invalid close rows
+                    for k in essential_keys:
+                        if k in _no_ffill:
+                            continue
+                        aligned[k] = aligned[k].ffill()
+                    # Re-check: if close-time rows still all-NaN, raise
+                    for k in essential_keys:
+                        still_invalid = (
+                            aligned[k].loc[invalid_close].isna().all(axis=1)
+                        )
+                        if still_invalid.any():
+                            bad_dts = still_invalid[still_invalid].index.tolist()
+                            raise ValueError(
+                                f"Close-time rows still have all-NaN data in "
+                                f"essential key {k!r} after forward-fill at: "
+                                f"{bad_dts[:5]}"
+                            )
+                # Keep valid rows + close-time rows
+                keep = all_valid | is_close
+            else:
+                keep = all_valid
+
+            if not keep.any():
                 raise ValueError("No rows with complete data after ffill")
-            mask = all_dts_idx >= first_valid
             for key in aligned:
-                aligned[key] = aligned[key].loc[mask]
-            all_dts_idx = all_dts_idx[mask]
+                aligned[key] = aligned[key].loc[keep]
+            all_dts_idx = all_dts_idx[keep.values]
 
         # Fill remaining NaN with defaults
         if fillna_defaults:

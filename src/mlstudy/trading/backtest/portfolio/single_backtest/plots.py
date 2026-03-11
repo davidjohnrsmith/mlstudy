@@ -197,51 +197,39 @@ def plot_portfolio_mtm_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes
         _, ax = plt.subplots()
     T = len(res.equity)
     bars = np.arange(T)
+    mtm_with_cost = res.portfolio_mtm[:T] - np.cumsum(res.portfolio_cost[:T])
     ax.plot(bars, res.portfolio_mtm[:T], linewidth=0.8, color="steelblue",
             label="Portfolio MTM")
+    ax.plot(bars, mtm_with_cost, linewidth=0.8, color="darkorange",
+            label="MTM with cost")
     ax.axhline(0, color="black", linewidth=0.3)
     ax.set_ylabel("Portfolio MTM")
     _format_xaxis(ax, res)
 
-    # Portfolio MTM with cost on right axis
-    ax2 = ax.twinx()
-    mtm_with_cost = res.portfolio_mtm[:T] - np.cumsum(res.portfolio_cost[:T])
-    ax2.plot(bars, mtm_with_cost, linewidth=0.8, color="darkorange",
-             label="MTM with cost")
-    ax2.set_ylabel("MTM with cost")
-
-    # Combined legend
-    lines, labels = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines + lines2, labels + labels2, **_LEGEND_KW)
+    ax.legend(**_LEGEND_KW)
     ax.grid(True, alpha=0.3)
     return ax
 
 
 def plot_cost_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
-    """Cumulative cost breakdown: portfolio on left, instrument/hedge on right."""
+    """Cumulative cost breakdown."""
     if ax is None:
         _, ax = plt.subplots()
     T = len(res.equity)
     bars = np.arange(T)
     cum_portfolio = np.cumsum(res.portfolio_cost[:T])
-    ax.plot(bars, cum_portfolio, linewidth=0.8, color="steelblue",
-            label="Portfolio cost")
-    ax.set_ylabel("Portfolio cost")
-    _format_xaxis(ax, res)
-
-    ax2 = ax.twinx()
     cum_inst = np.cumsum(res.instrument_cost[:T])
     cum_hedge = np.cumsum(res.hedge_cost_bar[:T])
-    ax2.plot(bars, cum_inst, linewidth=0.8, color="darkorange",
-             label="Instrument cost")
-    ax2.plot(bars, cum_hedge, linewidth=0.8, color="green",
-             label="Hedge cost")
-    ax2.set_ylabel("Component cost")
+    ax.plot(bars, cum_portfolio, linewidth=0.8, color="steelblue",
+            label="Portfolio cost")
+    ax.plot(bars, cum_inst, linewidth=0.8, color="darkorange",
+            label="Instrument cost")
+    ax.plot(bars, cum_hedge, linewidth=0.8, color="green",
+            label="Hedge cost")
+    ax.set_ylabel("Cumulative cost")
+    _format_xaxis(ax, res)
 
-    lines, labels = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines + lines2, labels + labels2, **_LEGEND_KW)
+    ax.legend(**_LEGEND_KW)
     ax.grid(True, alpha=0.3)
     return ax
 
@@ -354,7 +342,7 @@ def plot_gross_dv01_on_ax(res: PortfolioBacktestResults, ax=None, cap: float | N
 
 
 def plot_net_dv01_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
-    """Net DV01: left=net total, right=net instrument+hedge."""
+    """Net DV01: total, instrument, and hedge."""
     if ax is None:
         _, ax = plt.subplots()
     T = len(res.equity)
@@ -362,20 +350,15 @@ def plot_net_dv01_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
     net_total = res.net_instrument_dv01[:T] + res.net_hedge_dv01[:T]
     ax.plot(bars, net_total, linewidth=0.8, color="steelblue",
             label="Net Total")
+    ax.plot(bars, res.net_instrument_dv01[:T], linewidth=0.8,
+            color="darkorange", label="Net Instrument")
+    ax.plot(bars, res.net_hedge_dv01[:T], linewidth=0.8,
+            color="green", label="Net Hedge")
     ax.axhline(0, color="black", linewidth=0.3)
     ax.set_ylabel("Net DV01")
     _format_xaxis(ax, res)
 
-    ax2 = ax.twinx()
-    ax2.plot(bars, res.net_instrument_dv01[:T], linewidth=0.8,
-             color="darkorange", label="Net Instrument")
-    ax2.plot(bars, res.net_hedge_dv01[:T], linewidth=0.8,
-             color="green", label="Net Hedge")
-    ax2.set_ylabel("Component Net DV01")
-
-    lines, labels = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines + lines2, labels + labels2, **_LEGEND_KW)
+    ax.legend(**_LEGEND_KW)
     ax.grid(True, alpha=0.3)
     return ax
 

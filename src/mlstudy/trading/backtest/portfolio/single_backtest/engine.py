@@ -103,10 +103,13 @@ def _validate(
             raise ValueError(
                 f"hedge_min_qty_trade length {len(hedge_min_qty_trade)} != expected H={H}"
             )
-        # hedge_ratios sum should be <= 0 for each instrument (sell hedge when
-        # buying instrument).
+        # hedge_ratios sum should be <= 0 for each tradable instrument
+        # (sell hedge when buying instrument).  Non-tradable instruments
+        # may have NaN or zero hedge ratios so we exclude them.
         ratio_sum = hedge_ratios.sum(axis=2)          # (T, B)
-        if np.any(ratio_sum > 0):
+        tradable_mask = tradable.astype(bool)          # (B,)
+        ratio_sum_tradable = ratio_sum[:, tradable_mask]
+        if np.any(ratio_sum_tradable > 0):
             raise ValueError(
                 "hedge_ratios sum across hedges is positive for some "
                 "(time, instrument) entries; expected <= 0 (sell hedge when "
@@ -115,10 +118,10 @@ def _validate(
         # Optional: validate that hedge_ratios sum equals expected value
         if expected_hedge_ratio_sum is not None:
             atol = 1e-6
-            bad = np.abs(ratio_sum - expected_hedge_ratio_sum) > atol
+            bad = np.abs(ratio_sum_tradable - expected_hedge_ratio_sum) > atol
             if np.any(bad):
                 n_bad = int(np.sum(bad))
-                sample_sums = ratio_sum[bad][:5]
+                sample_sums = ratio_sum_tradable[bad][:5]
                 raise ValueError(
                     f"hedge_ratios sum across hedges does not equal "
                     f"{expected_hedge_ratio_sum} for {n_bad} (time, instrument) "
