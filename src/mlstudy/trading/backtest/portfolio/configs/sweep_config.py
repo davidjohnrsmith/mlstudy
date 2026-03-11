@@ -151,14 +151,20 @@ def _build_sweep_kwargs(
     return kwargs
 
 
-def _build_data_loader(raw: dict[str, Any] | None) -> PortfolioDataLoader | None:
+def _build_data_loader(
+    raw: dict[str, Any] | None,
+    close_time: str | None = None,
+) -> PortfolioDataLoader | None:
     """Construct ``PortfolioDataLoader`` from the ``data`` YAML section.
 
     Returns *None* when no ``data`` section is present.
     """
     if raw is None:
         return None
-    return PortfolioDataLoader(**raw)
+    kwargs = dict(raw)
+    if close_time is not None:
+        kwargs.setdefault("close_time", close_time)
+    return PortfolioDataLoader(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +206,10 @@ def load_sweep_config(path: str | Path) -> PortfolioSweepConfig:
     base_config = _build_base_config(raw_base, grid)
     ranking_plan = _build_ranking_plan(raw.get("rank"))
     sweep_kwargs = _build_sweep_kwargs(raw.get("sweep"), ranking_plan)
-    data_loader = _build_data_loader(raw.get("data"))
+    # Pass close_time from base_config to the data loader so it can
+    # preserve close-time rows when dropping invalid essential-key rows.
+    _close_time = base_config.close_time if base_config.close_time != "none" else None
+    data_loader = _build_data_loader(raw.get("data"), close_time=_close_time)
 
     n_combos = 1
     for v in grid.values():

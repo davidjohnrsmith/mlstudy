@@ -87,6 +87,10 @@ def dispatch(
     if not indexed_scenarios:
         return []
 
+    cpu_count = os.cpu_count() or 1
+    if n_workers > cpu_count:
+        n_workers = cpu_count
+
     chunks = make_chunks(indexed_scenarios, chunk_size)
 
     if backend == "serial":

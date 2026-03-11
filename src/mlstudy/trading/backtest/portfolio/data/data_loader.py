@@ -211,6 +211,7 @@ class PortfolioDataLoader:
     datetime_col: str = "datetime"
     instrument_col: str = "instrument_id"
     fill_method: str = "ffill"
+    close_time: str | None = None
 
     def _resolve_file(
         self,
@@ -312,6 +313,8 @@ class PortfolioDataLoader:
             fill_method=self.fill_method,
             maturity_bucket_bins=maturity_bucket_bins,
             mat_bucket_dv01_caps=mat_bucket_dv01_caps,
+            close_time=self.close_time,
+            off_grid_keys=self.off_grid_keys,
         )
 
     def load_chunked(
@@ -514,6 +517,7 @@ class PortfolioDataLoader:
                 fill_method=self.fill_method,
                 maturity_bucket_bins=maturity_bucket_bins,
                 mat_bucket_dv01_caps=mat_bucket_dv01_caps,
+                close_time=self.close_time,
             )
 
 # ---------------------------------------------------------------------------
@@ -536,6 +540,7 @@ def _build_market_data(
     fill_method: str,
     maturity_bucket_bins: tuple[float, ...],
     mat_bucket_dv01_caps: tuple[float, ...] | None,
+    close_time: str | None = None,
 ) -> PortfolioMarketData:
     """Shared pivot + align + reshape logic used by both load() and load_chunked()."""
     B = len(instrument_ids)
@@ -595,11 +600,18 @@ def _build_market_data(
         "hedge_ratios": hedge_ratios_pivoted,
     }
 
+    # Sources that may have timestamps outside the intraday grid
+    # (e.g. daily signals at 00:00 vs market open at 07:30).
+    _off_grid = ("hedge_ratios",)
+
     sources, all_dts_idx = align_and_fill(
         sources,
         fill_method=fill_method,
+        essential_keys=("inst_mid", "hedge_mid", "inst_dv01"),
         datetime_source_keys=("inst_book", ),
         no_ffill_keys=("inst_book", "hedge_book"),
+        off_grid_keys=_off_grid,
+        close_time=close_time,
     )
 
     T = len(all_dts_idx)
