@@ -40,7 +40,9 @@ def _run_one_portfolio(
     market_data: dict,
     mode: str,
 ) -> SweepResultLight | SweepResult:
+    import time as _time
     try:
+        _t0 = _time.perf_counter()
         chunk_params = market_data.get("_chunk_params")
         if chunk_params is not None:
             # Chunked mode: re-create iterator from stored params
@@ -50,6 +52,8 @@ def _run_one_portfolio(
             res = run_backtest_chunked(data_chunks=data_chunks, cfg=scenario.cfg)
         else:
             res = run_backtest(cfg=scenario.cfg, **market_data)
+        _t_backtest = _time.perf_counter()
+
         use_close = res.close_bar_df is not None
         bar_df = res.close_bar_df if use_close else res.bar_df
         init_eq = res.initial_capital if use_close else None
@@ -64,6 +68,14 @@ def _run_one_portfolio(
             hedge_ask_px=res.hedge_ask_px,
             instrument_ids=res.instrument_ids,
         ).compute_all()
+        _t_metrics = _time.perf_counter()
+        logger.info(
+            "Scenario %d: backtest=%.1fs, metrics=%.1fs, total=%.1fs",
+            scenario_idx,
+            _t_backtest - _t0,
+            _t_metrics - _t_backtest,
+            _t_metrics - _t0,
+        )
 
         if mode == "metrics_only":
             return SweepResultLight(

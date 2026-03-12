@@ -278,7 +278,6 @@ class PortfolioSweepRunner:
                 }
                 # Workers reload all data via _chunk_params, so null out
                 # the large arrays (keep keys for _REQUIRED_KEYS validation).
-                import numpy as np
                 for key in list(md):
                     v = md[key]
                     if isinstance(v, np.ndarray) and v.ndim >= 2:

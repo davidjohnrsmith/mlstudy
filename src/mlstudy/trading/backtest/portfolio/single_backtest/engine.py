@@ -404,23 +404,40 @@ def run_backtest_chunked(
     -------
     PortfolioBacktestResults
     """
+    import time as _time
     state = None
     chunk_results = []
     cumulative_T = 0
+    total_load_s = 0.0
+    total_compute_s = 0.0
 
+    _t_load_start = _time.perf_counter()
     for chunk_idx, chunk_data in enumerate(data_chunks):
+        _t_load_end = _time.perf_counter()
+        total_load_s += _t_load_end - _t_load_start
+
+        _t_compute_start = _time.perf_counter()
         result, state = run_backtest(
             **chunk_data,
             cfg=cfg,
             initial_state=state,
             return_final_state=True,
         )
+        total_compute_s += _time.perf_counter() - _t_compute_start
+
         chunk_results.append((result, cumulative_T))
         cumulative_T += len(result.equity)
         logger.info(
             "Chunk %d: T=%d, trades=%d, cumulative_T=%d",
             chunk_idx, len(result.equity), result.n_trades, cumulative_T,
         )
+        _t_load_start = _time.perf_counter()
+
+    logger.info(
+        "Chunked timing: load=%.1fs, compute=%.1fs, ratio=%.0f%% load",
+        total_load_s, total_compute_s,
+        100 * total_load_s / max(total_load_s + total_compute_s, 1e-9),
+    )
 
     if not chunk_results:
         raise ValueError("data_chunks yielded no chunks")
