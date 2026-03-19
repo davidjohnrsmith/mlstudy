@@ -78,8 +78,6 @@ def plot_scenario(
     res = scenario.results
 
     has_positions = res.positions.ndim == 2 and res.positions.shape[1] > 0
-    cap = scenario.config.get("gross_dv01_cap")
-
     panels: list[tuple[str, int]] = [
         ("equity", 3),
         ("drawdown", 1),
@@ -120,7 +118,7 @@ def plot_scenario(
         elif name == "net_dv01":
             plot_net_dv01_on_ax(res, ax=ax)
         elif name == "gross_dv01":
-            plot_gross_dv01_on_ax(res, ax=ax, cap=cap)
+            plot_gross_dv01_on_ax(res, ax=ax)
         elif name == "pos_count":
             plot_position_count_on_ax(res, ax=ax)
         elif name == "pnl":
