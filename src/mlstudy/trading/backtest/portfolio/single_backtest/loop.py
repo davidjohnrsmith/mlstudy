@@ -134,22 +134,29 @@ def _walk_book(px, sz, qty, max_levels, haircut):
     if max_levels < n_levels:
         n_levels = max_levels
     for lev in range(n_levels):
-        if remaining <= 1e-15:
+        if not (remaining > 1e-15):  # catches NaN and <= 1e-15
             break
+        p = px[lev]
+        if not (p > 0.0):  # skip NaN or non-positive price
+            continue
         avail = sz[lev] * haircut
-        if avail <= 1e-15:
+        if not (avail > 1e-15):  # catches NaN and <= 1e-15
             continue
         take = remaining if remaining < avail else avail
         filled += take
-        notional += take * px[lev]
+        notional += take * p
         remaining -= take
     vwap = notional / filled if filled > 1e-15 else 0.0
     return filled, vwap
 
 
 def _check_market_valid(bid0, ask0, mid):
-    """Return True if bid0 <= mid <= ask0 and all positive for one instrument."""
-    if bid0 <= 0.0 or ask0 <= 0.0 or mid <= 0.0:
+    """Return True if bid0 <= mid <= ask0 and all positive for one instrument.
+
+    Also returns False when any input is NaN.
+    """
+    # Use 'not (x > 0)' to catch both <= 0 and NaN
+    if not (bid0 > 0.0) or not (ask0 > 0.0) or not (mid > 0.0):
         return False
     if bid0 > mid or mid > ask0:
         return False
@@ -158,6 +165,8 @@ def _check_market_valid(bid0, ask0, mid):
 
 def _round_qty_trade(qty, min_qty_trade, qty_step):
     """Round a trade size: zero out if below min, else snap to step."""
+    if np.isnan(qty):
+        return 0.0
     if abs(qty) < min_qty_trade:
         return 0.0
     if qty_step > 1e-15:
@@ -197,10 +206,10 @@ def _greedy_allocate(
     running_mat_dv01 = (current_mat_dv01.copy() if has_mat else None)
 
     for idx in order:
-        if remaining_budget <= 1e-15:
+        if not (remaining_budget >= 1e-15):  # catches NaN
             break
         alloc = min(ub[idx], remaining_budget)
-        if alloc <= 1e-15:
+        if not (alloc >= 1e-15):  # catches NaN
             continue
 
         b_idx = inst_indices[idx]
@@ -229,7 +238,7 @@ def _greedy_allocate(
                 mat_headroom = cap_mat + cur_mat
             alloc = min(alloc, max(mat_headroom, 0.0))
 
-        if alloc <= 1e-15:
+        if not (alloc >= 1e-15):  # catches NaN
             continue
 
         dv01_sizes[idx] = alloc
@@ -448,10 +457,10 @@ def _build_candidates(
 
             # Liquidity check: must have depth on required side
             if side == 1:
-                if ask_sz[t, b, 0] <= 1e-15:
+                if not (ask_sz[t, b, 0] > 1e-15):  # catches NaN
                     continue
             else:
-                if bid_sz[t, b, 0] <= 1e-15:
+                if not (bid_sz[t, b, 0] > 1e-15):  # catches NaN
                     continue
 
             # Maturity filter for risk-increasing
@@ -477,7 +486,7 @@ def _build_candidates(
                 headroom_notional = min(
                     headroom_notional, max_trade_notional_inc[b])
 
-            if headroom_notional < 1e-15:
+            if not (headroom_notional >= 1e-15):  # catches NaN
                 continue
 
             # Convert headroom to DV01
@@ -493,7 +502,10 @@ def _build_candidates(
                 book_sz = bid_sz[t, b]
             nl = min(max_levels, len(book_px))
             for lev in range(nl):
-                total_avail += book_sz[lev] * haircut
+                sz_lev = book_sz[lev]
+                if not (sz_lev > 0.0):  # catches NaN and <= 0
+                    continue
+                total_avail += sz_lev * haircut
             dv01_liq = total_avail * dv01_b
 
             # Store candidate
@@ -576,7 +588,7 @@ def _execute_instrument_trades(
 
     for k in range(n_cand):
         raw_dv01 = dv01_alloc[k]
-        if raw_dv01 < 1e-15:
+        if not (raw_dv01 >= 1e-15):  # catches NaN
             continue
 
         b_idx = int(c_inst[k])
@@ -589,7 +601,7 @@ def _execute_instrument_trades(
         # Convert DV01 to notional quantity, then round size
         raw_qty = raw_dv01 / dv01_b
         qty_req = _round_qty_trade(raw_qty, min_qty_trade[b_idx], qty_step[b_idx])
-        if qty_req < 1e-15:
+        if not (qty_req >= 1e-15):  # catches NaN
             continue
 
         # Execute via book walking
@@ -607,7 +619,7 @@ def _execute_instrument_trades(
         # Check fill ratio
         fill_ratio = filled / qty_req if qty_req > 1e-15 else 0.0
 
-        if filled < 1e-15:
+        if not (filled >= 1e-15):  # catches NaN
             # No fill at all
             tr_code_k = _FILL_FAILED_LIQUIDITY
             any_failed = True
@@ -666,13 +678,13 @@ def _compute_hedge_target(t, B, H, pos, dv01, hedge_ratios, hedge_dv01):
         if not (hdv01 >= 1e-15):  # catches NaN
             continue
         for b in range(B):
-            if abs(pos[b]) < 1e-15:
+            if not (abs(pos[b]) >= 1e-15):  # catches NaN
                 continue
             dv01_b = dv01[t, b]
-            if not (dv01_b >= 1e-15):
+            if not (dv01_b >= 1e-15):  # catches NaN
                 continue
             hr = hedge_ratios[t, b, h]
-            if abs(hr) < 1e-15:
+            if not (abs(hr) >= 1e-15):  # catches NaN
                 continue
             hedge_target[h] += pos[b] * dv01_b * hr / hdv01
     return hedge_target
@@ -703,7 +715,7 @@ def _execute_hedge_rebalance(
         hedge_remaining = _round_qty_trade(
             hedge_remaining, hedge_min_qty_trade[h], hedge_qty_step[h],
         )
-        if abs(hedge_remaining) < 1e-15:
+        if not (abs(hedge_remaining) >= 1e-15):  # catches NaN
             continue
         if hedge_remaining > 1e-15:
             h_filled, h_vwap = _walk_book(
@@ -715,7 +727,7 @@ def _execute_hedge_rebalance(
                 hedge_bid_px[t, h], hedge_bid_sz[t, h],
                 abs(hedge_remaining), max_levels, haircut,
             )
-        if h_filled < 1e-15:
+        if not (h_filled >= 1e-15):  # catches NaN
             continue
         if np.isnan(h_vwap):
             continue

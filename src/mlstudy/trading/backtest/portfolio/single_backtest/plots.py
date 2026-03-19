@@ -311,8 +311,8 @@ def plot_pnl_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
     return ax
 
 
-def plot_gross_dv01_on_ax(res: PortfolioBacktestResults, ax=None, cap: float | None = None) -> plt.Axes:
-    """Gross DV01: left=total+cap, right=instrument+hedge."""
+def plot_gross_dv01_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.Axes:
+    """Gross DV01: total, instrument, and hedge."""
     if ax is None:
         _, ax = plt.subplots()
     T = len(res.equity)
@@ -320,23 +320,15 @@ def plot_gross_dv01_on_ax(res: PortfolioBacktestResults, ax=None, cap: float | N
     gross_total = res.gross_instrument_dv01[:T] + res.gross_hedge_dv01[:T]
     ax.plot(bars, gross_total, linewidth=0.8, color="steelblue",
             label="Gross Total")
-    if cap is not None:
-        ax.axhline(cap, color="red", linewidth=0.5, linestyle="--",
-                   alpha=0.7, label=f"Cap={cap}")
+    ax.plot(bars, res.gross_instrument_dv01[:T], linewidth=0.8,
+            color="darkorange", label="Gross Instrument")
+    ax.plot(bars, res.gross_hedge_dv01[:T], linewidth=0.8,
+            color="green", label="Gross Hedge")
     ax.axhline(0, color="black", linewidth=0.3)
     ax.set_ylabel("Gross DV01")
     _format_xaxis(ax, res)
 
-    ax2 = ax.twinx()
-    ax2.plot(bars, res.gross_instrument_dv01[:T], linewidth=0.8,
-             color="darkorange", label="Gross Instrument")
-    ax2.plot(bars, res.gross_hedge_dv01[:T], linewidth=0.8,
-             color="green", label="Gross Hedge")
-    ax2.set_ylabel("Component Gross DV01")
-
-    lines, labels = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines + lines2, labels + labels2, **_LEGEND_KW)
+    ax.legend(**_LEGEND_KW)
     ax.grid(True, alpha=0.3)
     return ax
 
@@ -402,7 +394,7 @@ def plot_position_heatmap_on_ax(res: PortfolioBacktestResults, ax=None) -> plt.A
         interpolation="nearest", origin="lower",
     )
     # Label y-axis with instrument names (readable for up to ~30; skip for many)
-    if B <= 30:
+    if B <= 1000:
         labels = [_instrument_label(res, b) for b in order]
         ax.set_yticks(range(B))
         ax.set_yticklabels(labels, fontsize=max(5, 8 - B // 10))
@@ -595,7 +587,6 @@ def plot_equity_curve(res: PortfolioBacktestResults) -> matplotlib.figure.Figure
 
 def plot_portfolio_dashboard(
     res: PortfolioBacktestResults,
-    gross_dv01_cap: float | None = None,
     figsize: tuple[float, float] = (14, 12),
 ) -> matplotlib.figure.Figure:
     """Multi-panel dashboard: equity, drawdown, DV01, position count, PnL.
@@ -632,7 +623,7 @@ def plot_portfolio_dashboard(
         elif name == "drawdown":
             plot_drawdown_on_ax(res, ax=ax)
         elif name == "dv01":
-            plot_gross_dv01_on_ax(res, ax=ax, cap=gross_dv01_cap)
+            plot_gross_dv01_on_ax(res, ax=ax)
         elif name == "pos_count":
             plot_position_count_on_ax(res, ax=ax)
         elif name == "pnl":
