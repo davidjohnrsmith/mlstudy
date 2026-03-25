@@ -634,6 +634,8 @@ def _build_market_data(
     hedge_dv01_arr = sources["hedge_dv01"].values.astype(np.float64)
 
     hedge_ratios_arr = sources["hedge_ratios"].values.astype(np.float64)
+    # Fill any remaining NaN (before first valid hedge ratio timestamp) with 0
+    np.nan_to_num(hedge_ratios_arr, nan=0.0, copy=False)
     hedge_ratios_arr = hedge_ratios_arr.reshape(T, B, H)
 
     datetimes = all_dts_idx.values
@@ -1106,7 +1108,7 @@ def _pivot_hedge_ratios_portfolio(
     ratio_rows = []
 
     for dt_val, group in grouped:
-        ratios = np.zeros(B * H, dtype=np.float64)
+        ratios = np.full(B * H, np.nan, dtype=np.float64)
         for _, row in group.iterrows():
             inst_id = row[inst_col]
             inst_idx = inst_to_idx.get(inst_id)

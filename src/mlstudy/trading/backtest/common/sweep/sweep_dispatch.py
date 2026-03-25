@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import traceback
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from typing import Any, Callable, List, Tuple
 
@@ -32,7 +33,13 @@ def _run_chunk_process(
     chunk: list[tuple[int, SweepScenario]],
     mode: str,
 ) -> list[tuple[int, Any]]:
-    return _run_chunk(chunk, _WORKER_MARKET_DATA, _WORKER_RUN_ONE_FN, mode)
+    try:
+        return _run_chunk(chunk, _WORKER_MARKET_DATA, _WORKER_RUN_ONE_FN, mode)
+    except Exception as exc:
+        tb = traceback.format_exc()
+        raise RuntimeError(
+            f"Worker process failed:\n{tb}"
+        ) from None
 
 
 # ---------------------------------------------------------------------------
